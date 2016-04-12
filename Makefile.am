@@ -74,6 +74,7 @@ AM_CPPFLAGS = $(MESOS_CPPFLAGS) -Wall -Werror
 pkglib_LTLIBRARIES += libmesos_network_overlay.la
 libmesos_network_overlay_la_SOURCES = 					\
 	src/agent_helper.cpp						\
+	src/master_helper.cpp						\
 	${CXX_PROTOS}
 
 libmesos_network_overlay_la_LDFLAGS =					\

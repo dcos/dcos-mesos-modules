@@ -191,5 +191,6 @@ CPPFLAGS=${old_CPPFLAGS}
 
 # Create Modules JSON blobs.
 AC_CONFIG_FILES([agent_modules.json], [])
+AC_CONFIG_FILES([master_modules.json], [])
 
 AC_OUTPUT

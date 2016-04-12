@@ -66,31 +66,31 @@ using std::string;
 
 const string OVERLAY_HELP = HELP(
   TLDR(
-    "Show agent network overlay information."),
+    "Allocate network resources for Master."),
   USAGE(
-    "/network/overlay"),
+    "/network/allocate-subnet"),
   DESCRIPTION(
-    "Shows the Agent IP, Agent subnet, VTEP IP, VTEP MAC and bridges.",
+    "Allocate subnets, VTEP IP and the MAC addresses.",
     ""));
 
-class AgentOverlayHelperProcess : public Process<AgentOverlayHelperProcess>
+class MasterOverlayHelperProcess : public Process<MasterOverlayHelperProcess>
 {
 public:
-  AgentOverlayHelperProcess() : ProcessBase("network") {}
+  MasterOverlayHelperProcess() : ProcessBase("network") {}
 
-  virtual ~AgentOverlayHelperProcess() {}
+  virtual ~MasterOverlayHelperProcess() {}
 
 private:
   void initialize()
   {
-    LOG(INFO) << "Adding route for '" << self().id << "/overlay'";
+    LOG(INFO) << "Adding route for '" << self().id << "/allocate-subnet'";
 
-    route("/overlay",
+    route("/allocate-subnet",
           OVERLAY_HELP,
-          &AgentOverlayHelperProcess::overlay);
+          &MasterOverlayHelperProcess::allocateSubnet);
   }
 
-  void _overlay(
+  void _allocateSubnet(
       const Owned<Promise<http::Response>>& promise,
       const http::Request& request,
       const string cmd,
@@ -128,7 +128,7 @@ private:
     promise->set(http::OK(output.get()));
   }
 
-  Future<http::Response> overlay(const http::Request& request)
+  Future<http::Response> allocateSubnet(const http::Request& request)
   {
     // Get the query string.
     // const Result<string>& value(request.url.query.get("<query_str>"));
@@ -156,25 +156,30 @@ private:
 
     // Wait until subprocess produces result and exits.
     process::await(s.get().status(), read)
-      .onAny(defer(self(), &Self::_overlay, promise, request, cmd, lambda::_1));
+      .onAny(defer(self(),
+                   &Self::_allocateSubnet,
+                   promise,
+                   request,
+                   cmd,
+                   lambda::_1));
 
     return promise->future();
   }
 };
 
 
-class AgentOverlayHelper : public Anonymous
+class MasterOverlayHelper : public Anonymous
 {
 public:
-  AgentOverlayHelper()
+  MasterOverlayHelper()
   {
     VLOG(1) << "Spawning process";
 
-    process = new AgentOverlayHelperProcess();
+    process = new MasterOverlayHelperProcess();
     spawn(process);
   }
 
-  virtual ~AgentOverlayHelper()
+  virtual ~MasterOverlayHelper()
   {
     VLOG(1) << "Terminating process";
 
@@ -184,23 +189,24 @@ public:
   }
 
 private:
-  AgentOverlayHelperProcess* process;
+  MasterOverlayHelperProcess* process;
 };
 
 
 // Module "main".
-Anonymous* createAgentOverlayHelper(const Parameters& parameters)
+Anonymous* createMasterOverlayHelper(const Parameters& parameters)
 {
-  return new AgentOverlayHelper();
+  return new MasterOverlayHelper();
 }
 
 
-// Declares a helper module named 'AgentOverlayHelper'.
-Module<Anonymous> com_mesosphere_mesos_AgentOverlayHelper(
+// Declares a helper module named 'MasterOverlayHelper'.
+Module<Anonymous> com_mesosphere_mesos_MasterOverlayHelper(
   MESOS_MODULE_API_VERSION,
   MESOS_VERSION,
   "Mesosphere",
   "kapil@mesosphere.io",
-  "Agent Overlay Helper Module.",
+  "Master Overlay Helper Module.",
   NULL,
-  createAgentOverlayHelper);
+  createMasterOverlayHelper);
+
