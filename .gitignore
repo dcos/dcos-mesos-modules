@@ -1,28 +1,42 @@
-# Compiled Object files
-*.slo
-*.lo
-*.o
-*.obj
+# First, ignore yourself.
+.gitignore
 
-# Precompiled Headers
-*.gch
-*.pch
+# Files created by ./bootstrap.
+.reviewboardrc
+Makefile.in
+aclocal.m4
+ar-lib
+autom4te.cache
+compile
+config.guess
+config.sub
+configure
+depcomp
+install-sh
+libtool.m4
+ltmain.sh
+ltoptions.m4
+ltsugar.m4
+ltversion.m4
+lt~obsolete.m4
+missing
 
-# Compiled Dynamic libraries
-*.so
-*.dylib
-*.dll
+*.pyc
 
-# Fortran module files
-*.mod
+# Recommended build directory.
+build/
 
-# Compiled Static libraries
-*.lai
-*.la
-*.a
-*.lib
+# OSX Resource
+.DS_Store
 
-# Executables
-*.exe
-*.out
-*.app
+# CTags
+.tags
+.tags_sorted_by_file
+
+# Sublime
+*.sublime-project
+*.sublime-workspace
+
+# CLion
+.idea
+.reviewboardrc
