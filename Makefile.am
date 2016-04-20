@@ -68,14 +68,33 @@ MESOS_CPPFLAGS += -D__STDC_FORMAT_MACROS
 # Setup CPPFLAGS that are used for most source files.
 AM_CPPFLAGS = $(MESOS_CPPFLAGS) -Wall -Werror
 
-# CXX_PROTOS =
+PROTOC = $(PROTOC_PATH)/protoc
+
+PROTOCFLAGS = -I$(top_srcdir)/
+
+CXX_PROTOS = \
+  include/overlay/overlay.pb.cc \
+  include/overlay/overlay.pb.h
+
+# Targets for generating C++ protocol buffer code.
+include/overlay/%.pb.cc include/overlay/%.pb.h: $(top_srcdir)/include/overlay/%.proto
+	$(PROTOC) $(PROTOCFLAGS) --cpp_out=. $^
+
+OVERLAY_PROTO = $(top_srcdir)/include/overlay/overlay.proto
+
+BUILT_SOURCES += \
+  $(CXX_PROTOS)
+
+CLEANFILES +=   \
+  $(CXX_PROTOS)
  
 # Library master/agent anonymous modules.
 pkglib_LTLIBRARIES += libmesos_network_overlay.la
 libmesos_network_overlay_la_SOURCES = 					\
 	src/agent_helper.cpp						\
 	src/master_helper.cpp						\
-	${CXX_PROTOS}
+  ${CXX_PROTOS}
+
 
 libmesos_network_overlay_la_LDFLAGS =					\
 	-release $(PACKAGE_VERSION) -shared $(MESOS_LDFLAGS)
