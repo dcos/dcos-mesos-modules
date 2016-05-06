@@ -1,23 +1,49 @@
-// Licensed to the Apache Software Foundation (ASF) under one
-// or more contributor license agreements.  See the NOTICE file
-// distributed with this work for additional information
-// regarding copyright ownership.  The ASF licenses this file
-// to you under the Apache License, Version 2.0 (the
-// "License"); you may not use this file except in compliance
-// with the License.  You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+/**
+ * This file is © 2014 Mesosphere, Inc. (“Mesosphere”). Mesosphere
+ * licenses this file to you solely pursuant to the following terms
+ * (and you may not use this file except in compliance with such
+ * terms):
+ *
+ * 1) Subject to your compliance with the following terms, Mesosphere
+ * hereby grants you a nonexclusive, limited, personal,
+ * non-sublicensable, non-transferable, royalty-free license to use
+ * this file solely for your internal business purposes.
+ *
+ * 2) You may not (and agree not to, and not to authorize or enable
+ * others to), directly or indirectly:
+ *   (a) copy, distribute, rent, lease, timeshare, operate a service
+ *   bureau, or otherwise use for the benefit of a third party, this
+ *   file; or
+ *
+ *   (b) remove any proprietary notices from this file.  Except as
+ *   expressly set forth herein, as between you and Mesosphere,
+ *   Mesosphere retains all right, title and interest in and to this
+ *   file.
+ *
+ * 3) Unless required by applicable law or otherwise agreed to in
+ * writing, Mesosphere provides this file on an "AS IS" BASIS, WITHOUT
+ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied,
+ * including, without limitation, any warranties or conditions of
+ * TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
+ * PARTICULAR PURPOSE.
+ *
+ * 4) In no event and under no legal theory, whether in tort (including
+ * negligence), contract, or otherwise, unless required by applicable
+ * law (such as deliberate and grossly negligent acts) or agreed to in
+ * writing, shall Mesosphere be liable to you for damages, including
+ * any direct, indirect, special, incidental, or consequential damages
+ * of any character arising as a result of these terms or out of the
+ * use or inability to use this file (including but not limited to
+ * damages for loss of goodwill, work stoppage, computer failure or
+ * malfunction, or any and all other commercial damages or losses),
+ * even if Mesosphere has been advised of the possibility of such
+ * damages.
+ */
 
-package overlay;
+package mesos.modules.overlay;
 
 
-message Bridge {
+message BridgeInfo {
   // IP in CIDR format allocated to this bridge. The bridge will act
   // as a gateway for all containers associated with it.
   required string ip = 1;
@@ -28,7 +54,7 @@ message Bridge {
 }
 
 
-message VTEP {
+message VtepInfo {
   // The IP address associated with a given VTEP.
   required string ip = 1;
 
@@ -40,23 +66,23 @@ message VTEP {
 }
 
 
-message VxLAN {
+message VxLANInfo {
   required uint32 VNI = 1;
-  required VTEP vtep = 2;
+  required VtepInfo vtep = 2;
 }
 
 
 // The different backends that can be used to transport packets from
 // a given Overlay.
-message Backend {
-  optional VxLAN vxlan = 1;
+message BackendInfo {
+  optional VxLANInfo vxlan = 1;
 }
 
 
 // There can be multiple overlay networks that exist simultaneously.
 // This message defines the canonical name of a specific overlay
 // network and the subnet allocated to the overlay.
-message Network {
+message NetworkInfo {
   // Canonical name of the Overlay.
   required string name = 1;
 
@@ -67,38 +93,38 @@ message Network {
 
 // This message defines the properties of an overlay network
 // that exist on an Agent.
-message AgentNetwork {
+message AgentNetworkInfo {
   // The overlay to which this instance belongs.
-  required Network network = 1;
+  required NetworkInfo network = 1;
 
   // The subnet of the overlay that is associated with this Agent.
   // NOTE: This subnet should be a subset of the `overlay` subnet.
   required string subnet = 2;
 
-  // The bridges on the Agent which will be used to support this
-  // `Overlay` instance on the Agent.
-  repeated Bridge bridges = 3;
+  // The bridges which will be used to support this
+  // `Overlay` instance on this Agent.
+  repeated BridgeInfo bridges = 3;
 
   // The VTEP used to tunnel ingress and egress traffic to this
   // overlay.
-  required Backend backend = 4;
+  required BackendInfo backend = 4;
 }
 
 
-message Agent {
+message AgentInfo {
   // The IP address of the agent.
   required string ip = 1;
 
-  // The overlay networks that exist on this Agent.
-  repeated AgentNetwork networks = 2;
+  // The overlay networks that exist on this AgentInfo.
+  repeated AgentNetworkInfo networks = 2;
 }
 
 
 message State {
   // The overlay networks that can exist in the cluster.
-  repeated Network networks = 1;
+  repeated NetworkInfo networks = 1;
 
-  // Agents that run an instance of the overlay networks. On each
+  // Agent that run an instance of the overlay networks. On each
   // Agent there can be at most one instance of each overlay network.
-  repeated Agent agents = 2;
+  repeated AgentInfo agents = 2;
 }

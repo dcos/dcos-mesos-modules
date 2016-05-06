@@ -55,7 +55,7 @@ AM_CXXFLAGS = $(PTHREAD_CFLAGS)
 AM_LIBS = $(PTHREAD_LIBS)
 
 # Add top-level include dir to our include path.
-MESOS_CPPFLAGS += -I$(top_srcdir)/include
+MESOS_CPPFLAGS += -I$(top_srcdir)/include -Iinclude
 
 # Enable the INT64 support for PicoJson.
 # NOTE: PicoJson requires __STDC_FORMAT_MACROS to be defined before importing
@@ -74,13 +74,17 @@ PROTOCFLAGS = -I$(top_srcdir)/
 
 CXX_PROTOS = \
   include/overlay/overlay.pb.cc \
-  include/overlay/overlay.pb.h
+  include/overlay/overlay.pb.h \
+  include/overlay/internal/messages.pb.cc \
+  include/overlay/internal/messages.pb.h
 
 # Targets for generating C++ protocol buffer code.
 include/overlay/%.pb.cc include/overlay/%.pb.h: $(top_srcdir)/include/overlay/%.proto
 	$(PROTOC) $(PROTOCFLAGS) --cpp_out=. $^
 
-OVERLAY_PROTO = $(top_srcdir)/include/overlay/overlay.proto
+include/overlay/interna/%.pb.cc include/overlay/internal/%.pb.h: \
+$(top_srcdir)/include/overlay/internal/%.proto
+	$(PROTOC) $(PROTOCFLAGS) --cpp_out=. $^
 
 BUILT_SOURCES += \
   $(CXX_PROTOS)
@@ -91,8 +95,8 @@ CLEANFILES +=   \
 # Library master/agent anonymous modules.
 pkglib_LTLIBRARIES += libmesos_network_overlay.la
 libmesos_network_overlay_la_SOURCES = 					\
-	src/agent_helper.cpp						\
-	src/master_helper.cpp						\
+	src/agent/manager.cpp						\
+	src/master/manager.cpp						\
   ${CXX_PROTOS}
 
 

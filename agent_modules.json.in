@@ -6,7 +6,7 @@
       "modules":
       [
         {
-          "name": "com_mesosphere_mesos_AgentOverlayHelper"
+          "name": "com_mesosphere_mesos_OverlayAgentManager"
         }
       ]
     }
