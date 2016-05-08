@@ -316,6 +316,8 @@ public:
     }
 
     if (exists.get()) {
+      LOG(INFO) << "Docker bridge for network '"  
+                << name << "' already configured.";
       return Nothing();
     }
 
@@ -375,6 +377,13 @@ public:
 
   Future<Nothing> configureNetwork(const AgentNetworkInfo& network)
   {
+    const string name = network.network().name();
+
+    // Make sure the network exists in the database.
+    if (!networks.contains(name)) {
+      return Failure("Cannot find the network '" + name + "'");
+    }
+
     Option<BridgeInfo> cniBridge = None();
     Option<BridgeInfo> dockerBridge = None();
 
@@ -389,30 +398,42 @@ public:
     }
 
     if (cniBridge.isNone()) {
-      return Failure(
-          "Cannot configure network " + network.network().name() +
-          " due to missing CNI bridge");
+      return _configureNetwork(
+          name,
+          Failure(
+            "Cannot configure network " + name +
+            " due to missing CNI bridge"));
     }
 
     if (dockerBridge.isNone()) {
-      return Failure(
-          "Cannot configure network " + network.network().name() +
-          " due to missing docker bridge");
+      return _configureNetwork(
+          name,
+          Failure(
+            "Cannot configure network " + name +
+            " due to missing docker bridge"));
     }
 
     // Create the CNI network.
-    Try<IPNetwork> mesosSubnet = IPNetwork::parse(cniBridge.get().ip(), AF_INET);
+    Try<IPNetwork> mesosSubnet =
+      IPNetwork::parse(cniBridge.get().ip(), AF_INET);
 
     if (mesosSubnet.isError()) {
-      return Failure(
-          "Could not create Mesos subnet for network '" +
-          network.network().name() + "': " + mesosSubnet.error());
+      return _configureNetwork(
+          name,
+          Failure(
+            "Could not create Mesos subnet for network '" +
+            network.network().name() + "': " +
+            mesosSubnet.error()));
     }
 
     Try<Nothing> cni = createCNI(network.network().name(), mesosSubnet.get());
 
     if (cni.isError()) {
-      return Failure("Unabled to create CNI config: " + cni.error());
+      return _configureNetwork(
+          name,
+          Failure(
+            "Unabled to create CNI config: " +
+            cni.error()));
     }
 
     // Create the docker network.
@@ -420,9 +441,12 @@ public:
       net::IPNetwork::parse(dockerBridge.get().ip(), AF_INET);
 
     if (dockerSubnet.isError()) {
-      return Failure(
-          "Could not create Docker subnet for network '" +
-          network.network().name() + "': " + dockerSubnet.error());
+      return _configureNetwork(
+          name,
+          Failure(
+            "Could not create Docker subnet for network '" +
+            network.network().name() + "': " +
+            dockerSubnet.error()));
     }
 
     return createDockerNetwork(network.network().name(), dockerSubnet.get())
@@ -437,7 +461,7 @@ public:
       const Future<Nothing> result)
   {
     if (!networks.contains(name)) {
-      return Failure("Cannot find the network " + name);
+      return Failure("Cannot find the network '" + name +"'");
     }
 
     if (result.isDiscarded() || result.isFailed()) {
@@ -445,6 +469,10 @@ public:
           AgentRegisteredMessage::NETWORK_FAILED);
       networks[name].mutable_state()->set_error(
           (result.isFailed() ?  result.failure() : "discarded"));
+      // The fact that we couldn't configure the network is not
+      // considered a `Failure`. Since, we have successfully added the
+      // network to the database we should return a success.
+      return Nothing();
     }
 
     networks[name].mutable_state()->set_status(
@@ -473,7 +501,7 @@ public:
         futures.push_back(configureNetwork(networks[name].network()));
       } else {
         LOG(WARNING) << "Network '" << name
-          << "' already configured on agent " << self();
+                     << "' already configured on agent " << self();
       }
     }
 
