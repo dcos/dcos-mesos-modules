@@ -1,7 +1,12 @@
-# Building Overlay Module(s)
-
-For more details on Mesos modules, please see
-[Mesos Modules](http://mesos.apache.org/documentation/latest/modules/).
+# Mesos Module(s) for DC/OS Overlay Network
+The DC/OS overlay network requires a Master module and an Agent module
+within Mesos. The Master module is responsible for providing an
+interface to the operator to specify the parameters of an overlay
+network, and for coordinating the configuration of a given overlay
+network on each Mesos Agent. The Agent module, on receiving a
+notification from the Master, configures an overlay network by
+creating a CNI network for the `MesosContainerizer` and a "docker
+network" for the `DockerContainerizer`.
 
 #Dependencies
 * libgflag-dev (2.0.1): commandline flags module for C++.
@@ -20,6 +25,9 @@ One easy way is to do the following:
 ```
 
 ## Building modules
+For more details on Mesos modules, please see
+[Mesos Modules](http://mesos.apache.org/documentation/latest/modules/).
+
 ```
     ./bootstrap
     mkdir build && cd build
@@ -167,3 +175,47 @@ smaller subnets, that are allocated to each Agent. Splicing the larger
 subnet into smaller ones removes the need to have a global IPAM. The
 "prefix" specifies the subnet mask used to allocate subnets (from the
 overlay address space) to each Agent.
+
+
+## Theory of operation
+The Master module is responsible for generating a configuration for
+each overlay network instance on every Agent module.  For each overlay
+network on the Agent, the Agent module then takes the configuration
+for the overlay network and configures a CNI network for
+`MesosContainerizer` and a docker network for `DockerContainerizer`.
+Below we describe in more detail the operational specifics of the Master
+and Agent modules.
+
+
+### Master module
+For each Agent that registers with the Master the Master allocates an
+IP from the `vtep_subnet`. The Master also allocates the lower 24-bits
+of the VTEP MAC, with the upper 24-bits specified by `vtep_mac_oui`.
+Further, for each overlay network specified in the `overlays` JSON
+config, it allocates a subnet from the overlay `subnet`, using the
+`prefix` length specified for each Agent. 
+
+For Mesos, since each Agent supports the `MesosContainerizer` and the
+`DockerContainerizer` the subnet allocated to the Agent is further
+split into two "equal" subnets. One for the `MesosContainerizer` and
+one for the `DockerContainerizer`. The `MesosContainerizer` uses CNI
+(Container Network Interface) to configure user-defined networks, and
+launch containers on those networks, while the `DockerContainerizer`
+uses "docker user-defined network". These two subnets (allocated by
+the master) are therefore used by the Agent to generate appropriate
+CNI configuration for `MesosContainerizer` and create a "docker
+network" for `DockerContainerizer`.
+
+
+### Agent module
+On receiving a configuration for an overlay an Agent does two things:
+* From the subnet allocated to the `MesosContainerizer`, the Agent module
+creates a CNI config at the location specified by `cni_dir`.
+* From the subnet allocated to the `DockerContainerizer` the Agent
+ module creates a Docker network using the `docker network create`
+ command.
+
+While applying the configuration for each network if the Agent detects
+a failure (for example docker is not installed or docker network
+already exists), the Agent responds to the master with an error.
+
