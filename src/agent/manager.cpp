@@ -376,7 +376,7 @@ public:
 
   Future<Nothing> configureNetwork(const AgentNetworkInfo& network)
   {
-    const string name = network.network().name();
+    const string name = network.info().name();
 
     // Make sure the network exists in the database.
     if (!networks.contains(name)) {
@@ -421,11 +421,11 @@ public:
           name,
           Failure(
             "Could not create Mesos subnet for network '" +
-            network.network().name() + "': " +
+            network.info().name() + "': " +
             mesosSubnet.error()));
     }
 
-    Try<Nothing> cni = createCNI(network.network().name(), mesosSubnet.get());
+    Try<Nothing> cni = createCNI(network.info().name(), mesosSubnet.get());
 
     if (cni.isError()) {
       return _configureNetwork(
@@ -444,14 +444,14 @@ public:
           name,
           Failure(
             "Could not create Docker subnet for network '" +
-            network.network().name() + "': " +
+            network.info().name() + "': " +
             dockerSubnet.error()));
     }
 
-    return createDockerNetwork(network.network().name(), dockerSubnet.get())
+    return createDockerNetwork(network.info().name(), dockerSubnet.get())
       .onAny(defer(self(),
             &ManagerProcess::_configureNetwork,
-            network.network().name(),
+            network.info().name(),
             lambda::_1));
   }
 
@@ -489,7 +489,7 @@ public:
     for (int i = 0; i < config.networks_size(); i++) {
       const AgentNetworkInfo& network = config.networks(i);
 
-      const string name = network.network().name();
+      const string name = network.info().name();
       LOG(INFO) << "Configuring network '" << name << "' received from " << from;
 
       if (!networks.contains(name) ||
@@ -524,7 +524,7 @@ public:
       ack.add_networks()->CopyFrom(network);
 
       LOG(INFO) << "Acknowledging network '"
-        << network.network().network().name() << "' with state: "
+        << network.network().info().name() << "' with state: "
         << (network.state().status() ==
             AgentRegisteredMessage::NETWORK_OK ?  "OK" : "ERROR");
     }

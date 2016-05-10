@@ -310,13 +310,13 @@ public:
 
   void addNetwork(const AgentNetworkInfo& network)
   {
-    if (networks.contains(network.network().name())) {
+    if (networks.contains(network.info().name())) {
       return;
     }
 
-    networks[network.network().name()].mutable_network()->CopyFrom(network);
+    networks[network.info().name()].mutable_network()->CopyFrom(network);
 
-    networks[network.network().name()]
+    networks[network.info().name()]
       .mutable_state()->set_status(AgentRegisteredMessage::NETWORK_PROVISION);
   }
 
@@ -333,10 +333,10 @@ public:
 
   void updateNetworkState(const NetworkState& state)
   {
-    const string name = state.network().network().name();
+    const string name = state.network().info().name();
     if (!networks.contains(name)) {
       LOG(ERROR) << "Got update for unknown network "
-        << state.network().network().name() ;
+        << state.network().info().name() ;
     }
 
     networks[name].mutable_state()->set_status(state.state().status());
@@ -474,8 +474,8 @@ protected:
       foreachpair (const string& name, Overlay& overlay, networks) {
         AgentNetworkInfo network;
 
-        network.mutable_network()->set_name(name);
-        network.mutable_network()->set_subnet(stringify(overlay.network));
+        network.mutable_info()->set_name(name);
+        network.mutable_info()->set_subnet(stringify(overlay.network));
 
         Try<net::IPNetwork> agentSubnet = overlay.allocate();
         if (agentSubnet.isError()) {
@@ -539,7 +539,7 @@ protected:
 
   Try<Nothing> allocateBridges(AgentNetworkInfo& _network)
   {
-    const string name = _network.network().name();
+    const string name = _network.info().name();
 
     Try<IPNetwork> network = net::IPNetwork::parse(
         _network.subnet(),

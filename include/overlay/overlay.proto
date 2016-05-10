@@ -70,9 +70,9 @@ message BackendInfo {
 
 
 // There can be multiple overlay networks that exist simultaneously.
-// This message defines the canonical name of a specific overlay
+// This message contains the canonical name of a specific overlay
 // network and the subnet allocated to the overlay.
-message NetworkInfo {
+message OverlayInfo {
   // Canonical name of the Overlay.
   required string name = 1;
 
@@ -85,7 +85,7 @@ message NetworkInfo {
 // that exist on an Agent.
 message AgentNetworkInfo {
   // The overlay to which this instance belongs.
-  required NetworkInfo network = 1;
+  required OverlayInfo info = 1;
 
   // The subnet of the overlay that is associated with this Agent.
   // NOTE: This subnet should be a subset of the `overlay` subnet.
@@ -111,8 +111,8 @@ message AgentInfo {
 
 
 message State {
-  // The overlay networks that can exist in the cluster.
-  repeated NetworkInfo networks = 1;
+  // The overlay networks that exist in the cluster.
+  repeated OverlayInfo overlays = 1;
 
   // Agent that run an instance of the overlay networks. On each
   // Agent there can be at most one instance of each overlay network.
