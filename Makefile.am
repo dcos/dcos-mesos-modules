@@ -82,10 +82,6 @@ CXX_PROTOS = \
 include/overlay/%.pb.cc include/overlay/%.pb.h: $(top_srcdir)/include/overlay/%.proto
 	$(PROTOC) $(PROTOCFLAGS) --cpp_out=. $^
 
-include/overlay/interna/%.pb.cc include/overlay/internal/%.pb.h: \
-$(top_srcdir)/include/overlay/internal/%.proto
-	$(PROTOC) $(PROTOCFLAGS) --cpp_out=. $^
-
 BUILT_SOURCES += \
   $(CXX_PROTOS)
 
