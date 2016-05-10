@@ -68,10 +68,8 @@
 #include <mesos/module.hpp>
 #include <mesos/module/anonymous.hpp>
 
-#include "common/constants.hpp"
-
-#include "overlay/overlay.pb.h"
-#include "overlay/internal/messages.pb.h"
+#include <overlay/overlay.hpp>
+#include <overlay/internal/messages.hpp>
 
 namespace http = process::http;
 

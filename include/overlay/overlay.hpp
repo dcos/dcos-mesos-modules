@@ -39,10 +39,14 @@
  * even if Mesosphere has been advised of the possibility of such
  * damages.
  */
- #ifndef __CONSTANTS_HPP__
- #define __CONSTANTS_HPP__
 
- #define CNI_BRIDGE_PREFIX  "cni-"
- #define DOCKER_BRIDGE_PREFIX  "docker-"
+#ifndef __OVERLAY_OVERLAY_HPP__
+#define __OVERLAY_OVERLAY_HPP__
 
- #endif // __CONSTANTS_HPP__
+// ONLY USEFUL AFTER RUNNING PROTOC.
+#include <overlay/overlay.pb.h>
+
+constexpr char CNI_BRIDGE_PREFIX[] = "cni-";
+constexpr char DOCKER_BRIDGE_PREFIX[] = "docker-";
+
+#endif // __OVERLAY_OVERLAY_HPP__
