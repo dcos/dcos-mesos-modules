@@ -206,7 +206,7 @@ public:
       link(master.get());
 
       overlayMaster = master;
-      overlayMaster->id = MASTER_MANAGER_PROCESS_ID; 
+      overlayMaster->id = MASTER_MANAGER_PROCESS_ID;
 
       LOG(INFO) << "Querying " << overlayMaster.get()
         << " to get overlay configuration";
@@ -227,7 +227,7 @@ public:
     auto cni = [name, network](JSON::ObjectWriter* writer) {
       writer->field("name", name);
       writer->field("type", "bridge");
-      writer->field("bridge", CNI_BRIDGE_PREFIX + name); 
+      writer->field("bridge", CNI_BRIDGE_PREFIX + name);
       writer->field("isGateway", true);
       writer->field("ipMasq", true);
 
@@ -237,7 +237,7 @@ public:
 
           writer->field("routes", [](JSON::ArrayWriter* writer) {
             writer->element([](JSON::ObjectWriter* writer) {
-              writer->field("dst", "0.0.0.0/0"); 
+              writer->field("dst", "0.0.0.0/0");
               });
             });
           });
@@ -315,7 +315,7 @@ public:
     }
 
     if (exists.get()) {
-      LOG(INFO) << "Docker bridge for network '"  
+      LOG(INFO) << "Docker bridge for network '"
                 << name << "' already configured.";
       return Nothing();
     }
@@ -389,7 +389,7 @@ public:
     for (int i =0; i < network.bridges_size(); i++) {
       if (strings::contains(network.bridges(i).name(), CNI_BRIDGE_PREFIX)) {
         cniBridge = network.bridges(i);
-      } 
+      }
 
       if (strings::contains(network.bridges(i).name(), DOCKER_BRIDGE_PREFIX)) {
         dockerBridge = network.bridges(i);
@@ -532,7 +532,7 @@ public:
     send(overlayMaster.get(), ack);
   }
 
-  ManagerProcess(MasterDetector* _detector, const string& _cniDir) 
+  ManagerProcess(MasterDetector* _detector, const string& _cniDir)
     : ProcessBase("overlay-agent"),
     cniDir(_cniDir),
     detector(_detector){}
@@ -611,11 +611,11 @@ public:
 
     VLOG(1) << "Spawning process";
 
-    process = 
+    process =
       Owned<ManagerProcess>(new ManagerProcess(detector.get(), cniDir));
     spawn(process.get());
 
-    // Wait for the overlay-manager to be ready before 
+    // Wait for the overlay-manager to be ready before
     // allowing the Agent to proceed.
     Future<Nothing> ready = process->ready();
     ready.await();

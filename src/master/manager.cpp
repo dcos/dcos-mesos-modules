@@ -109,23 +109,21 @@ namespace mesos {
 namespace modules {
 namespace overlay {
 namespace master {
+
 constexpr Duration PENDING_MESSAGE_PERIOD = Seconds(10);
 
+
 const string OVERLAY_HELP = HELP(
-  TLDR(
-    "Allocate overlay network resources for Master."),
-  USAGE(
-    "/overlay-master/overlays"),
-  DESCRIPTION(
-  "Allocate subnets, VTEP IP and the MAC addresses.",
-    ""));
+    TLDR("Allocate overlay network resources for Master."),
+    USAGE("/overlay-master/overlays"),
+    DESCRIPTION("Allocate subnets, VTEP IP and the MAC addresses.", "")
+);
 
 
-struct Vtep 
+struct Vtep
 {
   Vtep(const IPNetwork& _network, const MAC _oui)
-    : network(_network),
-    oui(_oui) 
+    : network(_network), oui(_oui)
   {
     uint32_t endIP = 0xffffffff >> (32 - network.prefix());
     uint32_t endMAC = 0xffffffff >> 8;
@@ -210,7 +208,7 @@ struct Vtep
 
     uint32_t _nic ;
 
-    uint8_t* nic = (uint8_t*) &_nic; 
+    uint8_t* nic = (uint8_t*) &_nic;
     nic[1] = mac[3];
     nic[2] = mac[4];
     nic[3] = mac[5];
@@ -232,7 +230,7 @@ struct Vtep
 };
 
 
-struct Overlay 
+struct Overlay
 {
   Overlay(
       const string& _name,
@@ -240,7 +238,7 @@ struct Overlay
       const uint8_t _prefix)
     : name(_name),
     network(_network),
-    prefix(_prefix) 
+    prefix(_prefix)
   {
     // `network` has already been vetted to be an AF_INET address.
     uint32_t endSubnet = 0xffffffff; // 255.255.255.255
@@ -297,7 +295,7 @@ struct Overlay
   net::IPNetwork network;
 
   // Prefix length allocated to each agent.
-  uint8_t prefix; 
+  uint8_t prefix;
 
   // Free subnets available in this network. The subnets are
   // calcualted using the prefix length set for the agents in
@@ -349,34 +347,198 @@ private:
   const UPID pid;
 
   // A list of all overlay networks that reside on this agent.
-  hashmap<string, NetworkState> networks; 
+  hashmap<string, NetworkState> networks;
 };
 
 
-// `ManagerProcess` is responsible for managing all the overlays
-// that exist in the Mesos cluster. For each overlay the manager
-// stores the network associated with overlay and the prefix length of
-// subnets that need to be assigned to Agents. When an Agent registers
-// with the manager, the manager picks a network from each overlay
-// that the manager is aware off and assigns it to the Agent. When the
-// Agent de-registers (or goes away) the manager frees subnets
-// allocated to the Agent for all the overlays that existed on that
-// Agent.
+// `ManagerProcess` is responsible for managing all the overlays that
+// exist in the Mesos cluster. For each overlay the manager stores the
+// network associated with overlay and the prefix length of subnets
+// that need to be assigned to Agents. When an Agent registers with
+// the manager, the manager picks a network from each overlay that the
+// manager is aware off and assigns it to the Agent. When the Agent
+// de-registers (or goes away) the manager frees subnets allocated to
+// the Agent for all the overlays that existed on that Agent.
 class ManagerProcess : public ProtobufProcess<ManagerProcess>
 {
 public:
-  void ackNetwork(const UPID& pid, const AgentRegisteredMessage& ack)
+  ManagerProcess(
+      const Option<JSON::Array> _config,
+      const net::IPNetwork& vtepSubnet,
+      const net::MAC& vtepMACOUI)
+    : ProcessBase("overlay-master"),
+      config(_config),
+      vtep(vtepSubnet, vtepMACOUI)
   {
-    if(agents.contains(pid)) {
-      LOG(INFO) << "Got ACK for addition of networks from " << pid;
-      for(int i=0; i < ack.networks_size(); i++) {
-        agents.at(pid).updateNetworkState(ack.networks(i));
+    if (config.isSome()) {
+      foreach (JSON::Value overlay, config->values) {
+        Try<JSON::Object> network = overlay.as<JSON::Object>();
+        if (network.isError()) {
+          EXIT(EXIT_FAILURE) << "Unable to parse overlay config:"
+            << network.error();
+        }
+
+        LOG(INFO) << "Configuring overlay network:" << network->values["name"];
+
+        const Try<JSON::String> name =
+          network->values["name"].as<JSON::String>();
+        if (name.isError()) {
+          EXIT(EXIT_FAILURE) << "Unable to determine name of overlay network"
+            << name.error();
+        }
+
+        const Try<JSON::String> _address =
+          network->values["subnet"].as<JSON::String>();
+        if (_address.isError()) {
+          EXIT(EXIT_FAILURE) << "Unable to determine the address space of "
+            << "overlay network " << name->value << ": "
+            << _address.error();
+        }
+
+        const Try<JSON::Number> prefix =
+          network->values["prefix"].as<JSON::Number>();
+        if (prefix.isError()) {
+          EXIT(EXIT_FAILURE) << "Unable to determine the prefix length for"
+            << " Agents in the overlay network " << name->value
+            << ": " << prefix.error();
+        }
+
+
+        Try<net::IPNetwork> address =
+          net::IPNetwork::parse(_address->value, AF_INET);
+        if (address.isError()) {
+          EXIT(EXIT_FAILURE) << "Unable to determine subnet for network: "
+            << address.get();
+        }
+
+        Try<Nothing> valid = updateAddressSpace(address.get());
+
+        if (valid.isError()) {
+          EXIT(EXIT_FAILURE) << "Overlay networks need to have 'non-overlapping'"
+            << "address spaces: " << valid.error();
+        }
+
+        networks.emplace(
+            name->value,
+            Overlay(name->value, address.get(), prefix->as<uint8_t>()));
+      }
+    }
+  }
+
+protected:
+  virtual void initialize()
+  {
+    LOG(INFO) << "Adding route for '" << self().id << "/overlays'";
+
+    route("/overlays",
+          OVERLAY_HELP,
+          &ManagerProcess::overlays);
+
+    // When a new agent comes up or an existing agent reconnects with
+    // the master, it'll first send a `RegisterAgentMessage` to the
+    // master. The master will reply with `UpdateAgentNetworkMessage`.
+    install<RegisterAgentMessage>(&ManagerProcess::registerAgent);
+
+    // When the agent finishes its configuration based on the content
+    // in `UpdateAgentNetworkMessage`, it'll reply the master with an
+    // `AgentRegisteredMessage`.
+    // TODO(jieyu): Master should retry `UpdateAgentNetworkMessage` in
+    // case the message gets dropped.
+    install<AgentRegisteredMessage>(&ManagerProcess::agentRegistered);
+  }
+
+  void registerAgent(const UPID& pid)
+  {
+    list<NetworkState> _networks;
+
+    if (!std::get<1>(agents.emplace(pid, pid))) {
+      LOG(INFO) << "Agent " << pid << "re-registering";
+
+      _networks = agents.at(pid).Networks();
+    } else {
+      LOG(INFO) << "Got registration from pid: " << pid;
+
+      Try<net::IPNetwork> vtepIP = vtep.allocateIP();
+      if (vtepIP.isError()) {
+        LOG(ERROR) << "Unable to get VTEP IP for Agent: " << vtepIP.error();
       }
 
-      send(pid, AgentRegisteredAcknowledgement());
+      Try<net::MAC> vtepMAC = vtep.allocateMAC();
+      if (vtepMAC.isError()) {
+        LOG(ERROR) << "Unable to get VTEP MAC for Agent: " << vtepMAC.error();
+      }
+
+      // Walk through all the overlay networks. Allocate a subnet from
+      // each overlay to the Agent. Allocate a VTEP IP and MAC for each
+      // agent. Queue the message on the Agent. Finally, ask Master to
+      // reliably send these messages to the Agent.
+      foreachpair (const string& name, Overlay& overlay, networks) {
+        AgentNetworkInfo network;
+
+        network.mutable_network()->set_name(name);
+        network.mutable_network()->set_subnet(stringify(overlay.network));
+
+        Try<net::IPNetwork> agentSubnet = overlay.allocate();
+        if (agentSubnet.isError()) {
+          LOG(ERROR) << "Cannot allocate subnet from overlay "
+            << name << " to Agent " << pid;
+          continue;
+        }
+        network.set_subnet(stringify(agentSubnet.get()));
+
+        // Allocate bridges for CNI and Docker.
+        Try<Nothing> bridges = allocateBridges(network);
+
+        if (bridges.isError()) {
+          LOG(ERROR) << "Unable to allocate bridge for network "
+            << name << ": " << bridges.error();
+          overlay.free(agentSubnet.get());
+          continue;
+        }
+
+        VxLANInfo vxlan;
+        vxlan.set_vni(1024);
+
+        VtepInfo _vtep;
+        _vtep.set_ip(stringify(vtepIP.get()));
+        _vtep.set_mac(stringify(vtepMAC.get()));
+        _vtep.set_name("vtep1024");
+
+        vxlan.mutable_vtep()->CopyFrom(_vtep);
+
+        BackendInfo backend;
+        backend.mutable_vxlan()->CopyFrom(vxlan);
+
+        network.mutable_backend()->CopyFrom(backend);
+
+        agents.at(pid).addNetwork(network);
+      }
+
+      _networks = agents.at(pid).Networks();
+    }
+
+    // Create the network update message and send it to the Agent.
+    UpdateAgentNetworkMessage update;
+
+    foreach(const NetworkState& network, _networks) {
+      update.add_networks()->CopyFrom(network.network());
+    }
+
+    send(pid, update);
+  }
+
+  void agentRegistered(const UPID& from, const AgentRegisteredMessage& message)
+  {
+    if(agents.contains(from)) {
+      LOG(INFO) << "Got ACK for addition of networks from " << from;
+      for(int i=0; i < message.networks_size(); i++) {
+        agents.at(from).updateNetworkState(message.networks(i));
+      }
+
+      send(from, AgentRegisteredAcknowledgement());
     } else {
       LOG(ERROR) << "Got ACK for network message for non-existent PID "
-        << pid;
+        << from;
     }
   }
 
@@ -386,7 +548,7 @@ public:
 
     Try<IPNetwork> network = net::IPNetwork::parse(
         _network.subnet(),
-        AF_INET); 
+        AF_INET);
 
     if (network.isError()) {
       return Error("Unable to parse the subnet of the network '" +
@@ -444,100 +606,6 @@ public:
     return Nothing();
   }
 
-  void agentRegister(const UPID& pid)
-  {
-    list<NetworkState> _networks;
-
-    if (!std::get<1>(agents.emplace(pid, pid))) {
-      LOG(INFO) << "Agent " << pid << "re-registering."; 
-
-      _networks = agents.at(pid).Networks();
-    } else {
-      LOG(INFO) << "Got registration from pid: " << pid;
-
-      Try<net::IPNetwork> vtepIP = vtep.allocateIP(); 
-      if (vtepIP.isError()) {
-        LOG(ERROR) << "Unable to get VTEP IP for Agent: " << vtepIP.error();
-      }
-
-      Try<net::MAC> vtepMAC = vtep.allocateMAC();
-      if (vtepMAC.isError()) {
-        LOG(ERROR) << "Unable to get VTEP MAC for Agent: " << vtepMAC.error();
-      }
-
-      // Walk through all the overlay networks. Allocate a subnet from
-      // each overlay to the Agent. Allocate a VTEP IP and MAC for each
-      // agent.  Queue the message on the Agent. Finally, ask Master to
-      // reliably send these messages to the Agent.
-      foreachpair(const string& name, Overlay& overlay, networks) {
-        AgentNetworkInfo network;
-
-        network.mutable_network()->set_name(name);
-        network.mutable_network()->set_subnet(stringify(overlay.network));
-
-        Try<net::IPNetwork> agentSubnet = overlay.allocate();
-        if (agentSubnet.isError()) {
-          LOG(ERROR) << "Cannot allocate subnet from overlay "
-            << name << " to Agent " << pid;
-          continue;
-        }
-        network.set_subnet(stringify(agentSubnet.get()));
-
-        // Allocate bridges for CNI and Docker.
-        Try<Nothing> bridges = allocateBridges(network);
-
-        if (bridges.isError()) {
-          LOG(ERROR) << "Unable to allocate bridge for network "
-            << name << ": " << bridges.error();
-          overlay.free(agentSubnet.get());
-          continue;
-        }
-
-        VxLANInfo vxlan;
-        vxlan.set_vni(1024);
-
-        VtepInfo _vtep;
-        _vtep.set_ip(stringify(vtepIP.get()));
-        _vtep.set_mac(stringify(vtepMAC.get()));
-        _vtep.set_name("vtep1024");
-
-        vxlan.mutable_vtep()->CopyFrom(_vtep);
-
-        BackendInfo backend;
-        backend.mutable_vxlan()->CopyFrom(vxlan);
-
-        network.mutable_backend()->CopyFrom(backend);
-
-        agents.at(pid).addNetwork(network);
-      }
-
-      _networks = agents.at(pid).Networks();
-    }
-
-    // Create the network update message and send it to the Agent.
-    UpdateAgentNetworkMessage update;
-
-    foreach(const NetworkState& network, _networks) {
-      update.add_networks()->CopyFrom(network.network());
-    }
-
-    send(pid, update);
-  }
-
-  void initialize()
-  {
-    LOG(INFO) << "Adding route for '" << self().id << "/overlays'";
-
-    route("/overlays",
-        OVERLAY_HELP,
-        &ManagerProcess::overlays);
-
-    // Install call-backs for registration messages.
-    install<RegisterAgentMessage>(&ManagerProcess::agentRegister);
-
-    install<AgentRegisteredMessage>(&ManagerProcess::ackNetwork);
-  }
-
   Try<Nothing> updateAddressSpace(const IPNetwork &network)
   {
     uint32_t startIP = ntohl(network.address().in().get().s_addr);
@@ -557,72 +625,9 @@ public:
     return Nothing();
   }
 
-  ManagerProcess(
-      const Option<JSON::Array> _config,
-      const net::IPNetwork& vtepSubnet,
-      const net::MAC& vtepMACOUI) 
-    : ProcessBase("overlay-master"),
-    config(_config),
-    vtep(vtepSubnet, vtepMACOUI)
-  {
-    if (config.isSome()) {
-      foreach (JSON::Value overlay, config->values) {
-        Try<JSON::Object> network = overlay.as<JSON::Object>();
-        if (network.isError()) {
-          EXIT(EXIT_FAILURE) << "Unable to parse overlay config:"
-            << network.error();
-        }
-
-        LOG(INFO) << "Configuring overlay network:" << network->values["name"]; 
-
-        const Try<JSON::String> name =
-          network->values["name"].as<JSON::String>();
-        if (name.isError()) {
-          EXIT(EXIT_FAILURE) << "Unable to determine name of overlay network"
-            << name.error();
-        }
-
-        const Try<JSON::String> _address = 
-          network->values["subnet"].as<JSON::String>();
-        if (_address.isError()) {
-          EXIT(EXIT_FAILURE) << "Unable to determine the address space of "
-            << "overlay network " << name->value << ": "
-            << _address.error();
-        }
-
-        const Try<JSON::Number> prefix = 
-          network->values["prefix"].as<JSON::Number>();
-        if (prefix.isError()) {
-          EXIT(EXIT_FAILURE) << "Unable to determine the prefix length for"
-            << " Agents in the overlay network " << name->value
-            << ": " << prefix.error();
-        }
-
-
-        Try<net::IPNetwork> address =
-          net::IPNetwork::parse(_address->value, AF_INET); 
-        if (address.isError()) {
-          EXIT(EXIT_FAILURE) << "Unable to determine subnet for network: "
-            << address.get();
-        }
-
-        Try<Nothing> valid = updateAddressSpace(address.get());
-
-        if (valid.isError()) {
-          EXIT(EXIT_FAILURE) << "Overlay networks need to have 'non-overlapping'"
-            << "address spaces: " << valid.error();
-        }
-
-        networks.emplace(
-            name->value,
-            Overlay(name->value, address.get(), prefix->as<uint8_t>()));
-      }
-    }
-  }
-
   Future<http::Response> overlays(const http::Request& request)
   {
-    return http::OK("Hello this is the `ManagerProcess`.");  
+    return http::OK("Hello this is the `ManagerProcess`.");
   }
 
 private:
