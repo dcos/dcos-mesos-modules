@@ -72,29 +72,27 @@ PROTOC = $(PROTOC_PATH)/protoc
 
 PROTOCFLAGS = -I$(top_srcdir)/
 
-CXX_PROTOS = \
-  include/overlay/overlay.pb.cc \
-  include/overlay/overlay.pb.h \
-  include/overlay/internal/messages.pb.cc \
+CXX_PROTOS =					\
+  include/overlay/overlay.pb.cc			\
+  include/overlay/overlay.pb.h			\
+  include/overlay/internal/messages.pb.cc	\
   include/overlay/internal/messages.pb.h
 
 # Targets for generating C++ protocol buffer code.
 include/overlay/%.pb.cc include/overlay/%.pb.h: $(top_srcdir)/include/overlay/%.proto
 	$(PROTOC) $(PROTOCFLAGS) --cpp_out=. $^
 
-BUILT_SOURCES += \
-  $(CXX_PROTOS)
+BUILT_SOURCES += $(CXX_PROTOS)
 
-CLEANFILES +=   \
-  $(CXX_PROTOS)
+CLEANFILES += $(CXX_PROTOS)
  
 # Library master/agent anonymous modules.
 pkglib_LTLIBRARIES += libmesos_network_overlay.la
-libmesos_network_overlay_la_SOURCES = 					\
-	src/agent/manager.cpp						\
-	src/master/manager.cpp						\
+libmesos_network_overlay_la_SOURCES =		\
+  src/agent/manager.cpp				\
+  src/master/manager.cpp			\
   ${CXX_PROTOS}
 
-
-libmesos_network_overlay_la_LDFLAGS =					\
-	-release $(PACKAGE_VERSION) -shared $(MESOS_LDFLAGS)
+libmesos_network_overlay_la_LDFLAGS =		\
+  -release $(PACKAGE_VERSION)			\
+  -shared $(MESOS_LDFLAGS)
