@@ -54,21 +54,11 @@ message BridgeInfo {
 }
 
 
-message VtepInfo {
-  // The IP address associated with a given VTEP.
-  required string ip = 1;
-
-  // The MAC address associated with a given MAC.
-  required string mac = 2;
-
-  // The device name for this VTEP.
-  required string name = 3;
-}
-
-
 message VxLANInfo {
-  required uint32 VNI = 1;
-  required VtepInfo vtep = 2;
+  required uint32 vni = 1;
+  required string vtep_name = 2;
+  required string vtep_ip = 3;
+  required string vtep_mac = 4;
 }
 
 

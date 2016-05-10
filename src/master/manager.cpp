@@ -95,7 +95,6 @@ using mesos::modules::Anonymous;
 using mesos::modules::Module;
 using mesos::modules::overlay::AgentNetworkInfo;
 using mesos::modules::overlay::BackendInfo;
-using mesos::modules::overlay::VtepInfo;
 using mesos::modules::overlay::VxLANInfo;
 using mesos::modules::overlay::internal::AgentRegisteredAcknowledgement;
 using mesos::modules::overlay::internal::AgentRegisteredMessage;
@@ -498,13 +497,9 @@ protected:
 
         VxLANInfo vxlan;
         vxlan.set_vni(1024);
-
-        VtepInfo _vtep;
-        _vtep.set_ip(stringify(vtepIP.get()));
-        _vtep.set_mac(stringify(vtepMAC.get()));
-        _vtep.set_name("vtep1024");
-
-        vxlan.mutable_vtep()->CopyFrom(_vtep);
+        vxlan.set_vtep_name("vtep1024");
+        vxlan.set_vtep_ip(stringify(vtepIP.get()));
+        vxlan.set_vtep_mac(stringify(vtepMAC.get()));
 
         BackendInfo backend;
         backend.mutable_vxlan()->CopyFrom(vxlan);
