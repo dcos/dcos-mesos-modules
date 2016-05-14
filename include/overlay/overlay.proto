@@ -44,13 +44,12 @@ package mesos.modules.overlay;
 
 
 message BridgeInfo {
-  // IP in CIDR format allocated to this bridge. The bridge will act
-  // as a gateway for all containers associated with it.
-  required string ip = 1;
+	// The device name for the bridge.
+  required string name = 1;
 
-  // A canonical name for the bridge. Will be used to configure the
-  // bridge device.
-  required string name = 2;
+	// IP in CIDR format allocated to this bridge. The bridge will act
+	// as a gateway for all containers associated with it.
+  required string ip = 2;
 }
 
 
@@ -62,8 +61,8 @@ message VxLANInfo {
 }
 
 
-// The different backends that can be used to transport packets from
-// a given Overlay.
+// The different backends that can be used to tunnel ingress and
+// egress traffic.
 message BackendInfo {
   optional VxLANInfo vxlan = 1;
 }
@@ -73,31 +72,46 @@ message BackendInfo {
 // This message contains the canonical name of a specific overlay
 // network and the subnet allocated to the overlay.
 message OverlayInfo {
-  // Canonical name of the Overlay.
   required string name = 1;
-
-  // Subnet associated with this overlay.
   required string subnet = 2;
 }
 
 
-// This message defines the properties of an overlay network
-// that exist on an Agent.
-message AgentNetworkInfo {
+// This message defines the properties of an overlay network that
+// exist on an Agent.
+message AgentOverlayInfo {
   // The overlay to which this instance belongs.
   required OverlayInfo info = 1;
 
   // The subnet of the overlay that is associated with this Agent.
   // NOTE: This subnet should be a subset of the `overlay` subnet.
+  // TODO(jieyu): We might want to support multiple subnets per agent
+  // in case that agent request more IPs than that's available in that
+  // subnet.
   required string subnet = 2;
 
-  // The bridges which will be used to support this
-  // `Overlay` instance on this Agent.
-  repeated BridgeInfo bridges = 3;
+	// The bridges which will be used to support this overlay instance
+	// on this Agent.
+  // TODO(jieyu): Similarly, we might want to have multiple Mesos or
+  // Docker bridges per agent for each overlay.
+  optional BridgeInfo mesos_bridge = 3;
+  optional BridgeInfo docker_bridge = 4;
 
-  // The VTEP used to tunnel ingress and egress traffic to this
-  // overlay.
-  required BackendInfo backend = 4;
+  // The backend used to tunnel ingress and egress traffic.
+  required BackendInfo backend = 5;
+
+  message State {
+    enum Status {
+      STATUS_INVALID = 0;
+      STATUS_OK = 1;
+      STATUS_FAILED = 2;
+    }
+
+    required Status status = 1;
+    optional string error = 2;
+  }
+
+  optional State state = 6;
 }
 
 
@@ -105,8 +119,8 @@ message AgentInfo {
   // The IP address of the agent.
   required string ip = 1;
 
-  // The overlay networks that exist on this AgentInfo.
-  repeated AgentNetworkInfo networks = 2;
+  // The overlay networks that exist on this agent.
+  repeated AgentOverlayInfo overlays = 2;
 }
 
 

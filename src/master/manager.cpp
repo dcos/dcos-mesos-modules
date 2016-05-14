@@ -93,16 +93,14 @@ using process::USAGE;
 
 using mesos::modules::Anonymous;
 using mesos::modules::Module;
-using mesos::modules::overlay::AgentNetworkInfo;
+using mesos::modules::overlay::AgentOverlayInfo;
 using mesos::modules::overlay::BackendInfo;
 using mesos::modules::overlay::VxLANInfo;
 using mesos::modules::overlay::internal::AgentRegisteredAcknowledgement;
 using mesos::modules::overlay::internal::AgentRegisteredMessage;
 using mesos::modules::overlay::internal::RegisterAgentMessage;
-using mesos::modules::overlay::internal::UpdateAgentNetworkMessage;
+using mesos::modules::overlay::internal::UpdateAgentOverlaysMessage;
 using mesos::Parameters;
-
-using NetworkState = AgentRegisteredMessage::NetworkState;
 
 namespace mesos {
 namespace modules {
@@ -308,35 +306,32 @@ class Agent
 public:
   Agent(const UPID& _pid) : pid(_pid) {};
 
-  void addNetwork(const AgentNetworkInfo& network)
+  void addNetwork(const AgentOverlayInfo& overlay)
   {
-    if (networks.contains(network.info().name())) {
+    if (overlays.contains(overlay.info().name())) {
       return;
     }
 
-    networks[network.info().name()].mutable_network()->CopyFrom(network);
-
-    networks[network.info().name()]
-      .mutable_state()->set_status(AgentRegisteredMessage::NETWORK_PROVISION);
+    overlays[overlay.info().name()].CopyFrom(overlay);
   }
 
-  const list<NetworkState> Networks()
+  const list<AgentOverlayInfo> Networks()
   {
-    list<NetworkState> _networks;
+    list<AgentOverlayInfo> _overlays;
 
-    foreachvalue(const NetworkState& network, networks) {
-      _networks.push_back(network);
+    foreachvalue (const AgentOverlayInfo& overlay, overlays) {
+      _overlays.push_back(overlay);
     }
 
-    return _networks;
+    return _overlays;
   }
 
   void updateNetworkState(const NetworkState& state)
   {
-    const string name = state.network().info().name();
+    const string name = state.overlay().info().name();
     if (!networks.contains(name)) {
       LOG(ERROR) << "Got update for unknown network "
-        << state.network().info().name() ;
+        << state.overlay().info().name() ;
     }
 
     networks[name].mutable_state()->set_status(state.state().status());
@@ -346,7 +341,7 @@ private:
   const UPID pid;
 
   // A list of all overlay networks that reside on this agent.
-  hashmap<string, NetworkState> networks;
+  hashmap<string, AgentOverlayInfo> overlays;
 };
 
 
@@ -472,10 +467,10 @@ protected:
       // agent. Queue the message on the Agent. Finally, ask Master to
       // reliably send these messages to the Agent.
       foreachpair (const string& name, Overlay& overlay, networks) {
-        AgentNetworkInfo network;
+        AgentOverlayInfo _overlay;
 
-        network.mutable_info()->set_name(name);
-        network.mutable_info()->set_subnet(stringify(overlay.network));
+        _overlay.mutable_info()->set_name(name);
+        _overlay.mutable_info()->set_subnet(stringify(overlay.network));
 
         Try<net::IPNetwork> agentSubnet = overlay.allocate();
         if (agentSubnet.isError()) {
@@ -483,10 +478,10 @@ protected:
             << name << " to Agent " << pid;
           continue;
         }
-        network.set_subnet(stringify(agentSubnet.get()));
+        _overlay.set_subnet(stringify(agentSubnet.get()));
 
         // Allocate bridges for CNI and Docker.
-        Try<Nothing> bridges = allocateBridges(network);
+        Try<Nothing> bridges = allocateBridges(_overlay);
 
         if (bridges.isError()) {
           LOG(ERROR) << "Unable to allocate bridge for network "
@@ -504,19 +499,19 @@ protected:
         BackendInfo backend;
         backend.mutable_vxlan()->CopyFrom(vxlan);
 
-        network.mutable_backend()->CopyFrom(backend);
+        _overlay.mutable_backend()->CopyFrom(backend);
 
-        agents.at(pid).addNetwork(network);
+        agents.at(pid).addNetwork(_overlay);
       }
 
       _networks = agents.at(pid).Networks();
     }
 
     // Create the network update message and send it to the Agent.
-    UpdateAgentNetworkMessage update;
+    UpdateAgentOverlaysMessage update;
 
     foreach(const NetworkState& network, _networks) {
-      update.add_networks()->CopyFrom(network.network());
+      update.add_overlays()->CopyFrom(network.overlay());
     }
 
     send(pid, update);
@@ -537,12 +532,12 @@ protected:
     }
   }
 
-  Try<Nothing> allocateBridges(AgentNetworkInfo& _network)
+  Try<Nothing> allocateBridges(AgentOverlayInfo& _overlay)
   {
-    const string name = _network.info().name();
+    const string name = _overlay.info().name();
 
     Try<IPNetwork> network = net::IPNetwork::parse(
-        _network.subnet(),
+        _overlay.subnet(),
         AF_INET);
 
     if (network.isError()) {
@@ -591,12 +586,12 @@ protected:
     BridgeInfo cniBridgeInfo;
     cniBridgeInfo.set_ip(stringify(cniSubnet.get()));
     cniBridgeInfo.set_name(CNI_BRIDGE_PREFIX + name);
-    _network.add_bridges()->CopyFrom(cniBridgeInfo);
+    _overlay.add_bridges()->CopyFrom(cniBridgeInfo);
 
     BridgeInfo dockerBridgeInfo;
     dockerBridgeInfo.set_ip(stringify(dockerSubnet.get()));
     dockerBridgeInfo.set_name(DOCKER_BRIDGE_PREFIX + name);
-    _network.add_bridges()->CopyFrom(dockerBridgeInfo);
+    _overlay.add_bridges()->CopyFrom(dockerBridgeInfo);
 
     return Nothing();
   }

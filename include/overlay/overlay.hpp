@@ -46,7 +46,17 @@
 // ONLY USEFUL AFTER RUNNING PROTOC.
 #include <overlay/overlay.pb.h>
 
+namespace mesos {
+namespace modules {
+namespace overlay {
+
 constexpr char CNI_BRIDGE_PREFIX[] = "cni-";
 constexpr char DOCKER_BRIDGE_PREFIX[] = "docker-";
+constexpr char MASTER_MANAGER_PROCESS_ID[] = "overlay-master";
+constexpr char AGENT_MANAGER_PROCESS_ID[] = "overlay-agent";
+
+} // namespace overlay{
+} // namespace modules {
+} // namespace mesos {
 
 #endif // __OVERLAY_OVERLAY_HPP__

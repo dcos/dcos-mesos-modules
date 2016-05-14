@@ -44,15 +44,16 @@ package mesos.modules.overlay.internal;
 
 import "include/overlay/overlay.proto";
 
+
 // Message used by the Agent to register with the overlay-master.
 message RegisterAgentMessage {
 }
 
 
 // Message used by the Master to inform the Agent about configured
-// networks.
-message UpdateAgentNetworkMessage {
-  repeated AgentNetworkInfo networks = 1;
+// overlay networks.
+message UpdateAgentOverlaysMessage {
+  repeated AgentOverlayInfo overlays = 1;
 }
 
 
@@ -61,24 +62,7 @@ message UpdateAgentNetworkMessage {
 // message informs the Master about the status of the networks on the
 // Agent.
 message AgentRegisteredMessage {
-  enum Status {
-    NETWORK_PROVISION = 1;
-    NETWORK_OK = 2;
-    NETWORK_FAILED = 3;
-  }
-
-  message State {
-    required Status status = 1; 
-    optional string error = 2;
-  }
-
-  message NetworkState {
-    required AgentNetworkInfo network = 1;
-    required State state = 2;
-  }
-
-  // Name of the network received by the Agent.
-  repeated NetworkState networks = 1;
+  repeated AgentOverlayInfo overlays = 1;
 }
 
 
