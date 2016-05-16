@@ -8,6 +8,7 @@ from optparse import OptionParser
 from sets import Set
 
 #JSON keys
+DOCKER_NETWORK_NAME="docker-network-name"
 DOCKER_NETWORK="docker-network"
 NETWORK="network"
 AGENTIP="agent-ip"
@@ -19,6 +20,7 @@ VTEPS="vteps"
 MACS="macs"
 
 required_keys = set([
+  DOCKER_NETWORK_NAME,
   DOCKER_NETWORK,
   NETWORK,
   AGENTIP,
@@ -48,8 +50,8 @@ def exec_output(cmd, errMsg):
 
 
 def main():
-  usage = "usage: %prog [options] arg1 arg2"
-  parser = OptionParser()
+  usage = "usage: %prog [options] <config>"
+  parser = OptionParser(usage=usage)
 
   (options, args) = parser.parse_args();
 
@@ -71,28 +73,27 @@ def main():
     else:
       print "Found key ", key
 
-  networkUUID = exec_output(
+  try:
+    networkInfo = subprocess.check_call(
       ["docker",
-      "network",
-      "create",
-      "--driver=bridge",
-      "--subnet=" + overlayInfo[NETWORK],
-      overlayInfo[DOCKER_NETWORK]],
-      "Unable to create the docker network")
-  networkUUID=networkUUID.lstrip().rstrip()
+       "network",
+       "inspect",
+       overlayInfo[DOCKER_NETWORK_NAME]])
 
-  print "Created docker network %s with UUID:%s" % \
-      (overlayInfo[DOCKER_NETWORK], networkUUID)
-
-  networkInfo = exec_output(
+    print "Docker Network: " + str(networkInfo)
+  except Exception as err:
+    print "The docker network does not exist, will try creating it:" + str(err)
+    networkUUID = exec_output(
       ["docker",
-      "network",
-      "inspect",
-      networkUUID],
-      "Unable to inspect the docker network")
-
-  networkInfo = json.loads(networkInfo)
-  print "JSON:", networkInfo
+       "network",
+       "create",
+       "--driver=bridge",
+       "--subnet=" + overlayInfo[DOCKER_NETWORK],
+       overlayInfo[DOCKER_NETWORK_NAME]],
+       "Unable to create the docker network")
+    networkUUID=networkUUID.lstrip().rstrip()
+    print "Created docker network %s with UUID:%s" % \
+      d(overlayInfo[DOCKER_NETWORK_NAME], networkUUID)
 
   # Add the PBR rule.
   exec_call(
@@ -132,7 +133,7 @@ def main():
       ["ip",
       "addr",
       "add",
-      overlayInfo[VXLANIP]+"/8",
+      overlayInfo[VXLANIP],
       "dev",
       "vtep"+overlayInfo[VXLAN]], 
       "Unable to assign IP address to vtep" +\
