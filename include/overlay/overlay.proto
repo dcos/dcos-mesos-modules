@@ -68,12 +68,18 @@ message BackendInfo {
 }
 
 
-// There can be multiple overlay networks that exist simultaneously.
-// This message contains the canonical name of a specific overlay
-// network and the subnet allocated to the overlay.
+// This message describes a particular overlay network.  There can be
+// multiple overlay networks that exist simultaneously.
 message OverlayInfo {
+  // Canonical name identifying the overlay network.
   required string name = 1;
+
+  // The subnet associated with this overlay network.
   required string subnet = 2;
+
+  // The prefix length used to carve out subnets for Agents, from the
+  // subnet assigned to this overlay.
+  required uint32 prefix = 3;
 }
 
 
@@ -131,4 +137,22 @@ message State {
   // Agent that run an instance of the overlay networks. On each
   // Agent there can be at most one instance of each overlay network.
   repeated AgentInfo agents = 2;
+}
+
+
+// Message describing the parameters required to configure a network on
+// a Mesos cluster. A network can consist of multiple overlay networks
+// with non-overlapping address spaces.
+message NetworkConfig {
+  // The subnet used to allocate IP address to VTEPs on Agents.
+  required string vtep_subnet = 1;
+
+  // The first 24-bits of VTEP MAC address. When the master assigns
+  // VTEPs to Agents it will choose a different lower 24-bit address 
+  // for each Agent.
+  required string vtep_mac_oui = 2;
+
+  // The overlay networks that need to be configured on the DC/OS
+  // cluster.
+  repeated OverlayInfo overlays = 3;
 }

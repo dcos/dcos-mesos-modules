@@ -73,7 +73,7 @@ for the Agent module:
             "parameters" : [
             {
               "key" : "master",
-              "value" : "10.0.2.15:5050"
+              "value" : "localhost:5050"
             },
             {
               "key" : "cni_dir",
@@ -114,14 +114,6 @@ configuration for the Master module:
             {
               "key": "overlays",
               "value" : "/var/lib/mesos/overlay-config.json"
-            },
-            {
-              "key" : "vtep_subnet",
-              "value": "44.128.0.0/16"
-            },
-            {
-              "key" : "vtep_mac_oui",
-              "value" : "70:B3:D5:00:00:00"
             }
             ]
           }
@@ -137,9 +129,6 @@ configuration are as follows:
 JSON configuration for each overlay network that needs to exist on
 the cluster. You can read about the formation of the overlay 
 configuration file in the "Configuring Overlays" section.
-* `vtep_subnet`: The address space from which VTEP IP will be
-allocated.
-* `vtep_mac_oui`: The first 24 bits of the VTEP MAC.
 
 
 ## Configuring Overlays
@@ -148,26 +137,41 @@ The location of this JSON configuration is specified using the
 parameter `overlays` in the Master JSON configuration. Here is an
 example JSON configuration to specify overlay networks:
 
-```
-[
+```{.json}
 {
-  "name" : "vxlan-1",
-    "subnet" : "192.168.0.0/17",
-    "prefix" : 24
-},
-{
-  "name" : "vxlan-2",
-  "subnet" : "192.168.128.0/17",
-  "prefix" : 24
+  "vtep_subnet": "44.128.0.0/16",
+  "vtep_mac_oui": "70:B3:D5:00:00:00",
+  "overlays": [
+    {
+      "name" : "vxlan-1",
+      "subnet" : "192.168.0.0/17",
+      "prefix" : 24
+    },
+    {
+      "name" : "vxlan-2",
+      "subnet" : "192.168.128.0/17",
+      "prefix" : 24
+    }
+  ]
 }
-]
 ```
 
+The VxLAN backend required by the overlay requires VTEPs to be
+configured on each Agent. The operator needs to specify the IP address
+and the MAC address space from which the IP and the MAC of the VTEP
+will be allocated. This can be done using the following parameters in
+the overlay configuration:
+* `vtep_subnet`: The address space from which VTEP IP will be
+allocated.
+* `vtep_mac_oui`: The first 24 bits of the VTEP MAC.
+
 There can be multiple overlays specified in the JSON configuration.
-Each overlay instance needs the following parameters specified:
+The overlay networks are specified using the parameter `overlays` in
+the JSON configuration.  Each overlay instance needs the following
+parameters specified:
 * `name` : A canonical name for the overlay network. This is the
-"name" that will be used by frameworks to specify the overlay
-network on which they want to launch the container.
+"name" that will be used by frameworks to specify the overlay network
+on which they want to launch the container.
 * `subnet`: The address space that will be used to allocate IP to
 containers launched on this overlay network.
 * `prefix`: The address space of the overlay network is spliced into

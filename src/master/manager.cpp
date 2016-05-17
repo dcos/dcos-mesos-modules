@@ -50,6 +50,7 @@
 #include <stout/json.hpp>
 #include <stout/mac.hpp>
 #include <stout/os.hpp>
+#include <stout/protobuf.hpp>
 #include <stout/stringify.hpp>
 #include <stout/try.hpp>
 
@@ -95,6 +96,7 @@ using mesos::modules::Anonymous;
 using mesos::modules::Module;
 using mesos::modules::overlay::AgentOverlayInfo;
 using mesos::modules::overlay::BackendInfo;
+using mesos::modules::overlay::NetworkConfig;
 using mesos::modules::overlay::VxLANInfo;
 using mesos::modules::overlay::internal::AgentRegisteredAcknowledgement;
 using mesos::modules::overlay::internal::AgentRegisteredMessage;
@@ -356,67 +358,106 @@ private:
 class ManagerProcess : public ProtobufProcess<ManagerProcess>
 {
 public:
-  ManagerProcess(
-      const Option<JSON::Array> _config,
-      const net::IPNetwork& vtepSubnet,
-      const net::MAC& vtepMACOUI)
-    : ProcessBase("overlay-master"),
-      config(_config),
-      vtep(vtepSubnet, vtepMACOUI)
+  static Try<Owned<ManagerProcess>> createManagerProcess(
+      const NetworkConfig& networkConfig)
   {
-    if (config.isSome()) {
-      foreach (JSON::Value overlay, config->values) {
-        Try<JSON::Object> _overlay = overlay.as<JSON::Object>();
-        if (_overlay.isError()) {
-          EXIT(EXIT_FAILURE) << "Unable to parse overlay config:"
-                             << _overlay.error();
-        }
+    Try<net::IPNetwork> vtepSubnet =
+      net::IPNetwork::parse(networkConfig.vtep_subnet(), AF_INET);
+    if (vtepSubnet.isError()) {
+      return Error(
+          "Unable to parse the VTEP Subnet: " + vtepSubnet.error());
+    }
 
-        LOG(INFO) << "Configuring overlay network:" << _overlay->values["name"];
+    vector<string> tokens = strings::split(networkConfig.vtep_mac_oui(), ":");
+    if (tokens.size() != 6) {
+      return Error(
+          "Invalid OUI MAC address. Mac address " +
+          networkConfig.vtep_mac_oui() + " needs to be in"
+          " the format xx:xx:xx:00:00:00");
+    }
 
-        const Try<JSON::String> name =
-          _overlay->values["name"].as<JSON::String>();
-        if (name.isError()) {
-          EXIT(EXIT_FAILURE) << "Unable to determine name of overlay network"
-                             << name.error();
-        }
-
-        const Try<JSON::String> _address =
-          _overlay->values["subnet"].as<JSON::String>();
-        if (_address.isError()) {
-          EXIT(EXIT_FAILURE) << "Unable to determine the address space of "
-                             << "overlay network " << name->value << ": "
-                             << _address.error();
-        }
-
-        const Try<JSON::Number> prefix =
-          _overlay->values["prefix"].as<JSON::Number>();
-        if (prefix.isError()) {
-          EXIT(EXIT_FAILURE) << "Unable to determine the prefix length for"
-                             << " Agents in the overlay network " << name->value
-                             << ": " << prefix.error();
-        }
-
-
-        Try<net::IPNetwork> address =
-          net::IPNetwork::parse(_address->value, AF_INET);
-        if (address.isError()) {
-          EXIT(EXIT_FAILURE) << "Unable to determine subnet for network: "
-                             << address.get();
-        }
-
-        Try<Nothing> valid = updateAddressSpace(address.get());
-
-        if (valid.isError()) {
-          EXIT(EXIT_FAILURE) << "Overlay networks need to have 'non-overlapping'"
-                             << "address spaces: " << valid.error();
-        }
-
-        overlays.emplace(
-            name->value,
-            Overlay(name->value, address.get(), prefix->as<uint8_t>()));
+    uint8_t mac[6];
+    for (size_t i = 0; i < tokens.size(); i++) {
+      sscanf(tokens[i].c_str(), "%hhx", &mac[i]);
+      if ( i > 2 && mac[i] != 0) {
+        return Error(
+          "Invalid OUI MAC address: " + networkConfig.vtep_mac_oui() +
+          ". Least significant three bytes should not be"
+          " set for the OUI"); 
+        
       }
     }
+
+    net::MAC vtepMACOUI(mac);
+
+    list<Overlay> overlays;
+    IntervalSet<uint32_t> addressSpace;
+
+    // Overlay networks cannot have overlapping IP addresses. This
+    // lambda keeps track of the current address space and returns an
+    // `Error` if it detects an overlay that is going to use an
+    // already configured address space.
+    auto updateAddressSpace =
+      [&addressSpace](const IPNetwork &network) -> Try<Nothing> {
+        uint32_t startIP = ntohl(network.address().in().get().s_addr);
+
+        uint32_t mask = ntohl(network.netmask().in().get().s_addr);
+        mask = ~mask;
+
+        uint32_t endIP = startIP | mask;
+
+        Interval<uint32_t> overlaySpace =
+          (Bound<uint32_t>::closed(startIP), Bound<uint32_t> ::closed(endIP));
+
+        if (addressSpace.intersects(overlaySpace)) {
+          return Error("Found overlapping address spaces");
+        }
+
+        addressSpace += overlaySpace;
+
+        return Nothing();
+      };
+
+    for (int i = 0; i < networkConfig.overlays_size(); i++) {
+      OverlayInfo overlay = networkConfig.overlays(i);
+
+      LOG(INFO) << "Configuring overlay network:" << overlay.name();
+
+      Try<net::IPNetwork> address =
+        net::IPNetwork::parse(overlay.subnet(), AF_INET);
+      if (address.isError()) {
+        return Error(
+            "Unable to determine subnet for network: " +
+            stringify(address.get()));
+      }
+
+      Try<Nothing> valid = updateAddressSpace(address.get());
+
+      if (valid.isError()) {
+        return Error(
+            "Incorrect address space for the overlay network '" +
+            overlay.name() + "': " + valid.error());
+      }
+
+      overlays.push_back(
+          Overlay(
+            overlay.name(),
+            address.get(),
+            (uint8_t) overlay.prefix()));
+    }
+
+    if (overlays.empty()) {
+      return Error(
+          "Could not find any overlay configuration. Specify at"
+          " least one overlay");
+    }
+
+    return Owned<ManagerProcess>(
+        new ManagerProcess(
+          overlays,
+          vtepSubnet.get(),
+          vtepMACOUI));
+
   }
 
 protected:
@@ -471,6 +512,7 @@ protected:
 
         _overlay.mutable_info()->set_name(name);
         _overlay.mutable_info()->set_subnet(stringify(overlay.network));
+        _overlay.mutable_info()->set_prefix(overlay.prefix);
 
         Try<net::IPNetwork> agentSubnet = overlay.allocate();
         if (agentSubnet.isError()) {
@@ -596,34 +638,24 @@ protected:
     return Nothing();
   }
 
-  Try<Nothing> updateAddressSpace(const IPNetwork &network)
-  {
-    uint32_t startIP = ntohl(network.address().in().get().s_addr);
-    uint32_t mask = ntohl(network.netmask().in().get().s_addr);
-    mask = ~mask;
-    uint32_t endIP = startIP | mask;
-
-    Interval<uint32_t> overlaySpace =
-      (Bound<uint32_t>::closed(startIP) , Bound<uint32_t> ::closed(endIP));
-
-    if (addressSpace.intersects(overlaySpace)) {
-      return Error("Found overlapping address spaces");
-    }
-
-    addressSpace += overlaySpace;
-
-    return Nothing();
-  }
-
   Future<http::Response> network(const http::Request& request)
   {
     return http::OK("Hello this is the `ManagerProcess`.");
   }
 
 private:
-  IntervalSet<uint32_t> addressSpace;
+  ManagerProcess(
+      const list<Overlay>& _overlays,
+      const net::IPNetwork& vtepSubnet,
+      const net::MAC& vtepMACOUI)
+    : ProcessBase("overlay-master"),
+      vtep(vtepSubnet, vtepMACOUI)
+  {
+      foreach (const Overlay& overlay, _overlays) {
+        overlays.emplace(overlay.name, overlay);
+      }
+  }
 
-  Option<JSON::Array> config;
 
   Vtep vtep;
 
@@ -634,33 +666,18 @@ private:
 class Manager : public Anonymous
 {
 public:
-  Manager(
-      const string& _vtepSubnet,
-      const string& _vtepMACOUI,
-      Option<JSON::Array> overlays)
+  static Try<Manager*> createManager(const NetworkConfig& networkConfig)
   {
-    VLOG(1) << "Spawning process";
+    Try<Owned<ManagerProcess>> process =
+      ManagerProcess::createManagerProcess(networkConfig);
 
-    Try<net::IPNetwork> vtepSubnet = net::IPNetwork::parse(_vtepSubnet, AF_INET);
-    if (vtepSubnet.isError()) {
-      EXIT(EXIT_FAILURE) << "Unable to parse the VTEP Subnet: "
-                         << vtepSubnet.error();
+    if (process.isError()) {
+      return Error(
+          "Unable to create the `Manager` process: " +
+          process.error());
     }
 
-    vector<string> tokens = strings::split(_vtepMACOUI, ":");
-    CHECK_EQ(6, tokens.size());
-
-    uint8_t mac[6];
-    for (size_t i = 0; i < tokens.size(); i++) {
-      sscanf(tokens[i].c_str(), "%hhx", &mac[i]);
-    }
-
-    net::MAC vtepMACOUI(mac);
-
-    process =
-      Owned<ManagerProcess>(
-          new ManagerProcess(overlays, vtepSubnet.get(), vtepMACOUI));
-    spawn(process.get());
+    return new Manager(process.get());
   }
 
   virtual ~Manager()
@@ -672,6 +689,14 @@ public:
   }
 
 private:
+  Manager(Owned<ManagerProcess> _process)
+  : process(_process)
+  {
+    VLOG(1) << "Spawning process";
+
+    spawn(process.get());
+  }
+
   Owned<ManagerProcess> process;
 };
 
@@ -683,65 +708,70 @@ private:
 using mesos::modules::overlay::master::Manager;
 using mesos::modules::overlay::master::ManagerProcess;
 
+Try<NetworkConfig> parseNetworkConfig(const string& s)
+{
+  Try<JSON::Object> json = JSON::parse<JSON::Object>(s);
+  if (json.isError()) {
+    return Error("JSON parse failed: " + json.error());
+  }
+
+  Try<NetworkConfig> parse =
+    ::protobuf::parse<NetworkConfig>(json.get());
+
+  if (parse.isError()) {
+    return Error("Protobuf parse failed: " + parse.error());
+  }
+
+  return parse.get();
+}
+
 // Module "main".
 Anonymous* createOverlayMasterManager(const Parameters& parameters)
 {
-  Option<JSON::Array> overlays = None();
-  Option<string> vtepSubnet = None();
-  Option<string> vtepMACOUI = None();
+  Option<NetworkConfig> networkConfig = None();
 
   VLOG(1) << "Parameters:";
   foreach (const mesos::Parameter& parameter, parameters.parameter()) {
     VLOG(1) << parameter.key() << ": " << parameter.value();
 
-    if (parameter.key() == "overlays") {
+    if (parameter.key() == "network_config") {
       if (!os::exists(parameter.value())) {
-        EXIT(EXIT_FAILURE) << "Unable to find the overlay configuration";
+        EXIT(EXIT_FAILURE)
+          << "Unable to find the network configuration";
       }
 
       Try<string> config = os::read(parameter.value());
       if (config.isError()) {
-        EXIT(EXIT_FAILURE) << "Unable to read the overlay configuration: "
+        EXIT(EXIT_FAILURE) << "Unable to read the network configuration: "
                            << config.error();
       }
 
-      Try<JSON::Array> _overlays = JSON::parse<JSON::Array>(config.get());
+      Try<NetworkConfig> _networkConfig = parseNetworkConfig(config.get());
 
-      if (_overlays.isError()) {
-        EXIT(EXIT_FAILURE) << "Unable to prase the overlay JSON configuration: "
-                           << _overlays.error();
+      if (_networkConfig.isError()) {
+        EXIT(EXIT_FAILURE)
+          << "Unable to prase the overlay JSON configuration: "
+          << _networkConfig.error();
       }
 
-      if (_overlays->values.size() == 0) {
-        EXIT(EXIT_FAILURE) << "The overlay manager needs at least one"
-                           << "overlay to be specified";
-      }
-
-      overlays = _overlays.get();
-    }
-
-    if (parameter.key() == "vtep_subnet") {
-      vtepSubnet = parameter.value();
-    }
-
-    if (parameter.key() == "vtep_mac_oui") {
-      vtepMACOUI = parameter.value();
+      networkConfig = _networkConfig.get();
     }
   }
 
-  if (overlays.isNone()) {
-    EXIT(EXIT_FAILURE) << "No overlays specified";
+  if (networkConfig.isNone()) {
+    EXIT(EXIT_FAILURE) << "No network configuration specified";
   }
 
-  if (vtepSubnet.isNone()) {
-    EXIT(EXIT_FAILURE) << "No Vtep subnet specified";
+  Try<Manager*> manager = Manager::createManager(networkConfig.get());
+
+  if (manager.isError()) {
+    EXIT(EXIT_FAILURE)
+      << "Unable to create the Master manager module: "
+      << manager.error();
+
   }
 
-  if (vtepMACOUI.isNone()) {
-    EXIT(EXIT_FAILURE) << "No Vtep MAC OUI specified";
-  }
-
-  return new Manager(vtepSubnet.get(), vtepMACOUI.get(), overlays);
+  return manager.get();
 }
 
 
