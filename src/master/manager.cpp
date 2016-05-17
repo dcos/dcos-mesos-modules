@@ -285,7 +285,7 @@ struct Overlay
     return Nothing();
   }
 
-  // Cannonical name of the network.
+  // Canonical name of the network.
   std::string name;
 
   // Network allocated to this overlay.
@@ -306,7 +306,7 @@ class Agent
 public:
   Agent(const UPID& _pid) : pid(_pid) {};
 
-  void addNetwork(const AgentOverlayInfo& overlay)
+  void addOverlay(const AgentOverlayInfo& overlay)
   {
     if (overlays.contains(overlay.info().name())) {
       return;
@@ -315,7 +315,7 @@ public:
     overlays[overlay.info().name()].CopyFrom(overlay);
   }
 
-  const list<AgentOverlayInfo> Networks()
+  const list<AgentOverlayInfo> getOverlays()
   {
     list<AgentOverlayInfo> _overlays;
 
@@ -326,15 +326,15 @@ public:
     return _overlays;
   }
 
-  void updateNetworkState(const NetworkState& state)
+  void updateOverlayState(const AgentOverlayInfo& overlay)
   {
-    const string name = state.overlay().info().name();
-    if (!networks.contains(name)) {
+    const string name = overlay.info().name();
+    if (!overlays.contains(name)) {
       LOG(ERROR) << "Got update for unknown network "
-        << state.overlay().info().name() ;
+                 << overlay.info().name() ;
     }
 
-    networks[name].mutable_state()->set_status(state.state().status());
+    overlays[name].mutable_state()->set_status(overlay.state().status());
   }
 
 private:
@@ -366,35 +366,35 @@ public:
   {
     if (config.isSome()) {
       foreach (JSON::Value overlay, config->values) {
-        Try<JSON::Object> network = overlay.as<JSON::Object>();
-        if (network.isError()) {
+        Try<JSON::Object> _overlay = overlay.as<JSON::Object>();
+        if (_overlay.isError()) {
           EXIT(EXIT_FAILURE) << "Unable to parse overlay config:"
-            << network.error();
+                             << _overlay.error();
         }
 
-        LOG(INFO) << "Configuring overlay network:" << network->values["name"];
+        LOG(INFO) << "Configuring overlay network:" << _overlay->values["name"];
 
         const Try<JSON::String> name =
-          network->values["name"].as<JSON::String>();
+          _overlay->values["name"].as<JSON::String>();
         if (name.isError()) {
           EXIT(EXIT_FAILURE) << "Unable to determine name of overlay network"
-            << name.error();
+                             << name.error();
         }
 
         const Try<JSON::String> _address =
-          network->values["subnet"].as<JSON::String>();
+          _overlay->values["subnet"].as<JSON::String>();
         if (_address.isError()) {
           EXIT(EXIT_FAILURE) << "Unable to determine the address space of "
-            << "overlay network " << name->value << ": "
-            << _address.error();
+                             << "overlay network " << name->value << ": "
+                             << _address.error();
         }
 
         const Try<JSON::Number> prefix =
-          network->values["prefix"].as<JSON::Number>();
+          _overlay->values["prefix"].as<JSON::Number>();
         if (prefix.isError()) {
           EXIT(EXIT_FAILURE) << "Unable to determine the prefix length for"
-            << " Agents in the overlay network " << name->value
-            << ": " << prefix.error();
+                             << " Agents in the overlay network " << name->value
+                             << ": " << prefix.error();
         }
 
 
@@ -402,17 +402,17 @@ public:
           net::IPNetwork::parse(_address->value, AF_INET);
         if (address.isError()) {
           EXIT(EXIT_FAILURE) << "Unable to determine subnet for network: "
-            << address.get();
+                             << address.get();
         }
 
         Try<Nothing> valid = updateAddressSpace(address.get());
 
         if (valid.isError()) {
           EXIT(EXIT_FAILURE) << "Overlay networks need to have 'non-overlapping'"
-            << "address spaces: " << valid.error();
+                             << "address spaces: " << valid.error();
         }
 
-        networks.emplace(
+        overlays.emplace(
             name->value,
             Overlay(name->value, address.get(), prefix->as<uint8_t>()));
       }
@@ -426,7 +426,7 @@ protected:
 
     route("/overlays",
           OVERLAY_HELP,
-          &ManagerProcess::overlays);
+          &ManagerProcess::network);
 
     // When a new agent comes up or an existing agent reconnects with
     // the master, it'll first send a `RegisterAgentMessage` to the
@@ -443,12 +443,12 @@ protected:
 
   void registerAgent(const UPID& pid)
   {
-    list<NetworkState> _networks;
+    list<AgentOverlayInfo> _overlays;
 
     if (!std::get<1>(agents.emplace(pid, pid))) {
       LOG(INFO) << "Agent " << pid << "re-registering";
 
-      _networks = agents.at(pid).Networks();
+      _overlays = agents.at(pid).getOverlays();
     } else {
       LOG(INFO) << "Got registration from pid: " << pid;
 
@@ -466,7 +466,7 @@ protected:
       // each overlay to the Agent. Allocate a VTEP IP and MAC for each
       // agent. Queue the message on the Agent. Finally, ask Master to
       // reliably send these messages to the Agent.
-      foreachpair (const string& name, Overlay& overlay, networks) {
+      foreachpair (const string& name, Overlay& overlay, overlays) {
         AgentOverlayInfo _overlay;
 
         _overlay.mutable_info()->set_name(name);
@@ -475,7 +475,7 @@ protected:
         Try<net::IPNetwork> agentSubnet = overlay.allocate();
         if (agentSubnet.isError()) {
           LOG(ERROR) << "Cannot allocate subnet from overlay "
-            << name << " to Agent " << pid;
+                     << name << " to Agent " << pid;
           continue;
         }
         _overlay.set_subnet(stringify(agentSubnet.get()));
@@ -485,7 +485,7 @@ protected:
 
         if (bridges.isError()) {
           LOG(ERROR) << "Unable to allocate bridge for network "
-            << name << ": " << bridges.error();
+                     << name << ": " << bridges.error();
           overlay.free(agentSubnet.get());
           continue;
         }
@@ -501,17 +501,17 @@ protected:
 
         _overlay.mutable_backend()->CopyFrom(backend);
 
-        agents.at(pid).addNetwork(_overlay);
+        agents.at(pid).addOverlay(_overlay);
       }
 
-      _networks = agents.at(pid).Networks();
+      _overlays = agents.at(pid).getOverlays();
     }
 
     // Create the network update message and send it to the Agent.
     UpdateAgentOverlaysMessage update;
 
-    foreach(const NetworkState& network, _networks) {
-      update.add_overlays()->CopyFrom(network.overlay());
+    foreach(const AgentOverlayInfo& overlay, _overlays) {
+      update.add_overlays()->CopyFrom(overlay);
     }
 
     send(pid, update);
@@ -521,8 +521,8 @@ protected:
   {
     if(agents.contains(from)) {
       LOG(INFO) << "Got ACK for addition of networks from " << from;
-      for(int i=0; i < message.networks_size(); i++) {
-        agents.at(from).updateNetworkState(message.networks(i));
+      for(int i=0; i < message.overlays_size(); i++) {
+        agents.at(from).updateOverlayState(message.overlays(i));
       }
 
       send(from, AgentRegisteredAcknowledgement());
@@ -586,12 +586,12 @@ protected:
     BridgeInfo cniBridgeInfo;
     cniBridgeInfo.set_ip(stringify(cniSubnet.get()));
     cniBridgeInfo.set_name(CNI_BRIDGE_PREFIX + name);
-    _overlay.add_bridges()->CopyFrom(cniBridgeInfo);
+    _overlay.mutable_mesos_bridge()->CopyFrom(cniBridgeInfo);
 
     BridgeInfo dockerBridgeInfo;
     dockerBridgeInfo.set_ip(stringify(dockerSubnet.get()));
     dockerBridgeInfo.set_name(DOCKER_BRIDGE_PREFIX + name);
-    _overlay.add_bridges()->CopyFrom(dockerBridgeInfo);
+    _overlay.mutable_docker_bridge()->CopyFrom(dockerBridgeInfo);
 
     return Nothing();
   }
@@ -615,7 +615,7 @@ protected:
     return Nothing();
   }
 
-  Future<http::Response> overlays(const http::Request& request)
+  Future<http::Response> network(const http::Request& request)
   {
     return http::OK("Hello this is the `ManagerProcess`.");
   }
@@ -627,7 +627,7 @@ private:
 
   Vtep vtep;
 
-  hashmap<string, Overlay> networks;
+  hashmap<string, Overlay> overlays;
   hashmap<UPID, Agent> agents;
 };
 
@@ -644,7 +644,7 @@ public:
     Try<net::IPNetwork> vtepSubnet = net::IPNetwork::parse(_vtepSubnet, AF_INET);
     if (vtepSubnet.isError()) {
       EXIT(EXIT_FAILURE) << "Unable to parse the VTEP Subnet: "
-        << vtepSubnet.error();
+                         << vtepSubnet.error();
     }
 
     vector<string> tokens = strings::split(_vtepMACOUI, ":");
