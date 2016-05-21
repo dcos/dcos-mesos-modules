@@ -248,6 +248,17 @@ struct Overlay
        Bound<uint32_t>::closed(endSubnet));
   }
 
+  OverlayInfo getOverlayInfo() const 
+  {
+    OverlayInfo overlay;
+
+    overlay.set_name(name);
+    overlay.set_subnet(stringify(network));
+    overlay.set_prefix(prefix);
+
+    return overlay;
+  }
+
   Try<net::IPNetwork> allocate()
   {
     if (freeNetworks.empty()) {
@@ -317,7 +328,7 @@ public:
     overlays[overlay.info().name()].CopyFrom(overlay);
   }
 
-  const list<AgentOverlayInfo> getOverlays()
+  list<AgentOverlayInfo> getOverlays() const
   {
     list<AgentOverlayInfo> _overlays;
 
@@ -333,6 +344,19 @@ public:
     foreachvalue (AgentOverlayInfo& overlay, overlays) {
       overlay.clear_state();
     }
+  }
+
+  AgentInfo getAgentInfo() const
+  {
+    AgentInfo info;
+
+    info.set_ip(stringify(pid.address.ip));
+
+    foreachvalue(const AgentOverlayInfo& overlay, overlays) {
+      info.add_overlays()->CopyFrom(overlay);
+    }
+
+    return info;
   }
 
   void updateOverlayState(const AgentOverlayInfo& overlay)
@@ -477,11 +501,11 @@ public:
 protected:
   virtual void initialize()
   {
-    LOG(INFO) << "Adding route for '" << self().id << "/overlays'";
+    LOG(INFO) << "Adding route for '" << self().id << "/state'";
 
-    route("/overlays",
+    route("/state",
           OVERLAY_HELP,
-          &ManagerProcess::network);
+          &ManagerProcess::state);
 
     // When a new agent comes up or an existing agent reconnects with
     // the master, it'll first send a `RegisterAgentMessage` to the
@@ -656,9 +680,23 @@ protected:
     return Nothing();
   }
 
-  Future<http::Response> network(const http::Request& request)
+  Future<http::Response> state(const http::Request& request)
   {
-    return http::OK("Hello this is the `ManagerProcess`.");
+    State state;
+
+    VLOG(1) << "Responding to `state` endpoint";
+
+    foreachvalue (const Overlay& overlay, overlays) {
+      state.add_overlays()->CopyFrom(overlay.getOverlayInfo());
+    }
+
+    foreachvalue (const Agent& agent, agents) {
+      state.add_agents()->CopyFrom(agent.getAgentInfo());
+    }
+
+    return http::OK(
+        JSON::protobuf(state),
+        request.url.query.get("jsonp"));
   }
 
 private:
