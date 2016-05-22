@@ -407,10 +407,10 @@ protected:
       return Failure("Failed to parse bridge ip: " + subnet.error());
     }
 
-    auto config = [name, subnet](JSON::ObjectWriter* writer) {
+    auto config = [name, subnet, overlay](JSON::ObjectWriter* writer) {
       writer->field("name", name);
       writer->field("type", "bridge");
-      writer->field("bridge", CNI_BRIDGE_PREFIX + name);
+      writer->field("bridge", overlay.mesos_bridge().name());
       writer->field("isGateway", true);
       writer->field("ipMasq", true);
 
@@ -452,7 +452,7 @@ protected:
       "docker",
       "network",
       "inspect",
-      DOCKER_BRIDGE_PREFIX + name
+      name
     };
 
     Try<Subprocess> s = subprocess(
@@ -512,7 +512,9 @@ protected:
       "create",
       "--driver=bridge",
       "--subnet=" + stringify(subnet.get()),
-      DOCKER_BRIDGE_PREFIX + name
+      "--opt=com.docker.network.bridge.name=" +
+      overlay.docker_bridge().name(),
+      name
     };
 
     Try<Subprocess> s = subprocess(
@@ -528,33 +530,33 @@ protected:
 
     return await(s->status(), io::read(s->err().get()))
       .then([name](const tuple<
-          Future<Option<int>>,
-          Future<string>>& t) -> Future<Nothing> {
-        Future<Option<int>> status = std::get<0>(t);
-        if (!status.isReady()) {
+            Future<Option<int>>,
+            Future<string>>& t) -> Future<Nothing> {
+          Future<Option<int>> status = std::get<0>(t);
+          if (!status.isReady()) {
           return Failure(
-              "Failed to get the exit status of 'docker network create': " +
-              (status.isFailed() ? status.failure() : "discarded"));
-        }
+            "Failed to get the exit status of 'docker network create': " +
+            (status.isFailed() ? status.failure() : "discarded"));
+          }
 
-        if (status->isNone()) {
+          if (status->isNone()) {
           return Failure("Failed to reap the subprocess");
-        }
+          }
 
-        Future<string> err = std::get<1>(t);
-        if (!err.isReady()) {
+          Future<string> err = std::get<1>(t);
+          if (!err.isReady()) {
           return Failure(
-              "Failed to read stderr from the subprocess: " +
-              (err.isFailed() ? err.failure() : "discarded"));
-        }
+            "Failed to read stderr from the subprocess: " +
+            (err.isFailed() ? err.failure() : "discarded"));
+          }
 
-        if (status.get() != 0) {
-          return Failure(
-              "Failed to create user-defined docker network '" +
-              name + "': " + err.get());
-        }
+          if (status.get() != 0) {
+            return Failure(
+                "Failed to create user-defined docker network '" +
+                name + "': " + err.get());
+          }
 
-        return Nothing();
+          return Nothing();
       });
   }
 

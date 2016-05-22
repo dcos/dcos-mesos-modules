@@ -458,6 +458,17 @@ public:
             overlay.name());
       }
 
+      // The overlay name is used to derive the Mesos bridge and
+      // Docker bridge names. Since, in Linux, network device names
+      // cannot excced 15 characters, we need to impose the limit on
+      // the overlay network name.
+      if (overlay.name().size() > MAX_OVERLAY_NAME) {
+        return Error(
+            "Overlay name: " + overlay.name() +
+            " too long cannot, exceed " + stringify(MAX_OVERLAY_NAME) +
+            "  characters");
+      }
+
       LOG(INFO) << "Configuring overlay network:" << overlay.name();
 
       Try<net::IPNetwork> address =
@@ -669,7 +680,7 @@ protected:
     //Update the bridge info.
     BridgeInfo cniBridgeInfo;
     cniBridgeInfo.set_ip(stringify(cniSubnet.get()));
-    cniBridgeInfo.set_name(CNI_BRIDGE_PREFIX + name);
+    cniBridgeInfo.set_name(MESOS_BRIDGE_PREFIX + name);
     _overlay.mutable_mesos_bridge()->CopyFrom(cniBridgeInfo);
 
     BridgeInfo dockerBridgeInfo;
