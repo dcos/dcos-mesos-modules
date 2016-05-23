@@ -412,7 +412,7 @@ protected:
       writer->field("type", "bridge");
       writer->field("bridge", overlay.mesos_bridge().name());
       writer->field("isGateway", true);
-      writer->field("ipMasq", true);
+      writer->field("ipMasq", false);
 
       writer->field("ipam", [subnet](JSON::ObjectWriter* writer) {
         writer->field("type", "host-local");
@@ -514,6 +514,7 @@ protected:
       "--subnet=" + stringify(subnet.get()),
       "--opt=com.docker.network.bridge.name=" +
       overlay.docker_bridge().name(),
+      "--opt=\"com.docker.network.bridge.enable_ip_masquerade\"=false",
       name
     };
 
