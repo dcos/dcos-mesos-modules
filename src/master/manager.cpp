@@ -328,6 +328,13 @@ public:
     return _overlays;
   }
 
+  void clearOverlaysState()
+  {
+    foreachvalue (AgentOverlayInfo& overlay, overlays) {
+      overlay.clear_state();
+    }
+  }
+
   void updateOverlayState(const AgentOverlayInfo& overlay)
   {
     const string name = overlay.info().name();
@@ -390,7 +397,7 @@ public:
 
     net::MAC vtepMACOUI(mac);
 
-    list<Overlay> overlays;
+    hashmap<string, Overlay> overlays;
     IntervalSet<uint32_t> addressSpace;
 
     // Overlay networks cannot have overlapping IP addresses. This
@@ -421,6 +428,12 @@ public:
     for (int i = 0; i < networkConfig.overlays_size(); i++) {
       OverlayInfo overlay = networkConfig.overlays(i);
 
+      if (overlays.contains(overlay.name())) {
+        return Error(
+            "Duplicate overlay configuration detected for overlay: " +
+            overlay.name());
+      }
+
       LOG(INFO) << "Configuring overlay network:" << overlay.name();
 
       Try<net::IPNetwork> address =
@@ -439,7 +452,8 @@ public:
             overlay.name() + "': " + valid.error());
       }
 
-      overlays.push_back(
+      overlays.emplace(
+          overlay.name(),
           Overlay(
             overlay.name(),
             address.get(),
@@ -488,6 +502,10 @@ protected:
 
     if (!std::get<1>(agents.emplace(pid, pid))) {
       LOG(INFO) << "Agent " << pid << "re-registering";
+
+      // Reset existing state of the overlays, since the Agent, after
+      // restart, does not expect the overlays to have any state.
+      agents.at(pid).clearOverlaysState();
 
       _overlays = agents.at(pid).getOverlays();
     } else {
@@ -645,22 +663,17 @@ protected:
 
 private:
   ManagerProcess(
-      const list<Overlay>& _overlays,
+      const hashmap<string, Overlay>& _overlays,
       const net::IPNetwork& vtepSubnet,
       const net::MAC& vtepMACOUI)
     : ProcessBase("overlay-master"),
-      vtep(vtepSubnet, vtepMACOUI)
-  {
-      foreach (const Overlay& overlay, _overlays) {
-        overlays.emplace(overlay.name, overlay);
-      }
-  }
-
-
-  Vtep vtep;
+      overlays(_overlays),
+      vtep(vtepSubnet, vtepMACOUI) {};
 
   hashmap<string, Overlay> overlays;
   hashmap<UPID, Agent> agents;
+
+  Vtep vtep;
 };
 
 class Manager : public Anonymous
