@@ -122,6 +122,7 @@ namespace mesos {
 namespace modules {
 namespace overlay {
 namespace agent {
+constexpr char IPSET_OVERLAY[] = "overlay";
 
 constexpr Duration REGISTRATION_RETRY_INTERVAL_MAX = Minutes(10);
 constexpr Duration INITIAL_BACKOFF_PERIOD = Seconds(30);
@@ -137,13 +138,189 @@ static string OVERLAY_HELP()
 }
 
 
+static Future<string> runCommand(
+    const string& command,
+    const vector<string>& argv)
+{
+  Try<Subprocess> s = subprocess(
+      command,
+      argv,
+      Subprocess::PATH("/dev/null"),
+      Subprocess::PIPE(),
+      Subprocess::PIPE());
+
+  if (s.isError()) {
+    return Failure("Unable to execute '" + command + "': " + s.error());
+  }
+
+  return await(
+      s->status(),
+      io::read(s->out().get()),
+      io::read(s->err().get()))
+    .then([command](
+          const tuple<Future<Option<int>>,
+          Future<string>,
+          Future<string>>& t) -> Future<string> {
+        Future<Option<int>> status = std::get<0>(t);
+        if (!status.isReady()) {
+        return Failure(
+          "Failed to get the exit status of '" + command +"': " +
+          (status.isFailed() ? status.failure() : "discarded"));
+        }
+
+        if (status->isNone()) {
+        return Failure("Failed to reap the subprocess");
+        }
+
+        Future<string> out = std::get<1>(t);
+        if (!out.isReady()) {
+        return Failure(
+          "Failed to read stderr from the subprocess: " +
+          (out.isFailed() ? out.failure() : "discarded"));
+        }
+
+        Future<string> err = std::get<2>(t);
+        if (!err.isReady()) {
+          return Failure(
+              "Failed to read stderr from the subprocess: " +
+              (err.isFailed() ? err.failure() : "discarded"));
+        }
+
+        if (status.get() != 0) {
+          return Failure(
+              "Failed to execute '" + command + "': " + err.get());
+        }
+
+        return out.get();
+    });
+}
+
+
 class ManagerProcess : public ProtobufProcess<ManagerProcess>
 {
 public:
-  ManagerProcess(const string& _cniDir, Owned<MasterDetector> _detector)
-    : ProcessBase(AGENT_MANAGER_PROCESS_ID),
-      cniDir(_cniDir),
-      detector(_detector) {}
+  static Try<Owned<ManagerProcess>> createManagerProcess(
+      const string& cniDir,
+      Owned<MasterDetector>& detector) 
+  {
+    // It is imperative that MASQUERADE rules are not enforced on
+    // overlay traffic. To ensure that overlay traffic is not NATed,
+    // the Agent module disables masquerade on Docker and Mesos
+    // network, and installs MASQUERADE rules during initialization. 
+    // The MASQUERADE rule works as follows:
+    // * The Agent creates an 'ipset' which will hold all the overlay
+    // subnets that are configured on the agent.
+    // * The Agent inserts an 'iptables' rule that uses the 'ipset' to
+    // ensure that traffic destined to any of the overlay subnet is
+    // not masqueraded.
+    //
+    // NOTE: We need to serialize the execution of the 'ipset' and
+    // 'iptables' command to ensure that the MASQUERADE rules have
+    // been installed correctly before allowing the creation of the
+    // `ManagerProcess`.
+    Future<string> ipset =
+      runCommand(
+          "ipset",
+          {"ipset",
+           "create",
+           "-exist",
+           IPSET_OVERLAY,
+           "hash:net",
+           "counters"});
+  
+    ipset.await();
+
+    if (!ipset.isReady()) {
+      return Error(
+          "Unable to create ipset:" +
+          (ipset.isDiscarded() ?  "discarded" : ipset.failure()));
+    }
+
+    ipset =
+      runCommand(
+          "ipset",
+          {"ipset",
+           "add",
+           "-exist",
+           IPSET_OVERLAY,
+           "0.0.0.0/1"});
+  
+    ipset.await();
+
+    if (!ipset.isReady()) {
+      return Error(
+          "Unable to add 0.0.0.0/1 to ipset:" +
+          (ipset.isDiscarded() ?  "discarded" : ipset.failure()));
+    }
+
+    ipset =
+      runCommand(
+          "ipset",
+          {"ipset",
+           "add",
+           "-exist",
+           IPSET_OVERLAY,
+           "128.0.0.0/1"});
+  
+    // We cannot process before the 'ipset' is created.
+    ipset.await();
+
+    if (!ipset.isReady()) {
+      return Error(
+          "Unable to add 128.0.0.0/1 to ipset:" +
+          (ipset.isDiscarded() ?  "discarded" : ipset.failure()));
+    }
+
+    Future<string> iptablesCheck =
+      runCommand(
+          "iptables",
+          {"iptables",
+          "-t",
+          "nat",
+           "-C",
+           "POSTROUTING",
+           "-mset",
+           "--match-set",
+           IPSET_OVERLAY,
+           "dst",
+           "-j",
+           "MASQUERADE"});
+    iptablesCheck.await();
+
+    // A failed `Future` implicitly implies a non-existent rule.  This
+    // is an indication that the Agent should try installing this
+    // rule.
+    if (!iptablesCheck.isReady()) {
+      Future<string> iptables =
+        runCommand(
+            "iptables",
+            {"iptables",
+             "-t",
+             "nat",
+             "-A",
+             "POSTROUTING",
+             "-mset",
+             "--match-set",
+             IPSET_OVERLAY,
+             "dst",
+             "-j",
+             "MASQUERADE"});
+      iptables.await();
+
+      if (!iptables.isReady()) {
+        return Error(
+            "Unable to create MASQUERADE rule:" +
+            (iptables.isDiscarded() ?
+            "discarded" : iptables.failure()));
+      }
+    } else {
+      LOG(INFO) << "Found iptables rule '-A POSTROUTING -m set"
+                << " --match-set overlay dst --return-nomatch -j"
+                << " MASQUERADE'.";
+    }
+
+    return Owned<ManagerProcess>(new ManagerProcess(cniDir, detector));
+  }
 
   Future<Nothing> ready()
   {
@@ -386,6 +563,36 @@ protected:
       return Failure(strings::join(";", errors));
     }
 
+    return runCommand(
+        "ipset",
+        {"ipset",
+        "add",
+        "-exist",
+        IPSET_OVERLAY,
+        overlays[name].info().subnet(),
+        "nomatch"})
+      .then(defer(
+            self(),
+            &Self::__configure,
+            name,
+            lambda::_1));
+  }
+
+  Future<Nothing> __configure(
+      const string& name,
+      const Future<string>& result)
+  {
+    CHECK(overlays.contains(name));
+
+    AgentOverlayInfo::State* state = overlays[name].mutable_state();
+
+    if (!result.isReady()) {
+      const string error = 
+        (result.isFailed() ? result.failure() : "discarded");
+      state->set_error(error);
+      return Failure(error);
+    }
+
     state->set_status(AgentOverlayInfo::State::STATUS_OK);
     return Nothing();
   }
@@ -504,8 +711,6 @@ protected:
       return Failure("Failed to parse bridge ip: " + subnet.error());
     }
 
-    // TODO(jieyu): We need to set bridge name accordingly.
-
     vector<string> argv = {
       "docker",
       "network",
@@ -514,7 +719,7 @@ protected:
       "--subnet=" + stringify(subnet.get()),
       "--opt=com.docker.network.bridge.name=" +
       overlay.docker_bridge().name(),
-      "--opt=\"com.docker.network.bridge.enable_ip_masquerade\"=false",
+      "--opt=com.docker.network.bridge.enable_ip_masquerade=false",
       name
     };
 
@@ -562,6 +767,11 @@ protected:
   }
 
 private:
+  ManagerProcess(const string& _cniDir, Owned<MasterDetector> _detector)
+    : ProcessBase(AGENT_MANAGER_PROCESS_ID),
+      cniDir(_cniDir),
+      detector(_detector) {}
+
   enum State
   {
     REGISTERING = 0,
@@ -583,9 +793,32 @@ private:
 class Manager : public Anonymous
 {
 public:
-  Manager(const string& cniDir, Owned<MasterDetector> detector)
+  static Try<Manager*> createManager(
+      const string& cniDir,
+      Owned<MasterDetector> detector)
   {
-    process = Owned<ManagerProcess>(new ManagerProcess(cniDir, detector));
+    Try<Owned<ManagerProcess>> process = 
+      ManagerProcess::createManagerProcess(cniDir, detector);
+
+    if (process.isError()) {
+      return Error(
+          "Unable to create `ManagerProcess`:" +
+          process.error());
+    }
+
+    return (new Manager(process.get())); 
+  }
+
+  virtual ~Manager()
+  {
+    terminate(process.get());
+    wait(process.get());
+  }
+
+private:
+  Manager(Owned<ManagerProcess>& _process)
+    :process(_process)
+  {
     spawn(process.get());
 
     // Wait for the overlay-manager to be ready before
@@ -596,13 +829,6 @@ public:
     LOG(INFO) << "Overlay agent is ready";
   }
 
-  virtual ~Manager()
-  {
-    terminate(process.get());
-    wait(process.get());
-  }
-
-private:
   Owned<ManagerProcess> process;
 };
 
@@ -655,7 +881,15 @@ Anonymous* createOverlayAgentManager(const Parameters& parameters)
       << "Failed to create CNI config directory: " << mkdir.error();
   }
 
-  return new Manager(cniDir.get(), Owned<MasterDetector>(detector.get()));
+  Try<Manager*> manager = Manager::createManager(
+      cniDir.get(),
+      Owned<MasterDetector>(detector.get()));
+  
+  if (manager.isError()) {
+    EXIT(EXIT_FAILURE) << "Unable to create `Manager`:" + manager.error();
+  }
+
+  return manager.get();
 }
 
 
