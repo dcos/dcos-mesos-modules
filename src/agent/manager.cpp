@@ -71,6 +71,7 @@
 #include <process/protobuf.hpp>
 #include <process/subprocess.hpp>
 
+#include <mesos/http.hpp>
 #include <mesos/master/detector.hpp>
 #include <mesos/mesos.hpp>
 #include <mesos/module.hpp>
@@ -521,9 +522,22 @@ protected:
       agent.add_overlays()->CopyFrom(overlay);
     }
 
-    return http::OK(
-        JSON::protobuf(agent),
-        request.url.query.get("jsonp"));
+    if (request.acceptsMediaType(APPLICATION_JSON)) {
+      return http::OK(
+          JSON::protobuf(agent),
+          request.url.query.get("jsonp"));
+    } else if (request.acceptsMediaType(APPLICATION_PROTOBUF)){
+      ContentType responseContentType = ContentType::PROTOBUF;
+
+      http::OK ok(agent.SerializeAsString());
+      ok.headers["Content-Type"] = stringify(responseContentType);
+
+      return ok;
+    } else {
+      return http::UnsupportedMediaType(
+          string("Client needs to support either ") +
+          APPLICATION_JSON + " or " + APPLICATION_PROTOBUF);
+    }
   }
 
   Future<Nothing> configure(const string& name)
