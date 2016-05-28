@@ -123,8 +123,8 @@ namespace mesos {
 namespace modules {
 namespace overlay {
 namespace agent {
-constexpr char IPSET_OVERLAY[] = "overlay";
 
+constexpr char IPSET_OVERLAY[] = "overlay";
 constexpr Duration REGISTRATION_RETRY_INTERVAL_MAX = Minutes(10);
 constexpr Duration INITIAL_BACKOFF_PERIOD = Seconds(30);
 
@@ -219,93 +219,73 @@ public:
     // 'iptables' command to ensure that the MASQUERADE rules have
     // been installed correctly before allowing the creation of the
     // `ManagerProcess`.
-    Future<string> ipset =
-      runCommand(
-          "ipset",
-          {"ipset",
-           "create",
-           "-exist",
-           IPSET_OVERLAY,
-           "hash:net",
-           "counters"});
+    Future<string> ipset = runCommand(
+        "ipset",
+        {"ipset", "create",
+         "-exist", IPSET_OVERLAY,
+         "hash:net",
+         "counters"});
   
     ipset.await();
 
     if (!ipset.isReady()) {
       return Error(
           "Unable to create ipset:" +
-          (ipset.isDiscarded() ?  "discarded" : ipset.failure()));
+          (ipset.isFailed() ? ipset.failure() : "discarded"));
     }
 
-    ipset =
-      runCommand(
-          "ipset",
-          {"ipset",
-           "add",
-           "-exist",
-           IPSET_OVERLAY,
-           "0.0.0.0/1"});
+    ipset = runCommand(
+        "ipset",
+        {"ipset", "add",
+         "-exist", IPSET_OVERLAY,
+         "0.0.0.0/1"});
   
     ipset.await();
 
     if (!ipset.isReady()) {
       return Error(
           "Unable to add 0.0.0.0/1 to ipset:" +
-          (ipset.isDiscarded() ?  "discarded" : ipset.failure()));
+          (ipset.isFailed() ? ipset.failure() : "discarded"));
     }
 
-    ipset =
-      runCommand(
-          "ipset",
-          {"ipset",
-           "add",
-           "-exist",
-           IPSET_OVERLAY,
-           "128.0.0.0/1"});
+    ipset = runCommand(
+        "ipset",
+        {"ipset", "add",
+         "-exist", IPSET_OVERLAY,
+         "128.0.0.0/1"});
   
-    // We cannot process before the 'ipset' is created.
     ipset.await();
 
     if (!ipset.isReady()) {
       return Error(
-          "Unable to add 128.0.0.0/1 to ipset:" +
-          (ipset.isDiscarded() ?  "discarded" : ipset.failure()));
+          "Unable to add 128.0.0.0/1 to ipset: " +
+          (ipset.isFailed() ? ipset.failure() : "discarded"));
     }
 
-    Future<string> iptablesCheck =
-      runCommand(
-          "iptables",
-          {"iptables",
-          "-t",
-          "nat",
-           "-C",
-           "POSTROUTING",
-           "-mset",
-           "--match-set",
-           IPSET_OVERLAY,
-           "dst",
-           "-j",
-           "MASQUERADE"});
+    Future<string> iptablesCheck = runCommand(
+        "iptables",
+        {"iptables",
+         "-t", "nat",
+         "-C", "POSTROUTING",
+         "-m", "set",
+         "--match-set", IPSET_OVERLAY, "dst",
+         "-j", "MASQUERADE"});
+
     iptablesCheck.await();
 
     // A failed `Future` implicitly implies a non-existent rule.  This
     // is an indication that the Agent should try installing this
     // rule.
     if (!iptablesCheck.isReady()) {
-      Future<string> iptables =
-        runCommand(
-            "iptables",
-            {"iptables",
-             "-t",
-             "nat",
-             "-A",
-             "POSTROUTING",
-             "-mset",
-             "--match-set",
-             IPSET_OVERLAY,
-             "dst",
-             "-j",
-             "MASQUERADE"});
+      Future<string> iptables = runCommand(
+          "iptables",
+          {"iptables",
+           "-t", "nat",
+           "-A", "POSTROUTING",
+           "-m", "set",
+           "--match-set", IPSET_OVERLAY, "dst",
+           "-j", "MASQUERADE"});
+
       iptables.await();
 
       if (!iptables.isReady()) {
@@ -579,12 +559,9 @@ protected:
 
     return runCommand(
         "ipset",
-        {"ipset",
-        "add",
-        "-exist",
-        IPSET_OVERLAY,
-        overlays[name].info().subnet(),
-        "nomatch"})
+        {"ipset", "add",
+         "-exist", IPSET_OVERLAY,
+         overlays[name].info().subnet(), "nomatch"})
       .then(defer(
             self(),
             &Self::__configure,
