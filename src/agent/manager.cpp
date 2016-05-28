@@ -262,6 +262,20 @@ public:
           (ipset.isFailed() ? ipset.failure() : "discarded"));
     }
 
+    ipset = runCommand(
+        "ipset",
+        {"ipset", "add",
+         "-exist", IPSET_OVERLAY,
+         "127.0.0.1/8", "nomatch"});
+
+    ipset.await();
+
+    if (!ipset.isReady()) {
+      return Error(
+          "Unable to add 127.0.0.1/8 as nomatch to ipset: " +
+          (ipset.isFailed() ? ipset.failure() : "discarded"));
+    }
+
     Future<string> iptablesCheck = runCommand(
         "iptables",
         {"iptables",
