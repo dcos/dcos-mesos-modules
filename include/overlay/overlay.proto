@@ -143,7 +143,7 @@ message NetworkConfig {
   required string vtep_subnet = 1;
 
   // The first 24-bits of VTEP MAC address. When the master assigns
-  // VTEPs to Agents it will choose a different lower 24-bit address 
+  // VTEPs to Agents it will choose a different lower 24-bit address
   // for each Agent.
   required string vtep_mac_oui = 2;
 
