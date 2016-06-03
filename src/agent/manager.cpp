@@ -114,6 +114,8 @@ using mesos::modules::Module;
 using mesos::modules::overlay::AgentOverlayInfo;
 using mesos::modules::overlay::AgentInfo;
 using mesos::modules::overlay::BridgeInfo;
+using mesos::modules::overlay::internal::AgentConfig;
+using mesos::modules::overlay::internal::AgentNetworkConfig;
 using mesos::modules::overlay::internal::AgentRegisteredAcknowledgement;
 using mesos::modules::overlay::internal::AgentRegisteredMessage;
 using mesos::modules::overlay::internal::RegisterAgentMessage;
@@ -202,6 +204,7 @@ class ManagerProcess : public ProtobufProcess<ManagerProcess>
 public:
   static Try<Owned<ManagerProcess>> createManagerProcess(
       const string& cniDir,
+      const AgentNetworkConfig& networkConfig,
       Owned<MasterDetector>& detector) 
   {
     // It is imperative that MASQUERADE rules are not enforced on
@@ -314,7 +317,11 @@ public:
                 << " MASQUERADE'.";
     }
 
-    return Owned<ManagerProcess>(new ManagerProcess(cniDir, detector));
+    return Owned<ManagerProcess>(
+        new ManagerProcess(
+            cniDir,
+            networkConfig,
+            detector));
   }
 
   Future<Nothing> ready()
@@ -489,8 +496,11 @@ protected:
       return;
     }
 
+    RegisterAgentMessage registerMessage;
+    registerMessage.mutable_network_config()->CopyFrom(networkConfig);
+
     // Send registration to the overlay master.
-    send(overlayMaster.get(), RegisterAgentMessage());
+    send(overlayMaster.get(), registerMessage);
 
     // Bound the maximum backoff by 'REGISTRATION_RETRY_INTERVAL_MAX'.
     maxBackoff = std::min(maxBackoff, REGISTRATION_RETRY_INTERVAL_MAX);
@@ -605,10 +615,13 @@ protected:
   Future<Nothing> configureMesosNetwork(const string& name)
   {
     CHECK(overlays.contains(name));
+
     const AgentOverlayInfo& overlay = overlays[name];
 
     if (!overlay.has_mesos_bridge()) {
-      return Failure("Missing Mesos bridge info");
+      LOG(INFO) << "Not configuring Mesos network for '" << name
+                << "' since no `mesos_bridge` specified.";
+      return Nothing();
     }
 
     Try<IPNetwork> subnet = IPNetwork::parse(
@@ -651,6 +664,16 @@ protected:
 
   Future<Nothing> configureDockerNetwork(const string& name)
   {
+    CHECK(overlays.contains(name));
+
+    const AgentOverlayInfo& overlay = overlays[name];
+
+    if (!overlay.has_docker_bridge()) {
+      LOG(INFO) << "Not configuring Docker network for '" << name
+                << "' since no `docker_bridge` specified.";
+      return Nothing();
+    }
+
     return checkDockerNetwork(name)
       .then(defer(self(),
                   &Self::_configureDockerNetwork,
@@ -772,10 +795,21 @@ protected:
   }
 
 private:
-  ManagerProcess(const string& _cniDir, Owned<MasterDetector> _detector)
+  ManagerProcess(
+      const string& _cniDir,
+      const AgentNetworkConfig _networkConfig,
+      Owned<MasterDetector> _detector)
     : ProcessBase(AGENT_MANAGER_PROCESS_ID),
       cniDir(_cniDir),
-      detector(_detector) {}
+      networkConfig(_networkConfig),
+      detector(_detector) 
+  {
+    // Make the Manager wait only if we have to configure mesos
+    // networks.
+    if (networkConfig.mesos_bridge() == false) {
+      connected.set(Nothing());
+    }
+  }
 
   enum State
   {
@@ -784,6 +818,7 @@ private:
   };
 
   const string cniDir;
+  const AgentNetworkConfig networkConfig;
   Owned<MasterDetector> detector;
 
   State state;
@@ -799,11 +834,15 @@ class Manager : public Anonymous
 {
 public:
   static Try<Manager*> createManager(
-      const string& cniDir,
+      const AgentConfig& agentConfig,
       Owned<MasterDetector> detector)
   {
     Try<Owned<ManagerProcess>> process = 
-      ManagerProcess::createManagerProcess(cniDir, detector);
+      ManagerProcess::createManagerProcess(
+          agentConfig.cni_dir(),
+          agentConfig.has_network_config() ?
+          agentConfig.network_config() : AgentNetworkConfig(),
+          detector);
 
     if (process.isError()) {
       return Error(
@@ -846,48 +885,74 @@ private:
 using mesos::modules::overlay::agent::Manager;
 using mesos::modules::overlay::agent::ManagerProcess;
 
-
 // Module "main".
 Anonymous* createOverlayAgentManager(const Parameters& parameters)
 {
-  Option<string> master;
-  Option<string> cniDir;
+  Option<AgentConfig> agentConfig = None();
 
   foreach (const mesos::Parameter& parameter, parameters.parameter()) {
     LOG(INFO) << "Overlay agent parameter '" << parameter.key()
               << "=" << parameter.value() << "'";
 
-    if (parameter.key() == "master") {
-      master = parameter.value();
+    if (parameter.key() == "agent_config") {
+      if (!os::exists(parameter.value())) {
+        EXIT(EXIT_FAILURE) << "Unable to find Agent configuration: "
+                           << parameter.value();
+      }
+
+      Try<string> config = os::read(parameter.value()); 
+      if (config.isError()) {
+        EXIT(EXIT_FAILURE) << "Unable to read the Agent "
+                           << "configuration: " << config.error();
+      }
+
+      auto parseAgentConfig = [](const string& s) -> Try<AgentConfig> {
+        Try<JSON::Object> json = JSON::parse<JSON::Object>(s);
+        if (json.isError()) {
+          return Error("JSON parse failed: " + json.error());
+        }
+
+        Try<AgentConfig> parse =
+          ::protobuf::parse<AgentConfig>(json.get());
+
+        if (parse.isError()) {
+          return Error("Protobuf parse failed: " + parse.error());
+        }
+
+        return parse.get();
+      };
+
+      Try<AgentConfig> _agentConfig = parseAgentConfig(config.get());
+
+      if (_agentConfig.isError()) {
+        EXIT(EXIT_FAILURE)
+          << "Unable to parse the Agent JSON configuration: "
+          << _agentConfig.error();
+      }
+      agentConfig = _agentConfig.get();
     }
-
-    if (parameter.key() == "cni_dir") {
-      cniDir = parameter.value();
-    }
   }
 
-  if (master.isNone()) {
-    EXIT(EXIT_FAILURE) << "Missing parameter 'master'";
+  if (agentConfig.isNone()) {
+    EXIT(EXIT_FAILURE) << "Missing `agent_config`";
   }
 
-  if (cniDir.isNone()) {
-    EXIT(EXIT_FAILURE) << "Missing parameter 'cni_dir'";
-  }
 
-  Try<MasterDetector*> detector = MasterDetector::create(master);
+  Try<MasterDetector*> detector =
+    MasterDetector::create(agentConfig->master());
   if (detector.isError()) {
     EXIT(EXIT_FAILURE)
       << "Unable to create master detector: " << detector.error();
   }
 
-  Try<Nothing> mkdir = os::mkdir(cniDir.get());
+  Try<Nothing> mkdir = os::mkdir(agentConfig->cni_dir());
   if (mkdir.isError()) {
     EXIT(EXIT_FAILURE)
       << "Failed to create CNI config directory: " << mkdir.error();
   }
 
   Try<Manager*> manager = Manager::createManager(
-      cniDir.get(),
+      agentConfig.get(),
       Owned<MasterDetector>(detector.get()));
   
   if (manager.isError()) {
