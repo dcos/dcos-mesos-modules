@@ -47,6 +47,7 @@ import "include/overlay/overlay.proto";
 
 // Message used by the Agent to register with the overlay-master.
 message RegisterAgentMessage {
+  required AgentNetworkConfig network_config = 1;
 }
 
 
@@ -71,3 +72,27 @@ message AgentRegisteredMessage {
 message AgentRegisteredAcknowledgement {
 }
 
+
+// Used by Agent to intimate the master if it needs subnets allocated
+// for overlays, and given a subnet if it needs to configure
+// the Mesos and Docker bridges for the overlays.
+//
+// NOTE: This is useful when the Agent module just needs to configure
+// the VTEP IP and VTEP MAC, and act as a gateway to all the overlays,
+// and doesn't need to host containers on the overlay. An example
+// use-case would be when the Agent module is run on the Master. This
+// setup would give access to components running on the Master to
+// directly talk to containers on the overlay.
+message AgentNetworkConfig {
+  optional bool allocate_subnet = 1 [default = true];
+  optional bool mesos_bridge = 2 [default = true];  
+  optional bool docker_bridge = 3 [default = true];
+}
+
+
+// Used by Agent to store the configuration specified by the operator.
+message AgentConfig {
+  required string master = 1;
+  required string cni_dir = 2;
+  optional AgentNetworkConfig network_config = 3;
+}

@@ -91,15 +91,10 @@ message AgentOverlayInfo {
 
   // The subnet of the overlay that is associated with this Agent.
   // NOTE: This subnet should be a subset of the `overlay` subnet.
-  // TODO(jieyu): We might want to support multiple subnets per agent
-  // in case that agent request more IPs than that's available in that
-  // subnet.
-  required string subnet = 2;
+  optional string subnet = 2;
 
-	// The bridges which will be used to support this overlay instance
-	// on this Agent.
-  // TODO(jieyu): Similarly, we might want to have multiple Mesos or
-  // Docker bridges per agent for each overlay.
+  // These bridges will be used to attach Mesos and Docker containers
+  // to the overlay instance on this Agent.
   optional BridgeInfo mesos_bridge = 3;
   optional BridgeInfo docker_bridge = 4;
 
