@@ -98,6 +98,7 @@ using mesos::modules::overlay::AgentOverlayInfo;
 using mesos::modules::overlay::BackendInfo;
 using mesos::modules::overlay::NetworkConfig;
 using mesos::modules::overlay::VxLANInfo;
+using mesos::modules::overlay::internal::AgentNetworkConfig;
 using mesos::modules::overlay::internal::AgentRegisteredAcknowledgement;
 using mesos::modules::overlay::internal::AgentRegisteredMessage;
 using mesos::modules::overlay::internal::RegisterAgentMessage;
@@ -531,7 +532,9 @@ protected:
     install<AgentRegisteredMessage>(&ManagerProcess::agentRegistered);
   }
 
-  void registerAgent(const UPID& pid)
+  void registerAgent(
+      const UPID& pid,
+      const RegisterAgentMessage& registerMessage)
   {
     list<AgentOverlayInfo> _overlays;
 
@@ -562,27 +565,37 @@ protected:
       // reliably send these messages to the Agent.
       foreachpair (const string& name, Overlay& overlay, overlays) {
         AgentOverlayInfo _overlay;
+        Option<net::IPNetwork> agentSubnet = None();
 
         _overlay.mutable_info()->set_name(name);
         _overlay.mutable_info()->set_subnet(stringify(overlay.network));
         _overlay.mutable_info()->set_prefix(overlay.prefix);
 
-        Try<net::IPNetwork> agentSubnet = overlay.allocate();
-        if (agentSubnet.isError()) {
-          LOG(ERROR) << "Cannot allocate subnet from overlay "
-                     << name << " to Agent " << pid;
-          continue;
-        }
-        _overlay.set_subnet(stringify(agentSubnet.get()));
+        if (registerMessage.network_config().allocate_subnet()) {
+          Try<net::IPNetwork> _agentSubnet = overlay.allocate();
+          if (_agentSubnet.isError()) {
+            LOG(ERROR) << "Cannot allocate subnet from overlay "
+                       << name << " to Agent " << pid << ":"
+                       << _agentSubnet.error();
+            continue;
+          }
 
-        // Allocate bridges for CNI and Docker.
-        Try<Nothing> bridges = allocateBridges(_overlay);
+          agentSubnet = _agentSubnet.get();
+          _overlay.set_subnet(stringify(agentSubnet.get()));
 
-        if (bridges.isError()) {
-          LOG(ERROR) << "Unable to allocate bridge for network "
-                     << name << ": " << bridges.error();
-          overlay.free(agentSubnet.get());
-          continue;
+          // Allocate bridges for Mesos and Docker.
+          Try<Nothing> bridges = allocateBridges(
+              _overlay,
+              registerMessage.network_config());
+
+          if (bridges.isError()) {
+            LOG(ERROR) << "Unable to allocate bridge for network "
+                       << name << ": " << bridges.error();
+            if ( agentSubnet.isSome()) {
+              overlay.free(agentSubnet.get());
+            }
+            continue;
+          }
         }
 
         VxLANInfo vxlan;
@@ -623,12 +636,18 @@ protected:
       send(from, AgentRegisteredAcknowledgement());
     } else {
       LOG(ERROR) << "Got ACK for network message for non-existent PID "
-        << from;
+                 << from;
     }
   }
 
-  Try<Nothing> allocateBridges(AgentOverlayInfo& _overlay)
+  Try<Nothing> allocateBridges(
+      AgentOverlayInfo& _overlay, 
+      const AgentNetworkConfig& networkConfig)
   {
+    if (!networkConfig.mesos_bridge() &&
+        !networkConfig.docker_bridge()) {
+      return Nothing();
+    }
     const string name = _overlay.info().name();
 
     Try<IPNetwork> network = net::IPNetwork::parse(
@@ -657,36 +676,39 @@ protected:
     uint32_t mask = ntohl(subnetMask->s_addr) |
       (0x1 << (32 - (network->prefix() + 1)));
 
-    // Create the CNI bridge.
-    Try<IPNetwork> cniSubnet = net::IPNetwork::create((IP(address)), (IP(mask)));
+    // Create the Mesos bridge.
+    if (networkConfig.mesos_bridge()) {
+      Try<IPNetwork> mesosSubnet = net::IPNetwork::create((IP(address)), (IP(mask)));
 
-    if (cniSubnet.isError()) {
-      return Error(
-          "Could not create Mesos subnet for network '" +
-          name + "': " + cniSubnet.error());
+      if (mesosSubnet.isError()) {
+        return Error(
+            "Could not create Mesos subnet for network '" +
+            name + "': " + mesosSubnet.error());
+      }
+
+      BridgeInfo mesosBridgeInfo;
+      mesosBridgeInfo.set_ip(stringify(mesosSubnet.get()));
+      mesosBridgeInfo.set_name(MESOS_BRIDGE_PREFIX + name);
+      _overlay.mutable_mesos_bridge()->CopyFrom(mesosBridgeInfo);
     }
 
     // Create the docker bridge.
-    Try<IPNetwork> dockerSubnet = net::IPNetwork::create(
-        IP(address | (0x1 << (32 - (network->prefix() + 1)))),
-        IP(mask));
+    if (networkConfig.docker_bridge()) {
+      Try<IPNetwork> dockerSubnet = net::IPNetwork::create(
+          IP(address | (0x1 << (32 - (network->prefix() + 1)))),
+          IP(mask));
 
-    if (dockerSubnet.isError()) {
-      return Error(
-          "Could not create Docker subnet for network '" +
-          name + "': " + dockerSubnet.error());
+      if (dockerSubnet.isError()) {
+        return Error(
+            "Could not create Docker subnet for network '" +
+            name + "': " + dockerSubnet.error());
+      }
+
+      BridgeInfo dockerBridgeInfo;
+      dockerBridgeInfo.set_ip(stringify(dockerSubnet.get()));
+      dockerBridgeInfo.set_name(DOCKER_BRIDGE_PREFIX + name);
+      _overlay.mutable_docker_bridge()->CopyFrom(dockerBridgeInfo);
     }
-
-    //Update the bridge info.
-    BridgeInfo cniBridgeInfo;
-    cniBridgeInfo.set_ip(stringify(cniSubnet.get()));
-    cniBridgeInfo.set_name(MESOS_BRIDGE_PREFIX + name);
-    _overlay.mutable_mesos_bridge()->CopyFrom(cniBridgeInfo);
-
-    BridgeInfo dockerBridgeInfo;
-    dockerBridgeInfo.set_ip(stringify(dockerSubnet.get()));
-    dockerBridgeInfo.set_name(DOCKER_BRIDGE_PREFIX + name);
-    _overlay.mutable_docker_bridge()->CopyFrom(dockerBridgeInfo);
 
     return Nothing();
   }
@@ -770,23 +792,6 @@ private:
 using mesos::modules::overlay::master::Manager;
 using mesos::modules::overlay::master::ManagerProcess;
 
-Try<NetworkConfig> parseNetworkConfig(const string& s)
-{
-  Try<JSON::Object> json = JSON::parse<JSON::Object>(s);
-  if (json.isError()) {
-    return Error("JSON parse failed: " + json.error());
-  }
-
-  Try<NetworkConfig> parse =
-    ::protobuf::parse<NetworkConfig>(json.get());
-
-  if (parse.isError()) {
-    return Error("Protobuf parse failed: " + parse.error());
-  }
-
-  return parse.get();
-}
-
 // Module "main".
 Anonymous* createOverlayMasterManager(const Parameters& parameters)
 {
@@ -807,6 +812,22 @@ Anonymous* createOverlayMasterManager(const Parameters& parameters)
         EXIT(EXIT_FAILURE) << "Unable to read the network configuration: "
                            << config.error();
       }
+
+      auto parseNetworkConfig = [](const string& s) -> Try<NetworkConfig> {
+        Try<JSON::Object> json = JSON::parse<JSON::Object>(s);
+        if (json.isError()) {
+          return Error("JSON parse failed: " + json.error());
+        }
+
+        Try<NetworkConfig> parse =
+          ::protobuf::parse<NetworkConfig>(json.get());
+
+        if (parse.isError()) {
+          return Error("Protobuf parse failed: " + parse.error());
+        }
+
+        return parse.get();
+      };
 
       Try<NetworkConfig> _networkConfig = parseNetworkConfig(config.get());
 
