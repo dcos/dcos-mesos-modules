@@ -68,6 +68,9 @@
 #include <mesos/mesos.hpp>
 #include <mesos/module.hpp>
 #include <mesos/module/anonymous.hpp>
+#include <mesos/state/log.hpp>
+#include <mesos/state/protobuf.hpp>
+#include <mesos/state/storage.hpp>
 
 #include <overlay/overlay.hpp>
 #include <overlay/internal/messages.hpp>
@@ -101,6 +104,7 @@ using mesos::modules::overlay::VxLANInfo;
 using mesos::modules::overlay::internal::AgentNetworkConfig;
 using mesos::modules::overlay::internal::AgentRegisteredAcknowledgement;
 using mesos::modules::overlay::internal::AgentRegisteredMessage;
+using mesos::modules::overlay::internal::MasterConfig;
 using mesos::modules::overlay::internal::RegisterAgentMessage;
 using mesos::modules::overlay::internal::UpdateAgentOverlaysMessage;
 using mesos::Parameters;
@@ -391,8 +395,11 @@ class ManagerProcess : public ProtobufProcess<ManagerProcess>
 {
 public:
   static Try<Owned<ManagerProcess>> createManagerProcess(
-      const NetworkConfig& networkConfig)
+      const MasterConfig& masterConfig)
   {
+    NetworkConfig networkConfig;
+    networkConfig.CopyFrom(masterConfig.network());
+
     Try<net::IPNetwork> vtepSubnet =
       net::IPNetwork::parse(networkConfig.vtep_subnet(), AF_INET);
     if (vtepSubnet.isError()) {
@@ -502,6 +509,15 @@ public:
           " least one overlay");
     }
 
+    // Check if we need to create the replicated log.
+    if (masterConfig.has_replicated_log_dir()) {
+      LOG(INFO) << "Initializing the replicated log.";
+      if (masterConfig.has_zk()) {
+        LOG(INFO) << "Using replicated log with zookeeper for leader"
+                  << " election.";
+      }
+    }
+
     return Owned<ManagerProcess>(
         new ManagerProcess(
           overlays,
@@ -537,6 +553,10 @@ protected:
       const RegisterAgentMessage& registerMessage)
   {
     list<AgentOverlayInfo> _overlays;
+
+    if (managerState == RECOVERING) {
+      managerState = RECOVERED;
+    }
 
     if (!std::get<1>(agents.emplace(pid, pid))) {
       LOG(INFO) << "Agent " << pid << "re-registering";
@@ -720,7 +740,9 @@ protected:
     VLOG(1) << "Responding to `state` endpoint";
 
     foreachvalue (const Overlay& overlay, overlays) {
-      state.add_overlays()->CopyFrom(overlay.getOverlayInfo());
+      state.mutable_network()
+        ->add_overlays()
+        ->CopyFrom(overlay.getOverlayInfo());
     }
 
     foreachvalue (const Agent& agent, agents) {
@@ -733,27 +755,36 @@ protected:
   }
 
 private:
+  enum ManagerState {
+    INIT = 1,
+    RECOVERING = 2,
+    RECOVERED = 3
+  };
+
   ManagerProcess(
       const hashmap<string, Overlay>& _overlays,
       const net::IPNetwork& vtepSubnet,
       const net::MAC& vtepMACOUI)
     : ProcessBase("overlay-master"),
       overlays(_overlays),
-      vtep(vtepSubnet, vtepMACOUI) {};
+      vtep(vtepSubnet, vtepMACOUI),
+      managerState(INIT) {};
 
   hashmap<string, Overlay> overlays;
   hashmap<UPID, Agent> agents;
 
   Vtep vtep;
+
+  ManagerState managerState;
 };
 
 class Manager : public Anonymous
 {
 public:
-  static Try<Manager*> createManager(const NetworkConfig& networkConfig)
+  static Try<Manager*> createManager(const MasterConfig& masterConfig)
   {
     Try<Owned<ManagerProcess>> process =
-      ManagerProcess::createManagerProcess(networkConfig);
+      ManagerProcess::createManagerProcess(masterConfig);
 
     if (process.isError()) {
       return Error(
@@ -795,13 +826,13 @@ using mesos::modules::overlay::master::ManagerProcess;
 // Module "main".
 Anonymous* createOverlayMasterManager(const Parameters& parameters)
 {
-  Option<NetworkConfig> networkConfig = None();
+  Option<MasterConfig> masterConfig = None();
 
   VLOG(1) << "Parameters:";
   foreach (const mesos::Parameter& parameter, parameters.parameter()) {
     VLOG(1) << parameter.key() << ": " << parameter.value();
 
-    if (parameter.key() == "network_config") {
+    if (parameter.key() == "master_config") {
       if (!os::exists(parameter.value())) {
         EXIT(EXIT_FAILURE)
           << "Unable to find the network configuration";
@@ -831,21 +862,21 @@ Anonymous* createOverlayMasterManager(const Parameters& parameters)
 
       Try<NetworkConfig> _networkConfig = parseNetworkConfig(config.get());
 
-      if (_networkConfig.isError()) {
+      if (_masterConfig.isError()) {
         EXIT(EXIT_FAILURE)
           << "Unable to prase the overlay JSON configuration: "
-          << _networkConfig.error();
+          << _masterConfig.error();
       }
 
-      networkConfig = _networkConfig.get();
+      masterConfig = _masterConfig.get();
     }
   }
 
-  if (networkConfig.isNone()) {
-    EXIT(EXIT_FAILURE) << "No network configuration specified";
+  if (masterConfig.isNone()) {
+    EXIT(EXIT_FAILURE) << "No master module configuration specified";
   }
 
-  Try<Manager*> manager = Manager::createManager(networkConfig.get());
+  Try<Manager*> manager = Manager::createManager(masterConfig.get());
 
   if (manager.isError()) {
     EXIT(EXIT_FAILURE)

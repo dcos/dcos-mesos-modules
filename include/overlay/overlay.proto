@@ -127,7 +127,7 @@ message AgentInfo {
 
 message State {
   // The overlay networks that exist in the cluster.
-  repeated OverlayInfo overlays = 1;
+  optional NetworkConfig network = 1;
 
   // Agent that run an instance of the overlay networks. On each
   // Agent there can be at most one instance of each overlay network.
