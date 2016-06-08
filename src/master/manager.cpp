@@ -71,6 +71,7 @@
 #include <mesos/state/log.hpp>
 #include <mesos/state/protobuf.hpp>
 #include <mesos/state/storage.hpp>
+#include <mesos/zookeeper/detector.hpp>
 
 #include <overlay/overlay.hpp>
 #include <overlay/internal/messages.hpp>
@@ -79,6 +80,7 @@ namespace http = process::http;
 
 using std::list;
 using std::queue;
+using std::set;
 using std::string;
 using std::vector;
 
@@ -95,12 +97,14 @@ using process::TLDR;
 using process::UPID;
 using process::USAGE;
 
+using mesos::log::Log;
 using mesos::modules::Anonymous;
 using mesos::modules::Module;
 using mesos::modules::overlay::AgentOverlayInfo;
 using mesos::modules::overlay::BackendInfo;
 using mesos::modules::overlay::NetworkConfig;
 using mesos::modules::overlay::VxLANInfo;
+using mesos::modules::overlay::State;
 using mesos::modules::overlay::internal::AgentNetworkConfig;
 using mesos::modules::overlay::internal::AgentRegisteredAcknowledgement;
 using mesos::modules::overlay::internal::AgentRegisteredMessage;
@@ -108,14 +112,20 @@ using mesos::modules::overlay::internal::MasterConfig;
 using mesos::modules::overlay::internal::RegisterAgentMessage;
 using mesos::modules::overlay::internal::UpdateAgentOverlaysMessage;
 using mesos::Parameters;
+using mesos::state::LogStorage;
+using mesos::state::protobuf::Variable;
+using mesos::state::Storage;
 
 namespace mesos {
 namespace modules {
 namespace overlay {
 namespace master {
 
-constexpr Duration PENDING_MESSAGE_PERIOD = Seconds(10);
+constexpr char REPLICATED_LOG_STORE[] = "overlay_replicated_log";
+constexpr char REPLICATED_LOG_STORE_KEY[] = "network-state";
+constexpr char REPLICATED_LOG_STORE_REPLICAS[] = "overlay_log_replicas";
 
+constexpr Duration PENDING_MESSAGE_PERIOD = Seconds(10);
 
 const string OVERLAY_HELP = HELP(
     TLDR("Allocate overlay network resources for Master."),
@@ -129,7 +139,11 @@ struct Vtep
   Vtep(const IPNetwork& _network, const MAC _oui)
     : network(_network), oui(_oui)
   {
-    uint32_t endIP = 0xffffffff >> (32 - network.prefix());
+    // `endIP` = `32 - network.prefix()` number of LSB bits set.
+    //
+    // NOTE: The below shift operation results in `32 - network.prefix()
+    // remaining bits in the LSB of `endIP`.
+    uint32_t endIP = 0xffffffff >> network.prefix(); 
     uint32_t endMAC = 0xffffffff >> 8;
 
     freeIP += (Bound<uint32_t>::closed(1), Bound<uint32_t>::closed(endIP - 1));
@@ -151,7 +165,26 @@ struct Vtep
     return IPNetwork::create(net::IP(address),network.prefix()) ;
   }
 
-  Try<Nothing> deAllocate(const IPNetwork& _network)
+  Try<Nothing> reserve(const net::IPNetwork& ip)
+  {
+    uint32_t _ip = ntohl(ip.address().in().get().s_addr);
+    uint32_t mask = ntohl(network.netmask().in().get().s_addr);
+
+    _ip &= ~mask;
+
+    if (!freeIP.contains(_ip)) {
+      VLOG(1) << "Current free IPs: " << freeIP;
+      return Error(
+          "Cannot reserve an unavailable IP: "  + stringify(ip) +
+          "(" + stringify(_ip) + ")");
+    }
+
+    freeIP -= _ip;
+
+    return Nothing();
+  }
+
+  Try<Nothing> free(const IPNetwork& _network)
   {
     if (_network.prefix() != network.prefix()) {
       return Error(
@@ -204,7 +237,28 @@ struct Vtep
     return MAC(mac);
   }
 
-  Try<Nothing> deAllocate(const MAC& mac)
+  Try<Nothing> reserve(net::MAC mac)
+  {
+    uint32_t _mac;
+    uint8_t* __mac = (uint8_t*) &_mac;
+
+    __mac[1] = mac[3];
+    __mac[2] = mac[4];
+    __mac[3] = mac[5];
+
+    _mac = ntohl(_mac);
+
+    if (!freeMAC.contains(_mac)) {
+      return Error(
+          "Cannot reserve an unavailable MAC " + stringify(mac));
+    }
+
+    freeMAC -= _mac;
+
+    return Nothing();
+  }
+
+  Try<Nothing> free(const MAC& mac)
   {
     if (mac[0] != oui[0] || mac[1] != oui[1] || mac[2] != oui[2]) {
       return Error("Unable to free MAC for an unknown OUI");
@@ -222,6 +276,28 @@ struct Vtep
     freeMAC += _nic;
 
     return Nothing();
+  }
+
+  void resetIP()
+  {
+    uint32_t endIP = 0xffffffff >> network.prefix();
+
+    freeIP = IntervalSet<uint32_t>();
+    freeIP += (Bound<uint32_t>::closed(1), Bound<uint32_t>::closed(endIP - 1));
+  }
+
+  void resetMAC()
+  {
+    uint32_t endMAC = 0xffffffff >> 8;
+
+    freeMAC = IntervalSet<uint32_t>();
+    freeMAC += (Bound<uint32_t>::closed(1), Bound<uint32_t>::closed(endMAC - 1));
+  }
+
+  void reset()
+  {
+    resetIP();
+    resetMAC();
   }
 
   // Network allocated to the VTEP.
@@ -303,6 +379,40 @@ struct Overlay
     return Nothing();
   }
 
+  Try<Nothing> reserve(const net::IPNetwork& subnet)
+  {
+    uint32_t netmask = ntohl(network.netmask().in().get().s_addr);
+    uint32_t _subnet = ntohl(subnet.address().in().get().s_addr);
+
+    // Retrieve the integer representation of subnet in the
+    // `IntervalSet`.
+    _subnet &= netmask;
+    _subnet = _subnet >> (32 - subnet.prefix());
+
+    if (!freeNetworks.contains(_subnet)) {
+      return Error(
+          "Unable to reserve unavailable subnet " +
+          stringify(subnet));
+    }
+
+    freeNetworks -= _subnet;
+    
+    return Nothing();
+  }
+
+  void reset()
+  {
+    // Re-initialize `freeNetworks`.
+    freeNetworks = IntervalSet<uint32_t>();
+
+    uint32_t endSubnet = 0xffffffff; // 255.255.255.255
+    endSubnet = endSubnet >> (network.prefix() + 32 - prefix);
+
+    freeNetworks +=
+      (Bound<uint32_t>::closed(0),
+       Bound<uint32_t>::closed(endSubnet));
+  }
+
   // Canonical name of the network.
   std::string name;
 
@@ -322,7 +432,26 @@ struct Overlay
 class Agent
 {
 public:
-  Agent(const UPID& _pid) : pid(_pid) {};
+  static Try<Agent> create(const AgentInfo& agentInfo)
+  {
+    Try<net::IP> _ip = net::IP::parse(agentInfo.ip(), AF_INET);
+
+    if (_ip.isError()) {
+      return Error("Unable to create `Agent`: " + _ip.error());
+    }
+
+    Agent agent(_ip.get());
+    
+    for (int i = 0; i < agentInfo.overlays_size(); i++) {
+      agent.addOverlay(agentInfo.overlays(i));
+    }
+
+    return agent;
+  }
+
+  Agent(const net::IP& _ip) : ip(_ip) {};
+
+  const net::IP getIP() const { return ip; };
 
   void addOverlay(const AgentOverlayInfo& overlay)
   {
@@ -355,7 +484,7 @@ public:
   {
     AgentInfo info;
 
-    info.set_ip(stringify(pid.address.ip));
+    info.set_ip(stringify(ip));
 
     foreachvalue(const AgentOverlayInfo& overlay, overlays) {
       info.add_overlays()->CopyFrom(overlay);
@@ -376,11 +505,40 @@ public:
   }
 
 private:
-  const UPID pid;
+  net::IP ip;
 
   // A list of all overlay networks that reside on this agent.
   hashmap<string, AgentOverlayInfo> overlays;
 };
+
+
+// Helper function to convert std::string to `net::MAC`.
+static Try<net::MAC> createMAC(const string& _mac, const bool& oui) 
+{
+  vector<string> tokens = strings::split(_mac, ":");
+  if (tokens.size() != 6) {
+    return Error(
+        "Invalid MAC address. Mac address " +
+        _mac + " needs to be in"
+        " the format xx:xx:xx:00:00:00");
+  }
+
+  uint8_t mac[6];
+  for (size_t i = 0; i < tokens.size(); i++) {
+    sscanf(tokens[i].c_str(), "%hhx", &mac[i]);
+    if (oui) {
+      if ( i > 2 && mac[i] != 0) {
+        return Error(
+            "Invalid OUI MAC address: " + _mac +
+            ". Least significant three bytes should not be"
+            " set for the OUI"); 
+
+      }
+    }
+  }
+
+  return net::MAC(mac);
+}
 
 
 // `ManagerProcess` is responsible for managing all the overlays that
@@ -407,27 +565,11 @@ public:
           "Unable to parse the VTEP Subnet: " + vtepSubnet.error());
     }
 
-    vector<string> tokens = strings::split(networkConfig.vtep_mac_oui(), ":");
-    if (tokens.size() != 6) {
+    Try<net::MAC> vtepMACOUI = createMAC(networkConfig.vtep_mac_oui(), true);
+    if(vtepMACOUI.isError()) {
       return Error(
-          "Invalid OUI MAC address. Mac address " +
-          networkConfig.vtep_mac_oui() + " needs to be in"
-          " the format xx:xx:xx:00:00:00");
+          "Unable to parse VTEP MAC OUI: " + vtepMACOUI.error());
     }
-
-    uint8_t mac[6];
-    for (size_t i = 0; i < tokens.size(); i++) {
-      sscanf(tokens[i].c_str(), "%hhx", &mac[i]);
-      if ( i > 2 && mac[i] != 0) {
-        return Error(
-          "Invalid OUI MAC address: " + networkConfig.vtep_mac_oui() +
-          ". Least significant three bytes should not be"
-          " set for the OUI"); 
-        
-      }
-    }
-
-    net::MAC vtepMACOUI(mac);
 
     hashmap<string, Overlay> overlays;
     IntervalSet<uint32_t> addressSpace;
@@ -509,21 +651,60 @@ public:
           " least one overlay");
     }
 
+    Storage* storage = nullptr;
+
     // Check if we need to create the replicated log.
     if (masterConfig.has_replicated_log_dir()) {
+      Log* log = nullptr;
+
       LOG(INFO) << "Initializing the replicated log.";
+
       if (masterConfig.has_zk()) {
         LOG(INFO) << "Using replicated log with zookeeper for leader"
                   << " election.";
+        Try<zookeeper::URL> url =
+          zookeeper::URL::parse(masterConfig.zk().url());
+        if (url.isError()) {
+          return Error("Error parsing ZooKeeper URL: " + url.error());
+        }
+
+        log = new Log(
+            (int)masterConfig.zk().quorum(),
+            path::join(
+              masterConfig.replicated_log_dir(),
+              REPLICATED_LOG_STORE),
+            url.get().servers,
+            Seconds(masterConfig.zk().session_timeout()),
+            path::join(url.get().path, REPLICATED_LOG_STORE_REPLICAS),
+            url.get().authentication,
+            true);
+      } else {
+        // Use replicated log without ZooKeeper.
+        log = new Log(
+            1,
+            path::join(
+              masterConfig.replicated_log_dir(),
+              REPLICATED_LOG_STORE),
+            set<UPID>(),
+            true);
       }
+
+      storage = new LogStorage(log);
     }
 
-    return Owned<ManagerProcess>(
-        new ManagerProcess(
+    Owned<mesos::state::protobuf::State> replicatedLog;
+
+    if (storage != nullptr) {
+      replicatedLog = Owned<mesos::state::protobuf::State>(
+          new mesos::state::protobuf::State(storage));
+    }
+
+    return Owned<ManagerProcess>(new ManagerProcess(
           overlays,
           vtepSubnet.get(),
-          vtepMACOUI));
-
+          vtepMACOUI.get(),
+          networkConfig,
+          replicatedLog));
   }
 
 protected:
@@ -548,36 +729,194 @@ protected:
     install<AgentRegisteredMessage>(&ManagerProcess::agentRegistered);
   }
 
+  void recover()
+  {
+    CHECK(managerState == INIT);
+
+    // Nothing to recover.
+    if (replicatedLog.get() == nullptr) {
+      managerState = RECOVERED;
+      return;
+    }
+
+    managerState = RECOVERING;
+
+    replicatedLog->fetch<State>(REPLICATED_LOG_STORE_KEY)
+    .onAny(defer(self(),
+                 &ManagerProcess::_recover,
+                 lambda::_1));
+  }
+
+  void _recover(Future<Variable<State>> variable)
+  {
+    CHECK_NOTNULL(replicatedLog.get());
+
+    if (!variable.isReady()) {
+      LOG(WARNING) << "This " << self().id <<"might have been demoted."
+                   << "Aborting recovery of replicated log"
+                   <<(variable.isDiscarded() ? "discarded" : variable.failure());
+
+      managerState = INIT;
+
+      return;
+    }
+
+
+    LOG(INFO) << "Moving " << self() << " to `RECOVERED` state.";
+    managerState = RECOVERED;
+
+    State _networkState = variable.get().get();
+
+    // Only if the `network_config` is present does it imply that the
+    // overlay-master stored state in the replicated log, else  this
+    // is the first time an overlay-master is accessing the
+    // replicated log and hence the state will be empty.
+    if (_networkState.has_network()) {
+      LOG(INFO) << "Recovered network state from replicated log";
+      networkState.CopyFrom(_networkState); 
+    } else {
+      LOG(INFO) << "No network state present, hence nothing to"
+                << " recover from replicated log";
+      return;
+    }
+
+    // Re-populate the agents, the overlay subnets that have been
+    // allocated, and the VTEP IP and VTEP MAC that have been
+    // allocated. The information stored in the replicated log should
+    // not have any errors.
+    for (int i = 0; i < networkState.agents_size(); i++) {
+      const AgentInfo& agentInfo = networkState.agents(i);
+
+      Try<Agent> agent = Agent::create(agentInfo);
+      if (agent.isError()) {
+        LOG(ERROR) << "Could not recover Agent: "<< agent.error();
+        abort();
+      }
+
+      agents.emplace(agent->getIP(), agent.get());
+      VLOG(1) << "Recovered agent: " << agent->getIP();
+
+      for (int j = 0; j < agentInfo.overlays_size(); j++) {
+        const AgentOverlayInfo& overlay = agentInfo.overlays(j);
+
+        Try<net::IPNetwork> network = net::IPNetwork::parse(
+            overlay.subnet(),
+            AF_INET);
+
+        if (network.isError()) {
+          LOG(ERROR) << "Unable to parse the retrieved network: "
+            << overlay.subnet() << ": "
+            << network.error();
+          abort();
+        }
+
+        // We should already have this particular overlay at bootup.
+        CHECK(overlays.contains(overlay.info().name()));
+        Try<Nothing> result = overlays.at(overlay.info().name()).reserve(network.get());
+        if (result.isError()) {
+          LOG(ERROR) << "Unable to reserve the subnet " << network.get()
+                     << ": " << result.error(); 
+          abort();
+        }
+
+        // All overlay instances on an Agent share the same VTEP IP
+        // and MAC. Hence, the backend information on all the overlay
+        // information would be the same. We therefore need to reserve
+        // the VTEP IP and MAC only once.
+        if (j == 0) {
+          Try<net::IPNetwork> vtepIP =
+            net::IPNetwork::parse(overlay.backend().vxlan().vtep_ip(), AF_INET);
+          if (vtepIP.isError()) {
+            LOG(ERROR) << "Unable to parse the retrieved `vtepIP`: "
+              << overlay.backend().vxlan().vtep_ip() << ": "
+              << vtepIP.error();
+            abort();
+          }
+
+          Try<net::MAC> vtepMAC = createMAC(
+              overlay.backend().vxlan().vtep_mac(),
+              false);
+          if (vtepMAC.isError()) {
+            LOG(ERROR) << "Unable to parse the retrieved `vtepMAC`: "
+              << overlay.backend().vxlan().vtep_ip() << ": "
+              << vtepMAC.error();
+            abort();
+          }
+
+          LOG(INFO) << "Reserving VTEP IP: " << vtepIP.get();
+          Try<Nothing> result = vtep.reserve(vtepIP.get());
+          if (result.isError()) {
+            LOG(ERROR) << "Unable to reserve VTEP IP: "
+              << vtepIP.get() << ": " << result.error();
+            abort();
+          }
+
+          LOG(INFO) << "Reserving VTEP MAC: " << vtepMAC.get();
+          result = vtep.reserve(vtepMAC.get());
+          if (result.isError()) {
+            LOG(ERROR) << "Unable to reserve VTEP MAC: "
+              << vtepMAC.get() << ": " << result.error();
+            abort();
+          }
+        }
+      }
+    }
+
+    return;
+  }
+
   void registerAgent(
       const UPID& pid,
       const RegisterAgentMessage& registerMessage)
   {
-    list<AgentOverlayInfo> _overlays;
-
-    if (managerState == RECOVERING) {
-      managerState = RECOVERED;
+    if (managerState == INIT) {
+      recover();
+      return;
+    } else if (managerState == RECOVERING) {
+      // We haven't recovered network state yet. Lets just return.
+      // The agent will try to re-reigster.
+      LOG(INFO) << MASTER_MANAGER_PROCESS_ID << " in `RECOVERING`"
+                << " state . Hence, not sending an update to agent"
+                << pid;
+      return;
     }
 
-    if (!std::get<1>(agents.emplace(pid, pid))) {
+    list<AgentOverlayInfo> _overlays;
+
+    if (agents.contains(pid.address.ip)) {
       LOG(INFO) << "Agent " << pid << "re-registering";
+
+      Agent& agent = agents.at(pid.address.ip);
 
       // Reset existing state of the overlays, since the Agent, after
       // restart, does not expect the overlays to have any state.
-      agents.at(pid).clearOverlaysState();
+      agent.clearOverlaysState();
 
-      _overlays = agents.at(pid).getOverlays();
+      _overlays = agent.getOverlays();
     } else {
+      // New Agent.
       LOG(INFO) << "Got registration from pid: " << pid;
+      agents.emplace(pid.address.ip, Agent(pid.address.ip));
+
+      Agent& agent = agents.at(pid.address.ip);
 
       Try<net::IPNetwork> vtepIP = vtep.allocateIP();
       if (vtepIP.isError()) {
-        LOG(ERROR) << "Unable to get VTEP IP for Agent: " << vtepIP.error();
+        LOG(ERROR)
+          << "Unable to get VTEP IP for Agent: " << vtepIP.error()
+          << "Cannot fulfill registration for Agent: " << pid;
+        return;
       }
+      LOG(INFO) << "Allocated VTEP IP : " << vtepIP.get();
 
       Try<net::MAC> vtepMAC = vtep.allocateMAC();
       if (vtepMAC.isError()) {
-        LOG(ERROR) << "Unable to get VTEP MAC for Agent: " << vtepMAC.error();
+        LOG(ERROR)
+          << "Unable to get VTEP MAC for Agent: " << vtepMAC.error()
+          << "Cannot fulfill registration for Agent: " << pid;
+          return;
       }
+      VLOG(1) << "Allocated VTEP MAC : " << vtepMAC.get();
 
       // Walk through all the overlay networks. Allocate a subnet from
       // each overlay to the Agent. Allocate a VTEP IP and MAC for each
@@ -629,11 +968,37 @@ protected:
 
         _overlay.mutable_backend()->CopyFrom(backend);
 
-        agents.at(pid).addOverlay(_overlay);
+        agent.addOverlay(_overlay);
       }
 
-      _overlays = agents.at(pid).getOverlays();
+      _overlays = agent.getOverlays();
+
+      // Update the `networkState` with this Agent.
+      networkState.add_agents()->CopyFrom(agent.getAgentInfo());
     }
+
+    // We need write the updated state in the replicated log before we
+    // can send the overlay configuration to the Agent.
+    store()
+    .onAny(defer(self(),
+                 &ManagerProcess::_registerAgent,
+                 pid,
+                 lambda::_1));
+  }
+
+  void _registerAgent(const UPID& pid, Future<Nothing> result)
+  {
+    if (!result.isReady()) {
+      LOG(WARNING) << "Not sending configuration update to Agent: "
+                   << pid << ": "
+                   << (result.isDiscarded() ? "discarded" : result.failure());
+      demote();
+      return;
+    }
+
+    CHECK(agents.contains(pid.address.ip));
+
+    list<AgentOverlayInfo> _overlays = agents.at(pid.address.ip).getOverlays();
 
     // Create the network update message and send it to the Agent.
     UpdateAgentOverlaysMessage update;
@@ -645,12 +1010,35 @@ protected:
     send(pid, update);
   }
 
+  void demote()
+  {
+    managerState = INIT;
+
+    // We should forget all agents since when this master becomes
+    // the leader they will re-register and get added to the
+    // in-memory databse.
+    agents.clear();
+    networkState.clear_agents();
+
+    //While we should not clear all the overlays (since they are static) we
+    //need to de-allocate the address space of the overlays so that
+    //when this master becomes the leader it can reserve any
+    //addresses that were pending.
+    foreachvalue(Overlay& overlay, overlays) {
+      overlay.reset();
+    }
+
+    //We need to de-allocate the VTEP MAC and VTEP addresses
+    //allocated to the Agent as well.
+    vtep.reset();
+  }
+
   void agentRegistered(const UPID& from, const AgentRegisteredMessage& message)
   {
-    if(agents.contains(from)) {
+    if(agents.contains(from.address.ip)) {
       LOG(INFO) << "Got ACK for addition of networks from " << from;
       for(int i=0; i < message.overlays_size(); i++) {
-        agents.at(from).updateOverlayState(message.overlays(i));
+        agents.at(from.address.ip).updateOverlayState(message.overlays(i));
       }
 
       send(from, AgentRegisteredAcknowledgement());
@@ -735,23 +1123,70 @@ protected:
 
   Future<http::Response> state(const http::Request& request)
   {
-    State state;
-
     VLOG(1) << "Responding to `state` endpoint";
 
-    foreachvalue (const Overlay& overlay, overlays) {
-      state.mutable_network()
-        ->add_overlays()
-        ->CopyFrom(overlay.getOverlayInfo());
-    }
-
-    foreachvalue (const Agent& agent, agents) {
-      state.add_agents()->CopyFrom(agent.getAgentInfo());
-    }
-
     return http::OK(
-        JSON::protobuf(state),
+        JSON::protobuf(networkState),
         request.url.query.get("jsonp"));
+  }
+
+  Future<Nothing> store()
+  {
+    if (replicatedLog.get() == nullptr) {
+      return Nothing();
+    }
+
+    return replicatedLog->fetch<State>(REPLICATED_LOG_STORE_KEY)
+    .then(defer(self(),
+                &ManagerProcess::_store,
+                lambda::_1));
+  }
+
+  Future<Nothing> _store(const Future<Variable<State>>& variable)
+  {
+    CHECK_NOTNULL(replicatedLog.get());
+
+    if (!variable.isReady()) {
+      return Failure(
+          "Unable to store the network state: " +
+          (variable.isDiscarded() ? "discarded" : variable.failure()));
+    }
+
+    Variable<State> stateVariable = variable.get();
+    stateVariable = stateVariable.mutate(networkState);
+
+    return replicatedLog->store(stateVariable)
+      .then([](const Future<Option<Variable<State>>>& variable)
+            -> Future<Nothing> {
+        if (!variable.isReady()) {
+          return Failure(
+            "Unable to store the network state: " + 
+            (variable.isDiscarded() ? "discarded" : variable.failure()));
+        }
+
+        if (variable.get().isNone()) {
+          return Failure(
+            "Unable to store the network state. This"
+            " master might have been demoted");
+        }
+
+        LOG(INFO) << "Stored the network state successfully";
+
+        State storedNetworkState = variable.get().get().get();
+
+        VLOG(1) << "Stored the following network state:";
+        if (storedNetworkState.has_network()) {
+          VLOG(1) << "VTEP: " << storedNetworkState.network().vtep_subnet();
+          VLOG(1) << "VTEP OUI: " << storedNetworkState.network().vtep_mac_oui();
+          VLOG(1) << "Total overlays: " << storedNetworkState.network().overlays_size();
+        }
+
+        if (storedNetworkState.agents_size() > 0) {
+          VLOG(1) << "Total agents: " << storedNetworkState.agents_size();
+        }
+
+        return Nothing();
+      });
   }
 
 private:
@@ -764,18 +1199,28 @@ private:
   ManagerProcess(
       const hashmap<string, Overlay>& _overlays,
       const net::IPNetwork& vtepSubnet,
-      const net::MAC& vtepMACOUI)
+      const net::MAC& vtepMACOUI,
+      const NetworkConfig& _networkConfig,
+      const Owned<mesos::state::protobuf::State> _replicatedLog)
     : ProcessBase("overlay-master"),
       overlays(_overlays),
       vtep(vtepSubnet, vtepMACOUI),
-      managerState(INIT) {};
+      managerState(INIT),
+      replicatedLog(_replicatedLog)
+  { 
+    networkState.mutable_network()->CopyFrom(_networkConfig);
+  };
 
   hashmap<string, Overlay> overlays;
-  hashmap<UPID, Agent> agents;
+  hashmap<net::IP, Agent> agents;
 
   Vtep vtep;
 
   ManagerState managerState;
+
+  State networkState;
+
+  Owned<mesos::state::protobuf::State> replicatedLog;
 };
 
 class Manager : public Anonymous
@@ -844,14 +1289,14 @@ Anonymous* createOverlayMasterManager(const Parameters& parameters)
                            << config.error();
       }
 
-      auto parseNetworkConfig = [](const string& s) -> Try<NetworkConfig> {
+      auto parseMasterConfig = [](const string& s) -> Try<MasterConfig> {
         Try<JSON::Object> json = JSON::parse<JSON::Object>(s);
         if (json.isError()) {
           return Error("JSON parse failed: " + json.error());
         }
 
-        Try<NetworkConfig> parse =
-          ::protobuf::parse<NetworkConfig>(json.get());
+        Try<MasterConfig> parse =
+          ::protobuf::parse<MasterConfig>(json.get());
 
         if (parse.isError()) {
           return Error("Protobuf parse failed: " + parse.error());
@@ -860,7 +1305,7 @@ Anonymous* createOverlayMasterManager(const Parameters& parameters)
         return parse.get();
       };
 
-      Try<NetworkConfig> _networkConfig = parseNetworkConfig(config.get());
+      Try<MasterConfig> _masterConfig = parseMasterConfig(config.get());
 
       if (_masterConfig.isError()) {
         EXIT(EXIT_FAILURE)

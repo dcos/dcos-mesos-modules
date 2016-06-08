@@ -9,16 +9,17 @@
           "name": "com_mesosphere_mesos_OverlayMasterManager",
             "parameters" : [
             {
-              "key": "overlays",
+              "key": "master_config",
               "value" : "/var/lib/mesos/overlay-config.json"
-            },
+            }
+          ]
+        },
+        {
+          "name": "com_mesosphere_mesos_OverlayAgentManager",
+            "parameters" : [
             {
-              "key" : "vtep_subnet",
-              "value": "44.128.0.0/16"
-            },
-            {
-              "key" : "vtep_mac_oui",
-              "value" : "70:B3:D5:00:00:00"
+              "key" : "agent_config",
+              "value" : "/var/lib/mesos/overlay-agent-master-config.json"
             }
           ]
         }

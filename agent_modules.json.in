@@ -9,12 +9,8 @@
           "name": "com_mesosphere_mesos_OverlayAgentManager",
             "parameters" : [
             {
-              "key" : "master",
-              "value" : "127.0.0.1:5050"
-            },
-            {
-              "key" : "cni_dir",
-              "value" : "/var/lib/mesos/cni"
+              "key" : "agent_config",
+              "value" : "/var/lib/mesos/overlay-agent-config.json"
             }
           ]
         }
