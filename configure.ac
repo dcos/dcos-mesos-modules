@@ -22,12 +22,6 @@ AC_ARG_WITH([mesos],
             [mesos=$withval],
             [mesos=no])
 
-AC_ARG_WITH([mesos_root],
-            [AS_HELP_STRING([--with-mesos-root=dir],
-                            [provide root dir for Mesos sources])],
-            [mesos_root=$withval],
-            [mesos_root=no])
-
 AC_ARG_WITH([mesos_build_dir],
             [AS_HELP_STRING([--with-mesos-build-dir=dir],
                             [provide Mesos build dir])],
@@ -40,6 +34,13 @@ AC_ARG_WITH([protobuf],
             [protobuf=$withval],
             [protobuf=/usr])
 
+AC_ARG_WITH([zookeeper],
+            [AS_HELP_STRING([--with-mesos-zookeeper@<:@=DIR@:>@],
+                            [Zookeeper installation path that is
+                            different from the bundled installation
+                            available with Mesos.])],
+            [], [])
+
 if test -d "$mesos"; then
   MESOS_INCLUDE_PATH="-I${mesos}/include"
   MESOS_LDFLAGS="-L${mesos}/lib64 -L${mesos}/lib"
@@ -48,29 +49,29 @@ if test -d "$mesos"; then
     PROTOC_PATH="${with_protobuf}/bin"
     MESOS_INCLUDE_PATH="${MESOS_INCLUDE_PATH} -I${with_protobuf}/include"
   else
-    PROTOC_PATH="/usr/bin"
+    PROTOC_PATH="${mesos}/lib/mesos/3rdparty/bin/"
+    MESOS_INCLUDE_PATH="${MESOS_INCLUDE_PATH}
+    -I${mesos}/lib/mesos/3rdparty/include/
+    -I${mesos}/lib/mesos/3rdparty/include/glog"
+  fi
+  #Set up the zookeeper headers.
+  if test -n "`echo $with_zookeeper`"; then
+    MESOS_INCLUDE_PATH="${MESOS_INCLUDE_PATH} -I${with_zookeeper}/include/zookeeper"
+  else
+    #Use the zookeeper bundled with Mesos.
+    MESOS_INCLUDE_PATH="${MESOS_INCLUDE_PATH} -I${mesos}/lib/mesos/3rdparty/include/zookeeper"
   fi
 
 else
-
-  if test -d "$mesos_root"; then
-    MESOS_INCLUDE_PATH="-I${mesos_root}/include"
-
-    # Add libprocess to include path.
-    MESOS_INCLUDE_PATH="${MESOS_INCLUDE_PATH} -I${mesos_root}/3rdparty/libprocess/include"
-
-    # Add stout to include path.
-    MESOS_INCLUDE_PATH="${MESOS_INCLUDE_PATH} -I${mesos_root}/3rdparty/libprocess/3rdparty/stout/include"
-  else
-    AC_MSG_ERROR([Invalid mesos path; use --with-mesos-root=<DIR>
-                  <DIR> is the top-level directory of the Mesos distribution.])
-  fi
 
   if test -d "$mesos_build_dir"; then
     MESOS_INCLUDE_PATH="${MESOS_INCLUDE_PATH} -I${mesos_build_dir}/include"
     PROTOBUF="${mesos_build_dir}/3rdparty/libprocess/3rdparty/protobuf-2.5.0"
     PROTOC_PATH="${PROTOBUF}/src"
     MESOS_INCLUDE_PATH="${MESOS_INCLUDE_PATH} -I${PROTOBUF}/src"
+    MESOS_INCLUDE_PATH="$MESOS_INCLUDE_PATH
+    -I${mesos_build_dir}/3rdparty/zookeeper-3.4.8/src/c/include
+    -I${mesos_build_dir}/3rdparty/zookeeper-3.4.8/src/c/generate"
   else
     AC_MSG_ERROR([Invalid mesos build path; use --with-mesos-build-dir=<DIR>
                   <DIR> is the Mesos build directory.])
@@ -175,6 +176,10 @@ AC_CHECK_HEADER([glog/logging.h],
 AC_CHECK_HEADERS([boost/lexical_cast.hpp boost/functional/hash.hpp],
                 [],
                 [AC_MSG_ERROR([boost is not installed.])])
+
+AC_CHECK_HEADERS([zookeeper.h],
+                 [], 
+                 [AC_MSG_ERROR([zookeeper.h not found.])])
 
 AC_CHECK_HEADER([google/protobuf/message.h],
                 [AC_LINK_IFELSE(
