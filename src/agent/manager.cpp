@@ -360,6 +360,11 @@ protected:
         << "Overlay master disconnected!"
         << "Waiting for a new overlay master to be detected";
     }
+    
+    LOG(INFO) << "Moving " << pid << "to `REGISTERING` state.";
+
+    state = REGISTERING;
+    doReliableRegistration(INITIAL_BACKOFF_PERIOD);
   }
 
   void updateAgentOverlays(
