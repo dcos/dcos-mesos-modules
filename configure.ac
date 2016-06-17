@@ -50,9 +50,9 @@ if test -d "$mesos"; then
     MESOS_INCLUDE_PATH="${MESOS_INCLUDE_PATH} -I${with_protobuf}/include"
   else
     PROTOC_PATH="${mesos}/lib/mesos/3rdparty/bin/"
-    MESOS_INCLUDE_PATH="${MESOS_INCLUDE_PATH}
-    -I${mesos}/lib/mesos/3rdparty/include/
-    -I${mesos}/lib/mesos/3rdparty/include/glog"
+    MESOS_INCLUDE_PATH="${MESOS_INCLUDE_PATH}\
+      -I${mesos}/lib/mesos/3rdparty/include/\
+      -I${mesos}/lib/mesos/3rdparty/include/glog"
   fi
   #Set up the zookeeper headers.
   if test -n "`echo $with_zookeeper`"; then
@@ -69,9 +69,9 @@ else
     PROTOBUF="${mesos_build_dir}/3rdparty/libprocess/3rdparty/protobuf-2.5.0"
     PROTOC_PATH="${PROTOBUF}/src"
     MESOS_INCLUDE_PATH="${MESOS_INCLUDE_PATH} -I${PROTOBUF}/src"
-    MESOS_INCLUDE_PATH="$MESOS_INCLUDE_PATH
-    -I${mesos_build_dir}/3rdparty/zookeeper-3.4.8/src/c/include
-    -I${mesos_build_dir}/3rdparty/zookeeper-3.4.8/src/c/generate"
+    MESOS_INCLUDE_PATH="$MESOS_INCLUDE_PATH\
+      -I${mesos_build_dir}/3rdparty/zookeeper-3.4.8/src/c/include\
+      -I${mesos_build_dir}/3rdparty/zookeeper-3.4.8/src/c/generate"
   else
     AC_MSG_ERROR([Invalid mesos build path; use --with-mesos-build-dir=<DIR>
                   <DIR> is the Mesos build directory.])
