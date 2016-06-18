@@ -239,7 +239,7 @@ struct Vtep
 
   Try<Nothing> reserve(net::MAC mac)
   {
-    uint32_t _mac;
+    uint32_t _mac = 0;
     uint8_t* __mac = (uint8_t*) &_mac;
 
     __mac[1] = mac[3];
@@ -250,7 +250,8 @@ struct Vtep
 
     if (!freeMAC.contains(_mac)) {
       return Error(
-          "Cannot reserve an unavailable MAC " + stringify(mac));
+          "Cannot reserve an unavailable MAC " +
+          stringify(mac) + "(" + stringify(_mac) + ")");
     }
 
     freeMAC -= _mac;
@@ -386,13 +387,13 @@ struct Overlay
 
     // Retrieve the integer representation of subnet in the
     // `IntervalSet`.
-    _subnet &= netmask;
+    _subnet &= ~netmask;
     _subnet = _subnet >> (32 - subnet.prefix());
 
     if (!freeNetworks.contains(_subnet)) {
       return Error(
           "Unable to reserve unavailable subnet " +
-          stringify(subnet));
+          stringify(subnet) + "(" + stringify(_subnet) + ")");
     }
 
     freeNetworks -= _subnet;
@@ -838,7 +839,7 @@ protected:
               false);
           if (vtepMAC.isError()) {
             LOG(ERROR) << "Unable to parse the retrieved `vtepMAC`: "
-              << overlay.backend().vxlan().vtep_ip() << ": "
+              << overlay.backend().vxlan().vtep_mac() << ": "
               << vtepMAC.error();
             abort();
           }
