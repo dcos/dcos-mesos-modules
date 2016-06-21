@@ -1224,6 +1224,7 @@ private:
   Owned<mesos::state::protobuf::State> replicatedLog;
 };
 
+
 class Manager : public Anonymous
 {
 public:
@@ -1243,8 +1244,6 @@ public:
 
   virtual ~Manager()
   {
-    VLOG(1) << "Terminating process";
-
     terminate(process.get());
     wait(process.get());
   }
@@ -1253,8 +1252,6 @@ private:
   Manager(Owned<ManagerProcess> _process)
   : process(_process)
   {
-    VLOG(1) << "Spawning process";
-
     spawn(process.get());
   }
 
@@ -1266,28 +1263,29 @@ private:
 } // namespace overlay {
 } // namespace master {
 
+
 using mesos::modules::overlay::master::Manager;
 using mesos::modules::overlay::master::ManagerProcess;
 
-// Module "main".
+
 Anonymous* createOverlayMasterManager(const Parameters& parameters)
 {
   Option<MasterConfig> masterConfig = None();
 
-  VLOG(1) << "Parameters:";
   foreach (const mesos::Parameter& parameter, parameters.parameter()) {
-    VLOG(1) << parameter.key() << ": " << parameter.value();
+    LOG(INFO) << "Overlay master parameter '" << parameter.key()
+              << "=" << parameter.value() << "'";
 
     if (parameter.key() == "master_config") {
       if (!os::exists(parameter.value())) {
-        EXIT(EXIT_FAILURE)
-          << "Unable to find the network configuration";
+        EXIT(EXIT_FAILURE) << "Unable to find Master configuration"
+                           << parameter.value();
       }
 
       Try<string> config = os::read(parameter.value());
       if (config.isError()) {
-        EXIT(EXIT_FAILURE) << "Unable to read the network configuration: "
-                           << config.error();
+        EXIT(EXIT_FAILURE) << "Unable to read the Master "
+                           << "configuration: " << config.error();
       }
 
       auto parseMasterConfig = [](const string& s) -> Try<MasterConfig> {
@@ -1307,10 +1305,9 @@ Anonymous* createOverlayMasterManager(const Parameters& parameters)
       };
 
       Try<MasterConfig> _masterConfig = parseMasterConfig(config.get());
-
       if (_masterConfig.isError()) {
         EXIT(EXIT_FAILURE)
-          << "Unable to prase the overlay JSON configuration: "
+          << "Unable to prase the Master JSON configuration: "
           << _masterConfig.error();
       }
 
@@ -1319,11 +1316,10 @@ Anonymous* createOverlayMasterManager(const Parameters& parameters)
   }
 
   if (masterConfig.isNone()) {
-    EXIT(EXIT_FAILURE) << "No master module configuration specified";
+    EXIT(EXIT_FAILURE) << "Missing `master_config`";
   }
 
   Try<Manager*> manager = Manager::createManager(masterConfig.get());
-
   if (manager.isError()) {
     EXIT(EXIT_FAILURE)
       << "Unable to create the Master manager module: "
@@ -1340,8 +1336,8 @@ Module<Anonymous> com_mesosphere_mesos_OverlayMasterManager(
     MESOS_MODULE_API_VERSION,
     MESOS_VERSION,
     "Mesosphere",
-    "kapil@mesosphere.io",
-    "Master Overlay Helper Module.",
+    "help@mesosphere.io",
+    "Master Overlay Helper Module",
     NULL,
     createOverlayMasterManager);
 

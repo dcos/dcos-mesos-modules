@@ -855,7 +855,7 @@ public:
           process.error());
     }
 
-    return (new Manager(process.get())); 
+    return new Manager(process.get());
   }
 
   virtual ~Manager()
@@ -890,7 +890,7 @@ private:
 using mesos::modules::overlay::agent::Manager;
 using mesos::modules::overlay::agent::ManagerProcess;
 
-// Module "main".
+
 Anonymous* createOverlayAgentManager(const Parameters& parameters)
 {
   Option<AgentConfig> agentConfig = None();
@@ -928,12 +928,12 @@ Anonymous* createOverlayAgentManager(const Parameters& parameters)
       };
 
       Try<AgentConfig> _agentConfig = parseAgentConfig(config.get());
-
       if (_agentConfig.isError()) {
         EXIT(EXIT_FAILURE)
           << "Unable to parse the Agent JSON configuration: "
           << _agentConfig.error();
       }
+
       agentConfig = _agentConfig.get();
     }
   }
@@ -961,7 +961,9 @@ Anonymous* createOverlayAgentManager(const Parameters& parameters)
       Owned<MasterDetector>(detector.get()));
   
   if (manager.isError()) {
-    EXIT(EXIT_FAILURE) << "Unable to create `Manager`:" + manager.error();
+    EXIT(EXIT_FAILURE)
+      << "Unable to create Agent manager module: "
+      << manager.error();
   }
 
   return manager.get();
