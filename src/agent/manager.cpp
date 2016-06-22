@@ -141,6 +141,64 @@ static string OVERLAY_HELP()
 }
 
 
+// Run `command` as a shell script. This is useful when wanting to
+// chain shell commands.
+static Future<string> runScriptCommand(const string& command)
+{
+  Try<Subprocess> s = subprocess(
+      command,
+      Subprocess::PATH("/dev/null"),
+      Subprocess::PIPE(),
+      Subprocess::PIPE());
+
+  if (s.isError()) {
+    return Failure("Unable to execute '" + command + "': " + s.error());
+  }
+
+  return await(
+      s->status(),
+      io::read(s->out().get()),
+      io::read(s->err().get()))
+    .then([command](
+          const tuple<Future<Option<int>>,
+          Future<string>,
+          Future<string>>& t) -> Future<string> {
+        Future<Option<int>> status = std::get<0>(t);
+        if (!status.isReady()) {
+        return Failure(
+          "Failed to get the exit status of '" + command +"': " +
+          (status.isFailed() ? status.failure() : "discarded"));
+        }
+
+        if (status->isNone()) {
+        return Failure("Failed to reap the subprocess");
+        }
+
+        Future<string> out = std::get<1>(t);
+        if (!out.isReady()) {
+        return Failure(
+          "Failed to read stderr from the subprocess: " +
+          (out.isFailed() ? out.failure() : "discarded"));
+        }
+
+        Future<string> err = std::get<2>(t);
+        if (!err.isReady()) {
+          return Failure(
+              "Failed to read stderr from the subprocess: " +
+              (err.isFailed() ? err.failure() : "discarded"));
+        }
+
+        if (status.get() != 0) {
+          return Failure(
+              "Failed to execute '" + command + "': " + err.get());
+        }
+
+        return out.get();
+    });
+}
+
+
+// Exec's a command.
 static Future<string> runCommand(
     const string& command,
     const vector<string>& argv)
@@ -218,9 +276,9 @@ public:
     // ensure that traffic destined to any of the overlay subnet is
     // not masqueraded.
     //
-    // NOTE: We need to serialize the execution of the 'ipset' and
-    // 'iptables' command to ensure that the MASQUERADE rules have
-    // been installed correctly before allowing the creation of the
+    // NOTE: We need to serialize the execution of the 'ipset' command
+    // to ensure that the MASQUERADE rules have been installed
+    // correctly before allowing the creation of the
     // `ManagerProcess`.
     Future<string> ipset = runCommand(
         "ipset",
@@ -237,84 +295,28 @@ public:
           (ipset.isFailed() ? ipset.failure() : "discarded"));
     }
 
-    ipset = runCommand(
-        "ipset",
-        {"ipset", "add",
-         "-exist", IPSET_OVERLAY,
-         "0.0.0.0/1"});
+    Try<string> command = strings::format(
+        "ipset add -exist %s 0.0.0.0/1 && "
+        "ipset add -exist %s 128.0.0.0/1 && "
+        "ipset add -exist %s 127.0.0.0/1",
+        IPSET_OVERLAY,
+        IPSET_OVERLAY,
+        IPSET_OVERLAY);
+
+    if (command.isError()) {
+      return Error(
+          "Unable to create the ipset rule: " +
+          command.error());
+    }
+
+    ipset = runScriptCommand(command.get());
   
     ipset.await();
 
     if (!ipset.isReady()) {
       return Error(
-          "Unable to add 0.0.0.0/1 to ipset:" +
+          "Unable to add ipset rules:" +
           (ipset.isFailed() ? ipset.failure() : "discarded"));
-    }
-
-    ipset = runCommand(
-        "ipset",
-        {"ipset", "add",
-         "-exist", IPSET_OVERLAY,
-         "128.0.0.0/1"});
-  
-    ipset.await();
-
-    if (!ipset.isReady()) {
-      return Error(
-          "Unable to add 128.0.0.0/1 to ipset: " +
-          (ipset.isFailed() ? ipset.failure() : "discarded"));
-    }
-
-    ipset = runCommand(
-        "ipset",
-        {"ipset", "add",
-         "-exist", IPSET_OVERLAY,
-         "127.0.0.1/8", "nomatch"});
-
-    ipset.await();
-
-    if (!ipset.isReady()) {
-      return Error(
-          "Unable to add 127.0.0.1/8 as nomatch to ipset: " +
-          (ipset.isFailed() ? ipset.failure() : "discarded"));
-    }
-
-    Future<string> iptablesCheck = runCommand(
-        "iptables",
-        {"iptables",
-         "-t", "nat",
-         "-C", "POSTROUTING",
-         "-m", "set",
-         "--match-set", IPSET_OVERLAY, "dst",
-         "-j", "MASQUERADE"});
-
-    iptablesCheck.await();
-
-    // A failed `Future` implicitly implies a non-existent rule.  This
-    // is an indication that the Agent should try installing this
-    // rule.
-    if (!iptablesCheck.isReady()) {
-      Future<string> iptables = runCommand(
-          "iptables",
-          {"iptables",
-           "-t", "nat",
-           "-A", "POSTROUTING",
-           "-m", "set",
-           "--match-set", IPSET_OVERLAY, "dst",
-           "-j", "MASQUERADE"});
-
-      iptables.await();
-
-      if (!iptables.isReady()) {
-        return Error(
-            "Unable to create MASQUERADE rule:" +
-            (iptables.isDiscarded() ?
-            "discarded" : iptables.failure()));
-      }
-    } else {
-      LOG(INFO) << "Found iptables rule '-A POSTROUTING -m set"
-                << " --match-set overlay dst --return-nomatch -j"
-                << " MASQUERADE'.";
     }
 
     return Owned<ManagerProcess>(
@@ -403,11 +405,38 @@ protected:
 
     // Wait for all the networks to be configured.
     await(futures)
-      .onAny(defer(self(), &ManagerProcess::_updateAgentOverlays));
+      .onAny(defer(self(),
+                   &ManagerProcess::_updateAgentOverlays,
+                   lambda::_1));
   }
 
-  void _updateAgentOverlays()
+  void _updateAgentOverlays(
+      const Future<list<Future<Nothing>>>& results)
   {
+    if (!results.isReady()) {
+      LOG(ERROR)
+        << "Unable to configure any overlay: "
+        << (results.isDiscarded() ? "discarded" : results.failure());
+
+      return;
+    }
+
+    vector<string> messages;
+    // Check if there were any failures while configuring the
+    // overlays.
+    foreach(const Future<Nothing>& result, results.get()) {
+      if (!result.isReady()) {
+        messages.push_back(
+            (result.isDiscarded() ?  "discarded" : result.failure()));
+      }
+    }
+
+    if (!messages.empty()){
+      LOG(ERROR)
+        << "Unable to configure some of the overlays on this Agent: "
+        << strings::join("\n", messages);
+    }
+
     if (state != REGISTERING) {
       LOG(WARNING) << "Ignored sending registered message because "
                    << "agent is not in REGISTERING state";
@@ -442,6 +471,8 @@ protected:
     // will keep sending 'UpdateAgentOverlaysMessage', which will
     // essentially cause a retry of sending this message.
     send(overlayMaster.get(), message);
+
+    return;
   }
 
   void agentRegisteredAcknowledgement(const UPID& from)
@@ -586,11 +617,39 @@ protected:
       return Failure(strings::join(";", errors));
     }
 
-    return runCommand(
-        "ipset",
-        {"ipset", "add",
-         "-exist", IPSET_OVERLAY,
-         overlays[name].info().subnet(), "nomatch"})
+    // The Mesos and Docker Networks have been configured. Setup the
+    // ipset rule in `IPSET_OVERLAY`. If the ipset rule succeeds
+    // proceed to check the iptables rule exists for masquerading
+    // traffic from the overlay subnet. If the iptables rule does not
+    // exist insert one in the POSTROUTING change of the NAT table.
+    // The below command is a chain of three commands:
+    // <set ipset> && <check iptables rule exists> ||
+    // <insert iptables rule>
+    const string overlaySubnet = overlays[name].info().subnet();
+
+    Try<string> command = strings::format(
+        "ipset add -exist %s %s" " nomatch &&"
+        " iptables -t nat -C POSTROUTING -s %s -m set"
+        " --match-set %s dst -j MASQUERADE ||"
+        " iptables -t nat -A POSTROUTING -s %s -m"
+        " set --match-set %s dst -j MASQUERADE", 
+        IPSET_OVERLAY,
+        overlaySubnet,
+        overlaySubnet,
+        IPSET_OVERLAY,
+        overlaySubnet,
+        IPSET_OVERLAY);
+
+    if (command.isError()) {
+      return Failure(
+          "Unable to create iptables rule for overlay " +
+          name + ": " + command.error());
+    }
+
+    LOG(INFO) << "Insert following iptables rule for overlay " << name
+              << ": " << command.get();
+
+    return runScriptCommand(command.get())
       .then(defer(
             self(),
             &Self::__configure,
@@ -609,11 +668,13 @@ protected:
     if (!result.isReady()) {
       const string error = 
         (result.isFailed() ? result.failure() : "discarded");
+      state->set_status(AgentOverlayInfo::State::STATUS_FAILED);
       state->set_error(error);
       return Failure(error);
     }
 
     state->set_status(AgentOverlayInfo::State::STATUS_OK);
+
     return Nothing();
   }
 

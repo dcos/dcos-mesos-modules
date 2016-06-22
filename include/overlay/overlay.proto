@@ -108,7 +108,7 @@ message AgentOverlayInfo {
       STATUS_FAILED = 2;
     }
 
-    required Status status = 1;
+    optional Status status = 1 [default = STATUS_INVALID];
     optional string error = 2;
   }
 
