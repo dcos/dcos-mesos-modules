@@ -658,6 +658,13 @@ public:
     if (masterConfig.has_replicated_log_dir()) {
       Log* log = nullptr;
 
+      Try<Nothing> mkdir = os::mkdir(masterConfig.replicated_log_dir());
+      if (mkdir.isError()) {
+        return Error(
+            "Unable to create replicated log directory: " +
+            mkdir.error());
+      }
+
       LOG(INFO) << "Initializing the replicated log.";
 
       if (masterConfig.has_zk()) {
