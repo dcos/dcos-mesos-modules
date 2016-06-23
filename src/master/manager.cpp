@@ -366,6 +366,11 @@ public:
       agent.addOverlay(agentInfo.overlays(i));
     }
 
+    // We should clear any overlay `State` that might have been set.
+    // The `State` will be set once this information is downloaded to
+    // the corresponding agent.
+    agent.clearOverlaysState();
+
     return agent;
   }
 
@@ -722,6 +727,8 @@ protected:
     for (int i = 0; i < networkState.agents_size(); i++) {
       const AgentInfo& agentInfo = networkState.agents(i);
 
+      // Cleare the `State` of the `AgentInfo`
+
       Try<Agent> agent = Agent::create(agentInfo);
       if (agent.isError()) {
         LOG(ERROR) << "Could not recover Agent: "<< agent.error();
@@ -733,6 +740,9 @@ protected:
 
       for (int j = 0; j < agentInfo.overlays_size(); j++) {
         const AgentOverlayInfo& overlay = agentInfo.overlays(j);
+
+        // clear the overlay state.
+        networkState.mutable_agents(i)->mutable_overlays(j)->clear_state();
 
         Try<net::IPNetwork> network = net::IPNetwork::parse(
             overlay.subnet(),
@@ -812,6 +822,16 @@ protected:
       // Reset existing state of the overlays, since the Agent, after
       // restart, does not expect the overlays to have any state.
       agent.clearOverlaysState();
+
+      // We need to update the Agents state in `networkState`
+      const string agentIP = stringify(pid.address.ip);
+      for (int i = 0; i < networkState.agents_size(); i++) {
+        if (agentIP == networkState.agents(i).ip()) {
+          networkState.mutable_agents(i)->CopyFrom(
+              agents.at(pid.address.ip).getAgentInfo());
+          break;
+        }
+      }
 
       _overlays = agent.getOverlays();
     } else {
@@ -941,16 +961,16 @@ protected:
     agents.clear();
     networkState.clear_agents();
 
-    //While we should not clear all the overlays (since they are static) we
-    //need to de-allocate the address space of the overlays so that
-    //when this master becomes the leader it can reserve any
-    //addresses that were pending.
+    // While we should not clear all the overlays (since they are static) we
+    // need to de-allocate the address space of the overlays so that
+    // when this master becomes the leader it can reserve any
+    // addresses that were pending.
     foreachvalue(Overlay& overlay, overlays) {
       overlay.reset();
     }
 
-    //We need to de-allocate the VTEP MAC and VTEP addresses
-    //allocated to the Agent as well.
+    // We need to de-allocate the VTEP MAC and VTEP addresses
+    // allocated to the Agent as well.
     vtep.reset();
   }
 
@@ -958,8 +978,18 @@ protected:
   {
     if(agents.contains(from.address.ip)) {
       LOG(INFO) << "Got ACK for addition of networks from " << from;
-      for(int i=0; i < message.overlays_size(); i++) {
+      for(int i = 0; i < message.overlays_size(); i++) {
         agents.at(from.address.ip).updateOverlayState(message.overlays(i));
+      }
+
+      // Update the Agent State.
+      const string agent = stringify(from.address.ip);
+      for (int i = 0; i < networkState.agents_size(); i++) {
+        if (agent == networkState.agents(i).ip()) {
+          networkState.mutable_agents(i)->CopyFrom(
+              agents.at(from.address.ip).getAgentInfo());
+          break;
+        }
       }
 
       send(from, AgentRegisteredAcknowledgement());
