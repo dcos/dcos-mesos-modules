@@ -319,6 +319,23 @@ public:
           (ipset.isFailed() ? ipset.failure() : "discarded"));
     }
 
+    // We want to all overlay instances to talk to each other.
+    // However, Docker disallows this. So we will install a de-funct
+    // rule in the DOCKER-ISOLATION chain to bypass any isolation
+    // docker might be trying to enforce.
+    const string iptablesCommand = "iptables -D DOCKER-ISOLATION -j RETURN; "
+        "iptables -I DOCKER-ISOLATION 1 -j RETURN";
+
+    Future<string> iptables = runScriptCommand(iptablesCommand);
+
+    iptables.await();
+
+    if (!iptables.isReady()) {
+      return Error(
+          "Unable to add iptables rules to DOCKER-ISOLATION:" +
+          (iptables.isFailed() ? iptables.failure() : "discarded"));
+    }
+
     return Owned<ManagerProcess>(
         new ManagerProcess(
             cniDir,
