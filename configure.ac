@@ -35,7 +35,7 @@ AC_ARG_WITH([protobuf],
             [protobuf=/usr])
 
 AC_ARG_WITH([zookeeper],
-            [AS_HELP_STRING([--with-mesos-zookeeper@<:@=DIR@:>@],
+            [AS_HELP_STRING([--with-zookeeper@<:@=DIR@:>@],
                             [Zookeeper installation path that is
                             different from the bundled installation
                             available with Mesos.])],
