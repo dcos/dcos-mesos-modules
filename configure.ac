@@ -178,7 +178,7 @@ AC_CHECK_HEADERS([boost/lexical_cast.hpp boost/functional/hash.hpp],
                 [AC_MSG_ERROR([boost is not installed.])])
 
 AC_CHECK_HEADERS([zookeeper.h],
-                 [], 
+                 [],
                  [AC_MSG_ERROR([zookeeper.h not found.])])
 
 AC_CHECK_HEADER([google/protobuf/message.h],
