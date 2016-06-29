@@ -56,7 +56,7 @@ if test -d "$mesos"; then
   fi
   #Set up the zookeeper headers.
   if test -n "`echo $with_zookeeper`"; then
-    MESOS_INCLUDE_PATH="${MESOS_INCLUDE_PATH} -I{with_zookeeper}/include -I${with_zookeeper}/generated -I${with_zookeeper}/include/zookeeper -I${with_zookeeper}"
+    MESOS_INCLUDE_PATH="${MESOS_INCLUDE_PATH} -I${with_zookeeper}/include -I${with_zookeeper}/generated -I${with_zookeeper}/include/zookeeper -I${with_zookeeper}"
   else
     #Use the zookeeper bundled with Mesos.
     MESOS_INCLUDE_PATH="${MESOS_INCLUDE_PATH} -I${mesos}/lib/mesos/3rdparty/include/zookeeper"
