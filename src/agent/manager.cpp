@@ -277,23 +277,6 @@ public:
           (ipset.isFailed() ? ipset.failure() : "discarded"));
     }
 
-    // We want to all overlay instances to talk to each other.
-    // However, Docker disallows this. So we will install a de-funct
-    // rule in the DOCKER-ISOLATION chain to bypass any isolation
-    // docker might be trying to enforce.
-    const string iptablesCommand = "iptables -D DOCKER-ISOLATION -j RETURN; "
-        "iptables -I DOCKER-ISOLATION 1 -j RETURN";
-
-    Future<string> iptables = runScriptCommand(iptablesCommand);
-
-    iptables.await();
-
-    if (!iptables.isReady()) {
-      return Error(
-          "Unable to add iptables rules to DOCKER-ISOLATION:" +
-          (iptables.isFailed() ? iptables.failure() : "discarded"));
-    }
-
     return Owned<ManagerProcess>(
         new ManagerProcess(
             cniDir,
@@ -410,6 +393,29 @@ protected:
       LOG(ERROR)
         << "Unable to configure some of the overlays on this Agent: "
         << strings::join("\n", messages);
+    }
+
+    // We want all overlay instances to talk to each other.
+    // However, Docker disallows this. So we will install a de-funct
+    // rule in the DOCKER-ISOLATION chain to bypass any isolation
+    // docker might be trying to enforce.
+    const string iptablesCommand = "iptables -D DOCKER-ISOLATION -j RETURN; "
+        "iptables -I DOCKER-ISOLATION 1 -j RETURN";
+
+    runScriptCommand(iptablesCommand)
+      .onAny(defer(self(),
+                   &ManagerProcess::__updateAgentOverlays,
+                   lambda::_1));
+  }
+
+  void __updateAgentOverlays(
+      const Future<string>& result)
+  {
+    if (!result.isReady()) {
+      LOG(ERROR)
+        << "Unable to add iptables rules to DOCKER-ISOLATION:" 
+        << (result.isFailed() ? result.failure() : "discarded");
+      return;
     }
 
     if (state != REGISTERING) {
