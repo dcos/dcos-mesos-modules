@@ -679,12 +679,16 @@ protected:
       return Failure("Failed to parse bridge ip: " + subnet.error());
     }
 
-    auto config = [name, subnet, overlay](JSON::ObjectWriter* writer) {
+    AgentNetworkConfig _networkConfig;
+    _networkConfig.CopyFrom(networkConfig);
+
+    auto config = [name, subnet, overlay, _networkConfig](JSON::ObjectWriter* writer) {
       writer->field("name", name);
       writer->field("type", "bridge");
       writer->field("bridge", overlay.mesos_bridge().name());
       writer->field("isGateway", true);
       writer->field("ipMasq", false);
+      writer->field("mtu", stringify(_networkConfig.overlay_mtu()));
 
       writer->field("ipam", [subnet](JSON::ObjectWriter* writer) {
         writer->field("type", "host-local");
@@ -795,6 +799,13 @@ protected:
       "--opt=com.docker.network.bridge.name=" +
       overlay.docker_bridge().name(),
       "--opt=com.docker.network.bridge.enable_ip_masquerade=false",
+      // The Docker networking documentation erroneously describes the
+      // MTU option as `com.docker.network.mtu`, however from the code
+      // snippet (https://github.com/docker/libnetwork/blob/
+      // 0fcaacd848f60973235ae82b8fd7d9409227bac8/netlabel/labels.go#L34)
+      // the below option seems to be write one.
+      "--opt=com.docker.network.driver.mtu=" +
+        stringify(networkConfig.overlay_mtu()),
       name
     };
 
