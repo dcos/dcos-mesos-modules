@@ -28,6 +28,12 @@ AC_ARG_WITH([mesos_build_dir],
             [mesos_build_dir=$withval],
             [mesos_build_dir=no])
 
+AC_ARG_WITH([mesos_root],
+            [AS_HELP_STRING([--with-mesos-root=dir],
+                            [provide root dir for Mesos sources])],
+            [mesos_root=$withval],
+            [mesos_root=no])
+
 AC_ARG_WITH([protobuf],
             [AS_HELP_STRING([--with-protobuf=dir],
                             [provide install location of protobuf])],
@@ -40,6 +46,12 @@ AC_ARG_WITH([zookeeper],
                             different from the bundled installation
                             available with Mesos.])],
             [], [])
+
+MESOS_ROOT="$mesos_root"
+AC_SUBST([MESOS_ROOT])
+
+MESOS_BUILD_DIR="${mesos_root}/build"
+AC_SUBST([MESOS_BUILD_DIR])
 
 if test -d "$mesos"; then
   MESOS_INCLUDE_PATH="-I${mesos}/include"
@@ -63,20 +75,51 @@ if test -d "$mesos"; then
   fi
 
 else
-
   if test -d "$mesos_build_dir"; then
     MESOS_INCLUDE_PATH="${MESOS_INCLUDE_PATH} -I${mesos_build_dir}/include"
-    PROTOBUF="${mesos_build_dir}/3rdparty/libprocess/3rdparty/protobuf-2.5.0"
-    PROTOC_PATH="${PROTOBUF}/src"
+    PROTOBUF="${mesos_build_dir}/3rdparty/libprocess/3rdparty/protobuf-2.6.1"
+    PROTOC_PATH="${PROTOBUF}/src" 
     MESOS_INCLUDE_PATH="${MESOS_INCLUDE_PATH} -I${PROTOBUF}/src"
-    MESOS_INCLUDE_PATH="$MESOS_INCLUDE_PATH\
-      -I${mesos_build_dir}/3rdparty/zookeeper-3.4.8/src/c/include\
-      -I${mesos_build_dir}/3rdparty/zookeeper-3.4.8/src/c/generate"
+    MESOS_INCLUDE_PATH="${MESOS_INCLUDE_PATH} -I${mesos_build_dir}/include"
+    MESOS_INCLUDE_PATH="${MESOS_INCLUDE_PATH} -I${mesos_build_dir}/src"
+    MESOS_INCLUDE_PATH="${MESOS_INCLUDE_PATH} \
+    -I${mesos_build_dir}/3rdparty/zookeeper-3.4.8/src/c/include\
+    -I${mesos_build_dir}/3rdparty/zookeeper-3.4.8/src/c/generated\
+    -I${mesos_build_dir}/3rdparty/picojson-1.3.0/"
+
   else
     AC_MSG_ERROR([Invalid mesos build path; use --with-mesos-build-dir=<DIR>
                   <DIR> is the Mesos build directory.])
   fi
 fi
+
+# For builds based on full Mesos source tree, link in the Mesos test
+# utilities for reuse.
+# TODO(asridharan): This is a rather hacky way of getting these helpers in
+# and we should do this properly by getting the WIP review request
+# https://reviews.apache.org/r/47374/ merged into Mesos.
+if test -d "$mesos_root"; then
+  MESOS_INCLUDE_PATH="${MESOS_INCLUDE_PATH} -I${mesos_root}/include"
+  MESOS_INCLUDE_PATH="${MESOS_INCLUDE_PATH} -I${mesos_root}/src"
+  MESOS_INCLUDE_PATH="${MESOS_INCLUDE_PATH} -I${MESOS_BUILD_DIR}/include"
+  MESOS_INCLUDE_PATH="${MESOS_INCLUDE_PATH} -I${MESOS_BUILD_DIR}/src"
+
+  AC_CONFIG_LINKS([tests/cluster.cpp:${MESOS_ROOT}/src/tests/cluster.cpp])
+  AC_CONFIG_LINKS([tests/containerizer.cpp:${MESOS_ROOT}/src/tests/containerizer.cpp])
+  AC_CONFIG_LINKS([tests/environment.cpp:${MESOS_ROOT}/src/tests/environment.cpp])
+  AC_CONFIG_LINKS([tests/flags.cpp:${MESOS_ROOT}/src/tests/flags.cpp])
+  AC_CONFIG_LINKS([tests/mesos.cpp:${MESOS_ROOT}/src/tests/mesos.cpp])
+  AC_CONFIG_LINKS([tests/module.cpp:${MESOS_ROOT}/src/tests/module.cpp])
+  AC_CONFIG_LINKS([tests/script.cpp:${MESOS_ROOT}/src/tests/script.cpp])
+  AC_CONFIG_LINKS([tests/utils.cpp:${MESOS_ROOT}/src/tests/utils.cpp])
+  AC_CONFIG_LINKS([tests/containerizer/launcher.cpp:${MESOS_ROOT}/src/tests/containerizer/launcher.cpp])
+  AC_CONFIG_LINKS([tests/containerizer/memory_test_helper.cpp:${MESOS_ROOT}/src/tests/containerizer/memory_test_helper.cpp])
+
+  # Enable flag to check whether root and build dir were provided.
+  AM_CONDITIONAL([SOURCE_PROVIDED], [test -d "$mesos_root"])
+fi
+
+
 
 MESOS_CPPFLAGS="$MESOS_INCLUDE_PATH"
 
