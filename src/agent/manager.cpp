@@ -954,14 +954,16 @@ Anonymous* createOverlayAgentManager(const Parameters& parameters)
 
     if (parameter.key() == "agent_config") {
       if (!os::exists(parameter.value())) {
-        EXIT(EXIT_FAILURE) << "Unable to find Agent configuration: "
-                           << parameter.value();
+        LOG(ERROR) << "Unable to find Agent configuration: "
+                   << parameter.value();
+        return nullptr;
       }
 
       Try<string> config = os::read(parameter.value()); 
       if (config.isError()) {
-        EXIT(EXIT_FAILURE) << "Unable to read the Agent "
-                           << "configuration: " << config.error();
+        LOG(ERROR) << "Unable to read the Agent "
+                   << "configuration: " << config.error();
+        return nullptr;
       }
 
       auto parseAgentConfig = [](const string& s) -> Try<AgentConfig> {
@@ -982,9 +984,10 @@ Anonymous* createOverlayAgentManager(const Parameters& parameters)
 
       Try<AgentConfig> _agentConfig = parseAgentConfig(config.get());
       if (_agentConfig.isError()) {
-        EXIT(EXIT_FAILURE)
+        LOG(ERROR)
           << "Unable to parse the Agent JSON configuration: "
           << _agentConfig.error();
+        return nullptr;
       }
 
       agentConfig = _agentConfig.get();
@@ -992,20 +995,22 @@ Anonymous* createOverlayAgentManager(const Parameters& parameters)
   }
 
   if (agentConfig.isNone()) {
-    EXIT(EXIT_FAILURE) << "Missing `agent_config`";
+    LOG(ERROR) << "Missing `agent_config`";
+    return nullptr;
   }
 
 
   Try<MasterDetector*> detector =
     MasterDetector::create(agentConfig->master());
   if (detector.isError()) {
-    EXIT(EXIT_FAILURE)
-      << "Unable to create master detector: " << detector.error();
+    LOG(ERROR) << "Unable to create master detector: "
+               << detector.error();
+    return nullptr;
   }
 
   Try<Nothing> mkdir = os::mkdir(agentConfig->cni_dir());
   if (mkdir.isError()) {
-    EXIT(EXIT_FAILURE)
+    LOG(ERROR)
       << "Failed to create CNI config directory: " << mkdir.error();
   }
 
@@ -1014,9 +1019,10 @@ Anonymous* createOverlayAgentManager(const Parameters& parameters)
       Owned<MasterDetector>(detector.get()));
   
   if (manager.isError()) {
-    EXIT(EXIT_FAILURE)
+    LOG(ERROR)
       << "Unable to create Agent manager module: "
       << manager.error();
+    return nullptr;
   }
 
   return manager.get();

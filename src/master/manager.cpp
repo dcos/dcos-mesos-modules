@@ -1186,14 +1186,16 @@ Anonymous* createOverlayMasterManager(const Parameters& parameters)
 
     if (parameter.key() == "master_config") {
       if (!os::exists(parameter.value())) {
-        EXIT(EXIT_FAILURE) << "Unable to find Master configuration"
-                           << parameter.value();
+        LOG(ERROR) << "Unable to find Master configuration"
+                   << parameter.value();
+        return nullptr;
       }
 
       Try<string> config = os::read(parameter.value());
       if (config.isError()) {
-        EXIT(EXIT_FAILURE) << "Unable to read the Master "
-                           << "configuration: " << config.error();
+        LOG(ERROR) << "Unable to read the Master "
+                   << "configuration: " << config.error();
+        return nullptr;
       }
 
       auto parseMasterConfig = [](const string& s) -> Try<MasterConfig> {
@@ -1214,9 +1216,10 @@ Anonymous* createOverlayMasterManager(const Parameters& parameters)
 
       Try<MasterConfig> _masterConfig = parseMasterConfig(config.get());
       if (_masterConfig.isError()) {
-        EXIT(EXIT_FAILURE)
+        LOG(ERROR)
           << "Unable to prase the Master JSON configuration: "
           << _masterConfig.error();
+        return nullptr;
       }
 
       masterConfig = _masterConfig.get();
@@ -1224,15 +1227,16 @@ Anonymous* createOverlayMasterManager(const Parameters& parameters)
   }
 
   if (masterConfig.isNone()) {
-    EXIT(EXIT_FAILURE) << "Missing `master_config`";
+    LOG(ERROR) << "Missing `master_config`";
+    return nullptr;
   }
 
   Try<Manager*> manager = Manager::createManager(masterConfig.get());
   if (manager.isError()) {
-    EXIT(EXIT_FAILURE)
+    LOG(ERROR)
       << "Unable to create the Master manager module: "
       << manager.error();
-
+    return nullptr;
   }
 
   return manager.get();
