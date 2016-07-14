@@ -238,43 +238,48 @@ public:
     // to ensure that the MASQUERADE rules have been installed
     // correctly before allowing the creation of the
     // `ManagerProcess`.
-    Future<string> ipset = runCommand(
-        "ipset",
-        {"ipset", "create",
-         "-exist", IPSET_OVERLAY,
-         "hash:net",
-         "counters"});
-  
-    ipset.await();
+    //
+    // NOTE: We should set up the `ipset` only if `mesos_bridge` or
+    // `docker_bridge` have been enabled in the `AgentNetworkConfig`.
+    if (networkConfig.mesos_bridge() || networkConfig.docker_bridge()) {
+      Future<string> ipset = runCommand(
+          "ipset",
+          {"ipset", "create",
+          "-exist", IPSET_OVERLAY,
+          "hash:net",
+          "counters"});
 
-    if (!ipset.isReady()) {
-      return Error(
-          "Unable to create ipset:" +
-          (ipset.isFailed() ? ipset.failure() : "discarded"));
-    }
+      ipset.await();
 
-    Try<string> command = strings::format(
-        "ipset add -exist %s 0.0.0.0/1 && "
-        "ipset add -exist %s 128.0.0.0/1 && "
-        "ipset add -exist %s 127.0.0.0/1",
-        IPSET_OVERLAY,
-        IPSET_OVERLAY,
-        IPSET_OVERLAY);
+      if (!ipset.isReady()) {
+        return Error(
+            "Unable to create ipset:" +
+            (ipset.isFailed() ? ipset.failure() : "discarded"));
+      }
 
-    if (command.isError()) {
-      return Error(
-          "Unable to create the ipset rule: " +
-          command.error());
-    }
+      Try<string> command = strings::format(
+          "ipset add -exist %s 0.0.0.0/1 && "
+          "ipset add -exist %s 128.0.0.0/1 && "
+          "ipset add -exist %s 127.0.0.0/1",
+          IPSET_OVERLAY,
+          IPSET_OVERLAY,
+          IPSET_OVERLAY);
 
-    ipset = runScriptCommand(command.get());
-  
-    ipset.await();
+      if (command.isError()) {
+        return Error(
+            "Unable to create the ipset rule: " +
+            command.error());
+      }
 
-    if (!ipset.isReady()) {
-      return Error(
-          "Unable to add ipset rules:" +
-          (ipset.isFailed() ? ipset.failure() : "discarded"));
+      ipset = runScriptCommand(command.get());
+
+      ipset.await();
+
+      if (!ipset.isReady()) {
+        return Error(
+            "Unable to add ipset rules:" +
+            (ipset.isFailed() ? ipset.failure() : "discarded"));
+      }
     }
 
     return Owned<ManagerProcess>(
