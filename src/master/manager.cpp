@@ -1118,6 +1118,9 @@ private:
       replicatedLog(_replicatedLog)
   { 
     networkState.mutable_network()->CopyFrom(_networkConfig);
+
+    // If no replicated log set the state to `RECOVERED`.
+    managerState = RECOVERED;
   };
 
   hashmap<string, Overlay> overlays;
