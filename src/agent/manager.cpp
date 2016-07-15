@@ -400,29 +400,6 @@ protected:
         << strings::join("\n", messages);
     }
 
-    // We want all overlay instances to talk to each other.
-    // However, Docker disallows this. So we will install a de-funct
-    // rule in the DOCKER-ISOLATION chain to bypass any isolation
-    // docker might be trying to enforce.
-    const string iptablesCommand = "iptables -D DOCKER-ISOLATION -j RETURN; "
-        "iptables -I DOCKER-ISOLATION 1 -j RETURN";
-
-    runScriptCommand(iptablesCommand)
-      .onAny(defer(self(),
-                   &ManagerProcess::__updateAgentOverlays,
-                   lambda::_1));
-  }
-
-  void __updateAgentOverlays(
-      const Future<string>& result)
-  {
-    if (!result.isReady()) {
-      LOG(ERROR)
-        << "Unable to add iptables rules to DOCKER-ISOLATION:" 
-        << (result.isFailed() ? result.failure() : "discarded");
-      return;
-    }
-
     if (state != REGISTERING) {
       LOG(WARNING) << "Ignored sending registered message because "
                    << "agent is not in REGISTERING state";
@@ -611,36 +588,41 @@ protected:
     // The below command is a chain of three commands:
     // <set ipset> && <check iptables rule exists> ||
     // <insert iptables rule>
-    const string overlaySubnet = overlays[name].info().subnet();
+    if (overlays[name].has_mesos_bridge() ||
+        overlays[name].has_docker_bridge()) {
+      const string overlaySubnet = overlays[name].info().subnet();
 
-    Try<string> command = strings::format(
-        "ipset add -exist %s %s" " nomatch &&"
-        " iptables -t nat -C POSTROUTING -s %s -m set"
-        " --match-set %s dst -j MASQUERADE ||"
-        " iptables -t nat -A POSTROUTING -s %s -m"
-        " set --match-set %s dst -j MASQUERADE", 
-        IPSET_OVERLAY,
-        overlaySubnet,
-        overlaySubnet,
-        IPSET_OVERLAY,
-        overlaySubnet,
-        IPSET_OVERLAY);
+      Try<string> command = strings::format(
+          "ipset add -exist %s %s" " nomatch &&"
+          " iptables -t nat -C POSTROUTING -s %s -m set"
+          " --match-set %s dst -j MASQUERADE ||"
+          " iptables -t nat -A POSTROUTING -s %s -m"
+          " set --match-set %s dst -j MASQUERADE", 
+          IPSET_OVERLAY,
+          overlaySubnet,
+          overlaySubnet,
+          IPSET_OVERLAY,
+          overlaySubnet,
+          IPSET_OVERLAY);
 
-    if (command.isError()) {
-      return Failure(
-          "Unable to create iptables rule for overlay " +
-          name + ": " + command.error());
+      if (command.isError()) {
+        return Failure(
+            "Unable to create iptables rule for overlay " +
+            name + ": " + command.error());
+      }
+
+      LOG(INFO) << "Insert following iptables rule for overlay " << name
+        << ": " << command.get();
+
+      return runScriptCommand(command.get())
+        .then(defer(
+              self(),
+              &Self::__configure,
+              name,
+              lambda::_1));
+    } else {
+      return __configure(name, string(""));
     }
-
-    LOG(INFO) << "Insert following iptables rule for overlay " << name
-              << ": " << command.get();
-
-    return runScriptCommand(command.get())
-      .then(defer(
-            self(),
-            &Self::__configure,
-            name,
-            lambda::_1));
   }
 
   Future<Nothing> __configure(
@@ -795,65 +777,51 @@ protected:
       return Failure("Failed to parse bridge ip: " + subnet.error());
     }
 
-    vector<string> argv = {
-      "docker",
-      "network",
-      "create",
-      "--driver=bridge",
-      "--subnet=" + stringify(subnet.get()),
-      "--opt=com.docker.network.bridge.name=" +
-      overlay.docker_bridge().name(),
-      "--opt=com.docker.network.bridge.enable_ip_masquerade=false",
-      // The Docker networking documentation erroneously describes the
-      // MTU option as `com.docker.network.mtu`, however from the code
-      // snippet (https://github.com/docker/libnetwork/blob/
-      // 0fcaacd848f60973235ae82b8fd7d9409227bac8/netlabel/labels.go#L34)
-      // the below option seems to be write one.
-      "--opt=com.docker.network.driver.mtu=" +
-        stringify(networkConfig.overlay_mtu()),
-      name
-    };
-
-    Try<Subprocess> s = subprocess(
+    return runCommand(
         "docker",
-        argv,
-        Subprocess::PATH("/dev/null"),
-        Subprocess::PATH("/dev/null"),
-        Subprocess::PIPE());
+        {"docker",
+         "network",
+         "create",
+         "--driver=bridge",
+         "--subnet=" + stringify(subnet.get()),
+         "--opt=com.docker.network.bridge.name=" +
+          overlay.docker_bridge().name(),
+         "--opt=com.docker.network.bridge.enable_ip_masquerade=false",
+         // The Docker networking documentation erroneously describes the
+         // MTU option as `com.docker.network.mtu`, however from the code
+         // snippet (https://github.com/docker/libnetwork/blob/
+         // 0fcaacd848f60973235ae82b8fd7d9409227bac8/netlabel/labels.go#L34)
+         // the below option seems to be write one.
+         "--opt=com.docker.network.driver.mtu=" +
+          stringify(networkConfig.overlay_mtu()),
+         name}).then(defer(self(),
+                           &Self::__configureDockerNetwork,
+                           name,
+                           lambda::_1));
+  }
 
-    if (s.isError()) {
-      return Failure("Unable to execute docker network create: " + s.error());
+  Future<Nothing> __configureDockerNetwork(
+      const string& name,
+      const Future<string> &result)
+  {
+    CHECK(overlays.contains(name));
+
+    if (!result.isReady()) {
+      return Failure(
+          "Unable to configure docker network: " +
+          (result.isDiscarded() ? "discarded" : result.failure()));
     }
 
-    return await(s->status(), io::read(s->err().get()))
-      .then([name](const tuple<
-            Future<Option<int>>,
-            Future<string>>& t) -> Future<Nothing> {
-          Future<Option<int>> status = std::get<0>(t);
-          if (!status.isReady()) {
-          return Failure(
-            "Failed to get the exit status of 'docker network create': " +
-            (status.isFailed() ? status.failure() : "discarded"));
-          }
+    // We want all overlay instances to talk to each other.
+    // However, Docker disallows this. So we will install a de-funct
+    // rule in the DOCKER-ISOLATION chain to bypass any isolation
+    // docker might be trying to enforce.
+    const string iptablesCommand = "iptables -D DOCKER-ISOLATION -j RETURN; "
+        "iptables -I DOCKER-ISOLATION 1 -j RETURN";
 
-          if (status->isNone()) {
-          return Failure("Failed to reap the subprocess");
-          }
-
-          Future<string> err = std::get<1>(t);
-          if (!err.isReady()) {
-          return Failure(
-            "Failed to read stderr from the subprocess: " +
-            (err.isFailed() ? err.failure() : "discarded"));
-          }
-
-          if (status.get() != 0) {
-            return Failure(
-                "Failed to create user-defined docker network '" +
-                name + "': " + err.get());
-          }
-
-          return Nothing();
+    return runScriptCommand(iptablesCommand)
+      .then([]() -> Future<Nothing> {
+        return Nothing();
       });
   }
 
