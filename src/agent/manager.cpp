@@ -519,7 +519,7 @@ protected:
   Future<http::Response> overlay(const http::Request& request)
   {
     AgentInfo agent;
-    agent.set_ip(stringify(self().address));
+    agent.set_ip(stringify(self().address.ip));
 
     foreachvalue (const AgentOverlayInfo& overlay, overlays) {
       agent.add_overlays()->CopyFrom(overlay);
