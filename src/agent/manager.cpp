@@ -549,7 +549,7 @@ protected:
       writer->field("bridge", overlay.mesos_bridge().name());
       writer->field("isGateway", true);
       writer->field("ipMasq", false);
-      writer->field("mtu", stringify(_networkConfig.overlay_mtu()));
+      writer->field("mtu", _networkConfig.overlay_mtu());
 
       writer->field("ipam", [subnet](JSON::ObjectWriter* writer) {
         writer->field("type", "host-local");
