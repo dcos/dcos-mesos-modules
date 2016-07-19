@@ -65,7 +65,7 @@
 
 #include <stout/os/read.hpp>
 
-#include "agent/manager.hpp"
+#include "agent/constants.hpp"
 
 #include "hook/manager.hpp"
 
@@ -398,6 +398,7 @@ TEST_F(OverlayTest, checkMasterAgentComm)
       info.get().SerializeAsString() == masterAgentInfo.SerializeAsString());
 }
 
+
 // Tests the ability of the `Agent overlay module` to create Mesos CNI
 // networks when `mesos bridge` has been enabled.
 TEST_F(OverlayTest, checkMesosNetwork)
@@ -491,6 +492,127 @@ TEST_F(OverlayTest, checkMesosNetwork)
   Result<JSON::String> subnet = ipam->find<JSON::String>("subnet");
   ASSERT_SOME(subnet);
   EXPECT_EQ(subnet.get(), "192.168.0.0/25");
+
+  // Tests have passed cleanup.
+  iptables = runCommand("iptables",
+      {"iptables",
+      "-t", "nat",
+      "-D", "POSTROUTING",
+      "-s", "192.168.0.0/16",
+      "-m", "set",
+      "--match-set", stringify(IPSET_OVERLAY), "dst",
+      "-j", "MASQUERADE",
+      });
+  AWAIT_READY(iptables);
+
+  ipset = runCommand("ipset",
+      {"ipset",
+      "destroy",
+      IPSET_OVERLAY});
+  AWAIT_READY(ipset);
+}
+
+
+// Tests the ability of the `Agent overlay module` to create Docker
+// network.
+TEST_F(OverlayTest, checkDockerNetwork)
+{
+  Try<Owned<cluster::Master>> master = StartMaster();
+  ASSERT_SOME(master);
+
+  LOG(INFO) << "Master PID: " << master.get()->pid;
+
+  MasterConfig masterOverlayConfig;
+  masterOverlayConfig.mutable_network()->set_vtep_subnet("44.128.0.0/16");
+  masterOverlayConfig.mutable_network()->set_vtep_mac_oui("70:B3:D5:00:00:00");
+
+  OverlayInfo overlay;
+  overlay.set_name("overlay-1");
+  overlay.set_subnet("192.168.0.0/16");
+  overlay.set_prefix(24);
+
+  masterOverlayConfig.mutable_network()->add_overlays()->CopyFrom(overlay);
+
+  startOverlayMaster(masterOverlayConfig);
+
+  // Master `Anonymous` module created successfully. Lets see if we
+  // can hit the `state` endpoint of the Master.
+  UPID overlayMaster = UPID(master.get()->pid);
+  overlayMaster.id = MASTER_MANAGER_PROCESS_ID;
+
+  AgentConfig agentOverlayConfig;
+  agentOverlayConfig.set_master(stringify(overlayMaster.address));
+  agentOverlayConfig.set_cni_dir(path::join(
+        OVERLAY_TEST_BASE_DIR,
+        AGENT_CNI_DIR));
+  agentOverlayConfig.mutable_network_config()->set_allocate_subnet(true);
+  agentOverlayConfig.mutable_network_config()->set_mesos_bridge(false);
+  agentOverlayConfig.mutable_network_config()->set_docker_bridge(true);
+
+  // Setup a future to notify the test that Agent overlay module has
+  // registered.
+  Future<AgentRegisteredMessage> agentRegisteredMessage = 
+    FUTURE_PROTOBUF(AgentRegisteredMessage(), _, _);
+
+  startOverlayAgent(agentOverlayConfig);
+
+  AWAIT_READY(agentRegisteredMessage);
+
+  // Verify that `ipset` has been created and the `iptables` entries
+  // exist.
+  Future<string> ipset = runCommand("ipset",
+      {"ipset",
+      "list",
+      IPSET_OVERLAY});
+  AWAIT_READY(ipset);
+
+  // Verify that the `IPMASQ` rules have been installed.
+  Future<string> iptables = runCommand("iptables",
+      {"iptables",
+      "-t", "nat",
+      "-C", "POSTROUTING",
+      "-s", "192.168.0.0/16",
+      "-m", "set",
+      "--match-set", stringify(IPSET_OVERLAY), "dst",
+      "-j", "MASQUERADE",
+      });
+  AWAIT_READY(iptables);
+
+  // Verify the docker network has been installed correctly.
+  Future<string> docker = runCommand("docker",
+  {"docker",
+   "network",
+   "inspect",
+   "overlay-1"});
+  AWAIT_READY(docker);
+
+  Try<JSON::Array> json = JSON::parse<JSON::Array>(docker.get());
+  ASSERT_SOME(json);
+
+  // Tests have passed clean up
+  docker = runCommand("docker",
+  {"docker",
+   "network",
+   "rm",
+   "overlay-1"});
+  AWAIT_READY(docker);
+
+  iptables = runCommand("iptables",
+      {"iptables",
+      "-t", "nat",
+      "-D", "POSTROUTING",
+      "-s", "192.168.0.0/16",
+      "-m", "set",
+      "--match-set", stringify(IPSET_OVERLAY), "dst",
+      "-j", "MASQUERADE",
+      });
+  AWAIT_READY(iptables);
+
+  ipset = runCommand("ipset",
+      {"ipset",
+      "destroy",
+      IPSET_OVERLAY});
+  AWAIT_READY(ipset);
 }
 
 } // namespace tests {
