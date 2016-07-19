@@ -65,6 +65,8 @@
 
 #include <stout/os/read.hpp>
 
+#include "agent/manager.hpp"
+
 #include "hook/manager.hpp"
 
 #include "master/detector/standalone.hpp"
@@ -74,6 +76,7 @@
 #include "overlay/overlay.hpp"
 #include "overlay/overlay.pb.h"
 #include "overlay/internal/messages.pb.h"
+#include "overlay/internal/utils.hpp"
 
 #include "slave/flags.hpp"
 
@@ -112,6 +115,9 @@ using mesos::modules::overlay::internal::AgentRegisteredMessage;
 using mesos::modules::overlay::internal::MasterConfig;
 using mesos::modules::overlay::OverlayInfo;
 using mesos::modules::overlay::State;
+using mesos::modules::overlay::agent::IPSET_OVERLAY;
+using mesos::modules::overlay::utils::runCommand;
+using mesos::modules::overlay::utils::runScriptCommand;
 
 namespace mesos {
 namespace overlay {
@@ -319,7 +325,9 @@ TEST_F(OverlayTest, checkMasterAgentComm)
 
   AgentConfig agentOverlayConfig;
   agentOverlayConfig.set_master(stringify(overlayMaster.address));
-  agentOverlayConfig.set_cni_dir(AGENT_CNI_DIR);
+  agentOverlayConfig.set_cni_dir(path::join(
+        OVERLAY_TEST_BASE_DIR,
+        AGENT_CNI_DIR));
   agentOverlayConfig.mutable_network_config()->set_allocate_subnet(true);
   agentOverlayConfig.mutable_network_config()->set_mesos_bridge(false);
   agentOverlayConfig.mutable_network_config()->set_docker_bridge(false);
@@ -389,6 +397,102 @@ TEST_F(OverlayTest, checkMasterAgentComm)
   EXPECT_TRUE(
       info.get().SerializeAsString() == masterAgentInfo.SerializeAsString());
 }
+
+// Tests the ability of the `Agent overlay module` to create Mesos CNI
+// networks when `mesos bridge` has been enabled.
+TEST_F(OverlayTest, checkMesosNetwork)
+{
+  Try<Owned<cluster::Master>> master = StartMaster();
+  ASSERT_SOME(master);
+
+  LOG(INFO) << "Master PID: " << master.get()->pid;
+
+  MasterConfig masterOverlayConfig;
+  masterOverlayConfig.mutable_network()->set_vtep_subnet("44.128.0.0/16");
+  masterOverlayConfig.mutable_network()->set_vtep_mac_oui("70:B3:D5:00:00:00");
+
+  OverlayInfo overlay;
+  overlay.set_name("overlay-1");
+  overlay.set_subnet("192.168.0.0/16");
+  overlay.set_prefix(24);
+
+  masterOverlayConfig.mutable_network()->add_overlays()->CopyFrom(overlay);
+
+  startOverlayMaster(masterOverlayConfig);
+
+  // Master `Anonymous` module created successfully. Lets see if we
+  // can hit the `state` endpoint of the Master.
+  UPID overlayMaster = UPID(master.get()->pid);
+  overlayMaster.id = MASTER_MANAGER_PROCESS_ID;
+
+  AgentConfig agentOverlayConfig;
+  agentOverlayConfig.set_master(stringify(overlayMaster.address));
+  agentOverlayConfig.set_cni_dir(path::join(
+        OVERLAY_TEST_BASE_DIR,
+        AGENT_CNI_DIR));
+  agentOverlayConfig.mutable_network_config()->set_allocate_subnet(true);
+  agentOverlayConfig.mutable_network_config()->set_mesos_bridge(true);
+  agentOverlayConfig.mutable_network_config()->set_docker_bridge(false);
+
+  // Setup a future to notify the test that Agent overlay module has
+  // registered.
+  Future<AgentRegisteredMessage> agentRegisteredMessage = 
+    FUTURE_PROTOBUF(AgentRegisteredMessage(), _, _);
+
+  startOverlayAgent(agentOverlayConfig);
+
+  AWAIT_READY(agentRegisteredMessage);
+
+  // Verify that `ipset` has been created and the `iptables` entries
+  // exist.
+  Future<string> ipset = runCommand("ipset",
+      {"ipset",
+      "list",
+      IPSET_OVERLAY});
+  AWAIT_READY(ipset);
+
+  // Verify that the `IPMASQ` rules have been installed.
+  Future<string> iptables = runCommand("iptables",
+      {"iptables",
+      "-t", "nat",
+      "-C", "POSTROUTING",
+      "-s", "192.168.0.0/16",
+      "-m", "set",
+      "--match-set", stringify(IPSET_OVERLAY), "dst",
+      "-j", "MASQUERADE",
+      });
+  AWAIT_READY(iptables);
+
+  // Verify the CNI configuration has been installed correctly.
+  Try<string> cniConfig = os::read(path::join(
+        OVERLAY_TEST_BASE_DIR,
+        "cni",
+        "overlay-1.cni"));
+  ASSERT_SOME(cniConfig);
+
+  Try<JSON::Object> json = JSON::parse<JSON::Object>(cniConfig.get());
+  ASSERT_SOME(json);
+
+  Result<JSON::String> network = json->find<JSON::String>("name");
+  ASSERT_SOME(network);
+  EXPECT_EQ(network.get(), "overlay-1");
+
+  Result<JSON::Boolean> ipMasq = json->find<JSON::Boolean>("ipMasq");
+  ASSERT_SOME(ipMasq);
+  EXPECT_EQ(ipMasq.get(), false);
+
+  Result<JSON::Number> mtu = json->find<JSON::Number>("mtu");
+  ASSERT_SOME(mtu);
+  EXPECT_EQ(mtu.get(), 1420);
+
+  Result<JSON::Object> ipam = json->find<JSON::Object>("ipam");
+  ASSERT_SOME(ipam);
+
+  Result<JSON::String> subnet = ipam->find<JSON::String>("subnet");
+  ASSERT_SOME(subnet);
+  EXPECT_EQ(subnet.get(), "192.168.0.0/25");
+}
+
 } // namespace tests {
 } // namespace overlay {
 } // namespace mesos {
