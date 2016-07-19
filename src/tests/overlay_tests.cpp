@@ -123,10 +123,11 @@ namespace mesos {
 namespace overlay {
 namespace tests {
 
-constexpr char OVERLAY_TEST_BASE_DIR[] = "/tmp/overlay-test/";
-constexpr char MASTER_JSON_CONFIG[] = "master.json";
-constexpr char AGENT_JSON_CONFIG[] = "agent.json";
 constexpr char AGENT_CNI_DIR[] = "cni/";
+constexpr char AGENT_JSON_CONFIG[] = "agent.json";
+constexpr char OVERLAY_SUBNET[] = "192.168.0.0/16";
+constexpr char OVERLAY_NAME[] = "mz-overlay";
+constexpr char MASTER_JSON_CONFIG[] = "master.json";
 constexpr char MASTER_OVERLAY_MODULE_NAME[] =
   "com_mesosphere_mesos_OverlayMasterManager";
 constexpr char AGENT_OVERLAY_MODULE_NAME[] =
@@ -139,6 +140,7 @@ protected:
   {
     MesosTest::SetUp();
 
+    // Define the modules JSON config.
     auto modulesConfig = [](JSON::ObjectWriter* writer) {
       writer->field("libraries", [](JSON::ArrayWriter* writer) {
           writer->element([](JSON::ObjectWriter* writer) {
@@ -152,8 +154,7 @@ protected:
               writer->field("parameters", [](JSON::ArrayWriter* writer) {
                 writer->element([](JSON::ObjectWriter* writer) {
                   writer->field("key", "master_config");
-                  writer->field("value",
-                    path::join(OVERLAY_TEST_BASE_DIR, MASTER_JSON_CONFIG));
+                  writer->field("value", MASTER_JSON_CONFIG);
                   });
                 });
               };
@@ -163,8 +164,7 @@ protected:
               writer->field("parameters", [](JSON::ArrayWriter* writer) {
                 writer->element([](JSON::ObjectWriter* writer) {
                   writer->field("key", "agent_config");
-                  writer->field("value",
-                    path::join(OVERLAY_TEST_BASE_DIR, AGENT_JSON_CONFIG));
+                  writer->field("value", AGENT_JSON_CONFIG);
                   });
                 });
               };
@@ -187,6 +187,45 @@ protected:
     // Initialize the modules.
     Try<Nothing> result = ModuleManager::load(modules);
     ASSERT_SOME(result);
+
+    // Setup Master and Agent config.
+    masterOverlayConfig.mutable_network()->set_vtep_subnet("44.128.0.0/16");
+    masterOverlayConfig.mutable_network()->set_vtep_mac_oui("70:B3:D5:00:00:00");
+
+    OverlayInfo overlay;
+    overlay.set_name(OVERLAY_NAME);
+    overlay.set_subnet(OVERLAY_SUBNET);
+    overlay.set_prefix(24);
+
+    masterOverlayConfig.mutable_network()->add_overlays()->CopyFrom(overlay);
+
+    // For the agents, by default, the Docker and Mesos networks are
+    // disabled.
+    agentOverlayConfig.set_cni_dir(AGENT_CNI_DIR);
+    agentOverlayConfig.mutable_network_config()->set_allocate_subnet(true);
+    agentOverlayConfig.mutable_network_config()->set_mesos_bridge(false);
+    agentOverlayConfig.mutable_network_config()->set_docker_bridge(false);
+
+    // Delete the 'ipset' and 'iptables' rules inserted by the
+    // tests in-case these rules were pending from the previous runs.
+    // We don't need to worry about whether the commands were
+    // successful since this is precautionary.
+    Try<string> cleanup = strings::format(
+        "iptables -t nat -D POSTROUTING -s %s "
+        "-m set --match-set %s dst "
+        "-j MASQUERADE; "
+        "ipset destroy %s; "
+        "docker network rm %s",
+        OVERLAY_SUBNET,
+        stringify(IPSET_OVERLAY),
+        stringify(IPSET_OVERLAY),
+        OVERLAY_NAME);
+
+    ASSERT_SOME(cleanup);
+
+    Future<string> cleanupResult = runScriptCommand(cleanup.get());
+      
+    cleanupResult.await();
   }
 
   virtual void TearDown()
@@ -201,42 +240,100 @@ protected:
       }
     }
 
-    // Clean all the directories that we created.
-    os::rmdir(OVERLAY_TEST_BASE_DIR);
+    if (agentOverlayConfig.network_config().mesos_bridge() ||
+        agentOverlayConfig.network_config().docker_bridge()) {
+      // Delete the 'ipset' and 'iptables' rules inserted by the
+      // tests.
+      // Tests have passed cleanup.
+      Future<string> iptables = runCommand(
+          "iptables",
+          {"iptables",
+           "-t", "nat",
+           "-D", "POSTROUTING",
+           "-s", OVERLAY_SUBNET,
+           "-m", "set",
+           "--match-set", stringify(IPSET_OVERLAY), "dst",
+           "-j", "MASQUERADE",
+          });
+      AWAIT_READY(iptables);
+
+      Future<string> ipset = runCommand(
+          "ipset",
+          {"ipset",
+           "destroy",
+           IPSET_OVERLAY});
+      AWAIT_READY(ipset);
+    }
+
+    if (agentOverlayConfig.network_config().docker_bridge()) {
+      // Clean up Docker network.
+      Future<string> docker = runCommand(
+          "docker",
+          {"docker",
+           "network",
+           "rm",
+           OVERLAY_NAME});
+      AWAIT_READY(docker);
+    }
   }
 
-  void startOverlayMaster(const MasterConfig& masterOverlayConfig)
+  // Initialized the overlay Master module using the
+  // `masterOverlayConfig`.
+  Try<Owned<Anonymous>> startOverlayMaster()
   {
-    Try<Nothing> mkdir = os::mkdir(OVERLAY_TEST_BASE_DIR);
-    EXPECT_SOME(mkdir);
-
-    Try<Nothing> write = os::write(
-        path::join(OVERLAY_TEST_BASE_DIR, MASTER_JSON_CONFIG),
+    Try<Nothing> write = os::write(MASTER_JSON_CONFIG,
         stringify(JSON::protobuf(masterOverlayConfig)));
-    EXPECT_SOME(write);
+    if(write.isError()) {
+      return Error("Unabled to write master config: " + write.error());
+    }
 
     Try<Anonymous*> create = ModuleManager::create<Anonymous>(
         MASTER_OVERLAY_MODULE_NAME);
-    ASSERT_SOME(create);
+    if (create.isError()) {
+      return Error("Unable to create Master module: " + create.error());
+    }
 
-    masterOverlayModule = Owned<Anonymous>(create.get());
+    return Owned<Anonymous>(create.get());
   }
 
-  void startOverlayAgent(const AgentConfig& agentOverlayConfig)
+  // This takes in a user defined `_masterOverlayConfig` and merges
+  // with the already initialized `masterOverlayConfig`.
+  Try<Owned<Anonymous>> startOverlayMaster(const MasterConfig& _masterOverlayConfig)
   {
-    Try<Nothing> mkdir = os::mkdir(Path(AGENT_JSON_CONFIG).dirname());
-    EXPECT_SOME(mkdir);
+    masterOverlayConfig.MergeFrom(_masterOverlayConfig);
+    return startOverlayMaster();
+  }
 
+  // Initializes the overlay Agent module using the
+  // `agentOverlayConfig` initialized during `Setup`. By default the
+  // `agentOverlayConfig` has the Mesos and the Docker networks
+  // disabled, and only has the subnet allocation enabled.
+  Try<Owned<Anonymous>> startOverlayAgent()
+  {
     Try<Nothing> write = os::write(
-        path::join(OVERLAY_TEST_BASE_DIR, AGENT_JSON_CONFIG),
+        AGENT_JSON_CONFIG,
         stringify(JSON::protobuf(agentOverlayConfig)));
-    EXPECT_SOME(write);
+    if(write.isError()) {
+      return Error("Unabled to write agent config: " + write.error());
+    }
 
     Try<Anonymous*> create = ModuleManager::create<Anonymous>(
         AGENT_OVERLAY_MODULE_NAME);
-    ASSERT_SOME(create);
+    if (create.isError()) {
+      return Error("Unable to create Agent module: " + create.error());
+    }
 
-    agentOverlayModule = Owned<Anonymous>(create.get());
+    return Owned<Anonymous>(create.get());
+  }
+
+  // Takes in a user-defined `_agentOverlayConfig` and merges with the
+  // `agentOverlayConfig`, before initializing the overlay Agent
+  // module.
+  Try<Owned<Anonymous>> startOverlayAgent(
+      const AgentConfig& _agentOverlayConfig)
+  {
+    agentOverlayConfig.MergeFrom(_agentOverlayConfig);
+    return startOverlayAgent();
   }
 
   Try<State> parseMasterState(const string& state)
@@ -246,9 +343,7 @@ protected:
       return Error("JSON parse failed: " + json.error());
     }
 
-    Try<State> parse = ::protobuf::parse<State>(json.get());
-
-    return parse;
+    return ::protobuf::parse<State>(json.get());
   }
 
   Try<AgentInfo> parseAgentOverlay(const string& info)
@@ -258,16 +353,15 @@ protected:
       return Error("JSON parse failed: " + json.error());
     }
 
-    Try<AgentInfo> parse = ::protobuf::parse<AgentInfo>(json.get());
-
-    return parse;
+    return ::protobuf::parse<AgentInfo>(json.get());
   }
 
 private:
+  AgentConfig agentOverlayConfig;
+
   Modules modules;
 
-  Owned<Anonymous> masterOverlayModule;
-  Owned<Anonymous> agentOverlayModule;
+  MasterConfig masterOverlayConfig;
 };
 
 
@@ -280,18 +374,8 @@ TEST_F(OverlayTest, checkMasterAgentComm)
 
   LOG(INFO) << "Master PID: " << master.get()->pid;
 
-  MasterConfig masterOverlayConfig;
-  masterOverlayConfig.mutable_network()->set_vtep_subnet("44.128.0.0/16");
-  masterOverlayConfig.mutable_network()->set_vtep_mac_oui("70:B3:D5:00:00:00");
-
-  OverlayInfo overlay;
-  overlay.set_name("overlay-1");
-  overlay.set_subnet("192.168.0.0/16");
-  overlay.set_prefix(24);
-
-  masterOverlayConfig.mutable_network()->add_overlays()->CopyFrom(overlay);
-
-  startOverlayMaster(masterOverlayConfig);
+  Try<Owned<Anonymous>> masterModule = startOverlayMaster();
+  ASSERT_SOME(masterModule);
 
   // Master `Anonymous` module created successfully. Lets see if we
   // can hit the `state` endpoint of the Master.
@@ -315,8 +399,8 @@ TEST_F(OverlayTest, checkMasterAgentComm)
   Try<State> state = parseMasterState(masterResponse->body);
   ASSERT_SOME(state);
   ASSERT_EQ(1, state->network().overlays_size());
-  ASSERT_EQ("overlay-1", state->network().overlays(0).name());
-  ASSERT_EQ("192.168.0.0/16", state->network().overlays(0).subnet());
+  ASSERT_EQ(OVERLAY_NAME, state->network().overlays(0).name());
+  ASSERT_EQ(OVERLAY_SUBNET, state->network().overlays(0).subnet());
   ASSERT_EQ(24, state->network().overlays(0).prefix());
 
   // We haven't started the Agent, so make sure there are no Agents
@@ -325,19 +409,14 @@ TEST_F(OverlayTest, checkMasterAgentComm)
 
   AgentConfig agentOverlayConfig;
   agentOverlayConfig.set_master(stringify(overlayMaster.address));
-  agentOverlayConfig.set_cni_dir(path::join(
-        OVERLAY_TEST_BASE_DIR,
-        AGENT_CNI_DIR));
-  agentOverlayConfig.mutable_network_config()->set_allocate_subnet(true);
-  agentOverlayConfig.mutable_network_config()->set_mesos_bridge(false);
-  agentOverlayConfig.mutable_network_config()->set_docker_bridge(false);
 
   // Setup a future to notify the test that Agent overlay module has
   // registered.
   Future<AgentRegisteredMessage> agentRegisteredMessage = 
     FUTURE_PROTOBUF(AgentRegisteredMessage(), _, _);
 
-  startOverlayAgent(agentOverlayConfig);
+  Try<Owned<Anonymous>> agentOverlay = startOverlayAgent(agentOverlayConfig);
+  ASSERT_SOME(agentOverlay);
 
   AWAIT_READY(agentRegisteredMessage);
 
@@ -365,7 +444,7 @@ TEST_F(OverlayTest, checkMasterAgentComm)
 
   // There should be only 1 overlay.
   ASSERT_EQ(1, info->overlays_size());
-  EXPECT_EQ("overlay-1", info->overlays(0).info().name());
+  EXPECT_EQ(OVERLAY_NAME, info->overlays(0).info().name());
   
   Try<net::IPNetwork> agentNetwork = net::IPNetwork::parse(
       info->overlays(0).subnet(), AF_INET);
@@ -394,8 +473,9 @@ TEST_F(OverlayTest, checkMasterAgentComm)
 
   AgentInfo masterAgentInfo;
   masterAgentInfo.CopyFrom(state->agents(0));
-  EXPECT_TRUE(
-      info.get().SerializeAsString() == masterAgentInfo.SerializeAsString());
+  EXPECT_EQ(
+      info.get().SerializeAsString(),
+      masterAgentInfo.SerializeAsString());
 }
 
 
@@ -408,18 +488,8 @@ TEST_F(OverlayTest, checkMesosNetwork)
 
   LOG(INFO) << "Master PID: " << master.get()->pid;
 
-  MasterConfig masterOverlayConfig;
-  masterOverlayConfig.mutable_network()->set_vtep_subnet("44.128.0.0/16");
-  masterOverlayConfig.mutable_network()->set_vtep_mac_oui("70:B3:D5:00:00:00");
-
-  OverlayInfo overlay;
-  overlay.set_name("overlay-1");
-  overlay.set_subnet("192.168.0.0/16");
-  overlay.set_prefix(24);
-
-  masterOverlayConfig.mutable_network()->add_overlays()->CopyFrom(overlay);
-
-  startOverlayMaster(masterOverlayConfig);
+  Try<Owned<Anonymous>> masterModule = startOverlayMaster();
+  ASSERT_SOME(masterModule);
 
   // Master `Anonymous` module created successfully. Lets see if we
   // can hit the `state` endpoint of the Master.
@@ -428,19 +498,16 @@ TEST_F(OverlayTest, checkMesosNetwork)
 
   AgentConfig agentOverlayConfig;
   agentOverlayConfig.set_master(stringify(overlayMaster.address));
-  agentOverlayConfig.set_cni_dir(path::join(
-        OVERLAY_TEST_BASE_DIR,
-        AGENT_CNI_DIR));
-  agentOverlayConfig.mutable_network_config()->set_allocate_subnet(true);
+  // Enable Mesos network.
   agentOverlayConfig.mutable_network_config()->set_mesos_bridge(true);
-  agentOverlayConfig.mutable_network_config()->set_docker_bridge(false);
 
   // Setup a future to notify the test that Agent overlay module has
   // registered.
   Future<AgentRegisteredMessage> agentRegisteredMessage = 
     FUTURE_PROTOBUF(AgentRegisteredMessage(), _, _);
 
-  startOverlayAgent(agentOverlayConfig);
+  Try<Owned<Anonymous>> agentOverlay = startOverlayAgent(agentOverlayConfig);
+  ASSERT_SOME(agentOverlay);
 
   AWAIT_READY(agentRegisteredMessage);
 
@@ -457,7 +524,7 @@ TEST_F(OverlayTest, checkMesosNetwork)
       {"iptables",
       "-t", "nat",
       "-C", "POSTROUTING",
-      "-s", "192.168.0.0/16",
+      "-s", OVERLAY_SUBNET,
       "-m", "set",
       "--match-set", stringify(IPSET_OVERLAY), "dst",
       "-j", "MASQUERADE",
@@ -465,10 +532,8 @@ TEST_F(OverlayTest, checkMesosNetwork)
   AWAIT_READY(iptables);
 
   // Verify the CNI configuration has been installed correctly.
-  Try<string> cniConfig = os::read(path::join(
-        OVERLAY_TEST_BASE_DIR,
-        "cni",
-        "overlay-1.cni"));
+  Try<string> cniConfig = os::read(
+      path::join("cni", stringify(OVERLAY_NAME) + ".cni"));
   ASSERT_SOME(cniConfig);
 
   Try<JSON::Object> json = JSON::parse<JSON::Object>(cniConfig.get());
@@ -476,7 +541,7 @@ TEST_F(OverlayTest, checkMesosNetwork)
 
   Result<JSON::String> network = json->find<JSON::String>("name");
   ASSERT_SOME(network);
-  EXPECT_EQ(network.get(), "overlay-1");
+  EXPECT_EQ(network.get(), OVERLAY_NAME);
 
   Result<JSON::Boolean> ipMasq = json->find<JSON::Boolean>("ipMasq");
   ASSERT_SOME(ipMasq);
@@ -492,24 +557,6 @@ TEST_F(OverlayTest, checkMesosNetwork)
   Result<JSON::String> subnet = ipam->find<JSON::String>("subnet");
   ASSERT_SOME(subnet);
   EXPECT_EQ(subnet.get(), "192.168.0.0/25");
-
-  // Tests have passed cleanup.
-  iptables = runCommand("iptables",
-      {"iptables",
-      "-t", "nat",
-      "-D", "POSTROUTING",
-      "-s", "192.168.0.0/16",
-      "-m", "set",
-      "--match-set", stringify(IPSET_OVERLAY), "dst",
-      "-j", "MASQUERADE",
-      });
-  AWAIT_READY(iptables);
-
-  ipset = runCommand("ipset",
-      {"ipset",
-      "destroy",
-      IPSET_OVERLAY});
-  AWAIT_READY(ipset);
 }
 
 
@@ -522,18 +569,8 @@ TEST_F(OverlayTest, checkDockerNetwork)
 
   LOG(INFO) << "Master PID: " << master.get()->pid;
 
-  MasterConfig masterOverlayConfig;
-  masterOverlayConfig.mutable_network()->set_vtep_subnet("44.128.0.0/16");
-  masterOverlayConfig.mutable_network()->set_vtep_mac_oui("70:B3:D5:00:00:00");
-
-  OverlayInfo overlay;
-  overlay.set_name("overlay-1");
-  overlay.set_subnet("192.168.0.0/16");
-  overlay.set_prefix(24);
-
-  masterOverlayConfig.mutable_network()->add_overlays()->CopyFrom(overlay);
-
-  startOverlayMaster(masterOverlayConfig);
+  Try<Owned<Anonymous>> masterModule = startOverlayMaster();
+  ASSERT_SOME(masterModule);
 
   // Master `Anonymous` module created successfully. Lets see if we
   // can hit the `state` endpoint of the Master.
@@ -542,11 +579,7 @@ TEST_F(OverlayTest, checkDockerNetwork)
 
   AgentConfig agentOverlayConfig;
   agentOverlayConfig.set_master(stringify(overlayMaster.address));
-  agentOverlayConfig.set_cni_dir(path::join(
-        OVERLAY_TEST_BASE_DIR,
-        AGENT_CNI_DIR));
-  agentOverlayConfig.mutable_network_config()->set_allocate_subnet(true);
-  agentOverlayConfig.mutable_network_config()->set_mesos_bridge(false);
+  // Enable Docker network.
   agentOverlayConfig.mutable_network_config()->set_docker_bridge(true);
 
   // Setup a future to notify the test that Agent overlay module has
@@ -554,7 +587,8 @@ TEST_F(OverlayTest, checkDockerNetwork)
   Future<AgentRegisteredMessage> agentRegisteredMessage = 
     FUTURE_PROTOBUF(AgentRegisteredMessage(), _, _);
 
-  startOverlayAgent(agentOverlayConfig);
+  Try<Owned<Anonymous>> agentOverlay = startOverlayAgent(agentOverlayConfig);
+  ASSERT_SOME(agentOverlay);
 
   AWAIT_READY(agentRegisteredMessage);
 
@@ -571,7 +605,7 @@ TEST_F(OverlayTest, checkDockerNetwork)
       {"iptables",
       "-t", "nat",
       "-C", "POSTROUTING",
-      "-s", "192.168.0.0/16",
+      "-s", OVERLAY_SUBNET,
       "-m", "set",
       "--match-set", stringify(IPSET_OVERLAY), "dst",
       "-j", "MASQUERADE",
@@ -580,39 +614,14 @@ TEST_F(OverlayTest, checkDockerNetwork)
 
   // Verify the docker network has been installed correctly.
   Future<string> docker = runCommand("docker",
-  {"docker",
-   "network",
-   "inspect",
-   "overlay-1"});
+      {"docker",
+      "network",
+      "inspect",
+      OVERLAY_NAME});
   AWAIT_READY(docker);
 
   Try<JSON::Array> json = JSON::parse<JSON::Array>(docker.get());
   ASSERT_SOME(json);
-
-  // Tests have passed clean up
-  docker = runCommand("docker",
-  {"docker",
-   "network",
-   "rm",
-   "overlay-1"});
-  AWAIT_READY(docker);
-
-  iptables = runCommand("iptables",
-      {"iptables",
-      "-t", "nat",
-      "-D", "POSTROUTING",
-      "-s", "192.168.0.0/16",
-      "-m", "set",
-      "--match-set", stringify(IPSET_OVERLAY), "dst",
-      "-j", "MASQUERADE",
-      });
-  AWAIT_READY(iptables);
-
-  ipset = runCommand("ipset",
-      {"ipset",
-      "destroy",
-      IPSET_OVERLAY});
-  AWAIT_READY(ipset);
 }
 
 } // namespace tests {
