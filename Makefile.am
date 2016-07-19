@@ -15,7 +15,7 @@ AM_CXXFLAGS = $(PTHREAD_CFLAGS)
 AM_LIBS = $(PTHREAD_LIBS)
 
 # Add top-level include dir to our include path.
-MESOS_CPPFLAGS += -I$(top_srcdir)/include -Iinclude
+MESOS_CPPFLAGS += -I$(top_srcdir)/include -I$(top_srcdir)/src -Iinclude
 
 # Enable the INT64 support for PicoJson.
 # NOTE: PicoJson requires __STDC_FORMAT_MACROS to be defined before importing

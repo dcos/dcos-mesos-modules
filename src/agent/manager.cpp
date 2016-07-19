@@ -35,8 +35,12 @@
 #include <mesos/module.hpp>
 #include <mesos/module/anonymous.hpp>
 
+#include <agent/constants.hpp>
+
 #include <overlay/overlay.hpp>
+#include <overlay/internal/utils.hpp>
 #include <overlay/internal/messages.hpp>
+
 
 namespace http = process::http;
 namespace io = process::io;
@@ -78,13 +82,14 @@ using mesos::modules::overlay::internal::AgentRegisteredAcknowledgement;
 using mesos::modules::overlay::internal::AgentRegisteredMessage;
 using mesos::modules::overlay::internal::RegisterAgentMessage;
 using mesos::modules::overlay::internal::UpdateAgentOverlaysMessage;
+using mesos::modules::overlay::utils::runCommand;
+using mesos::modules::overlay::utils::runScriptCommand;
 
 namespace mesos {
 namespace modules {
 namespace overlay {
 namespace agent {
 
-constexpr char IPSET_OVERLAY[] = "overlay";
 constexpr Duration REGISTRATION_RETRY_INTERVAL_MAX = Minutes(10);
 constexpr Duration INITIAL_BACKOFF_PERIOD = Seconds(30);
 
@@ -97,123 +102,6 @@ static string OVERLAY_HELP()
       DESCRIPTION(
           "Shows the Agent IP, Agent subnet, VTEP IP, VTEP MAC and bridges."));
 }
-
-
-// Run `command` as a shell script. This is useful when wanting to
-// chain shell commands.
-static Future<string> runScriptCommand(const string& command)
-{
-  Try<Subprocess> s = subprocess(
-      command,
-      Subprocess::PATH("/dev/null"),
-      Subprocess::PIPE(),
-      Subprocess::PIPE());
-
-  if (s.isError()) {
-    return Failure("Unable to execute '" + command + "': " + s.error());
-  }
-
-  return await(
-      s->status(),
-      io::read(s->out().get()),
-      io::read(s->err().get()))
-    .then([command](
-          const tuple<Future<Option<int>>,
-          Future<string>,
-          Future<string>>& t) -> Future<string> {
-        Future<Option<int>> status = std::get<0>(t);
-        if (!status.isReady()) {
-        return Failure(
-          "Failed to get the exit status of '" + command +"': " +
-          (status.isFailed() ? status.failure() : "discarded"));
-        }
-
-        if (status->isNone()) {
-        return Failure("Failed to reap the subprocess");
-        }
-
-        Future<string> out = std::get<1>(t);
-        if (!out.isReady()) {
-        return Failure(
-          "Failed to read stderr from the subprocess: " +
-          (out.isFailed() ? out.failure() : "discarded"));
-        }
-
-        Future<string> err = std::get<2>(t);
-        if (!err.isReady()) {
-          return Failure(
-              "Failed to read stderr from the subprocess: " +
-              (err.isFailed() ? err.failure() : "discarded"));
-        }
-
-        if (status.get() != 0) {
-          return Failure(
-              "Failed to execute '" + command + "': " + err.get());
-        }
-
-        return out.get();
-    });
-}
-
-
-// Exec's a command.
-static Future<string> runCommand(
-    const string& command,
-    const vector<string>& argv)
-{
-  Try<Subprocess> s = subprocess(
-      command,
-      argv,
-      Subprocess::PATH("/dev/null"),
-      Subprocess::PIPE(),
-      Subprocess::PIPE());
-
-  if (s.isError()) {
-    return Failure("Unable to execute '" + command + "': " + s.error());
-  }
-
-  return await(
-      s->status(),
-      io::read(s->out().get()),
-      io::read(s->err().get()))
-    .then([command](
-          const tuple<Future<Option<int>>,
-          Future<string>,
-          Future<string>>& t) -> Future<string> {
-        Future<Option<int>> status = std::get<0>(t);
-        if (!status.isReady()) {
-        return Failure(
-          "Failed to get the exit status of '" + command +"': " +
-          (status.isFailed() ? status.failure() : "discarded"));
-        }
-
-        if (status->isNone()) {
-        return Failure("Failed to reap the subprocess");
-        }
-
-        Future<string> out = std::get<1>(t);
-        if (!out.isReady()) {
-        return Failure(
-          "Failed to read stderr from the subprocess: " +
-          (out.isFailed() ? out.failure() : "discarded"));
-        }
-
-        Future<string> err = std::get<2>(t);
-        if (!err.isReady()) {
-          return Failure(
-              "Failed to read stderr from the subprocess: " +
-              (err.isFailed() ? err.failure() : "discarded"));
-        }
-
-        if (status.get() != 0) {
-          return Failure(
-              "Failed to execute '" + command + "': " + err.get());
-        }
-
-        return out.get();
-    });
-}
-
 
 class ManagerProcess : public ProtobufProcess<ManagerProcess>
 {
@@ -242,12 +130,22 @@ public:
     // NOTE: We should set up the `ipset` only if `mesos_bridge` or
     // `docker_bridge` have been enabled in the `AgentNetworkConfig`.
     if (networkConfig.mesos_bridge() || networkConfig.docker_bridge()) {
-      Future<string> ipset = runCommand(
-          "ipset",
-          {"ipset", "create",
-          "-exist", IPSET_OVERLAY,
-          "hash:net",
-          "counters"});
+      Try<string> ipsetCommand = strings::format(
+          "ipset create -exist %s hash:net counters && "
+          "ipset add -exist %s 0.0.0.0/1 && "
+          "ipset add -exist %s 128.0.0.0/1 && "
+          "ipset add -exist %s 127.0.0.0/1",
+          IPSET_OVERLAY,
+          IPSET_OVERLAY,
+          IPSET_OVERLAY,
+          IPSET_OVERLAY);
+
+      if (ipsetCommand.isError()) {
+        return Error(
+            "Unable to create `ipset` command: " + ipsetCommand.error());
+      }
+
+      Future<string> ipset = runScriptCommand(ipsetCommand.get());
 
       ipset.await();
 
@@ -256,37 +154,13 @@ public:
             "Unable to create ipset:" +
             (ipset.isFailed() ? ipset.failure() : "discarded"));
       }
-
-      Try<string> command = strings::format(
-          "ipset add -exist %s 0.0.0.0/1 && "
-          "ipset add -exist %s 128.0.0.0/1 && "
-          "ipset add -exist %s 127.0.0.0/1",
-          IPSET_OVERLAY,
-          IPSET_OVERLAY,
-          IPSET_OVERLAY);
-
-      if (command.isError()) {
-        return Error(
-            "Unable to create the ipset rule: " +
-            command.error());
-      }
-
-      ipset = runScriptCommand(command.get());
-
-      ipset.await();
-
-      if (!ipset.isReady()) {
-        return Error(
-            "Unable to add ipset rules:" +
-            (ipset.isFailed() ? ipset.failure() : "discarded"));
-      }
     }
 
     return Owned<ManagerProcess>(
         new ManagerProcess(
-            cniDir,
-            networkConfig,
-            detector));
+          cniDir,
+          networkConfig,
+          detector));
   }
 
   Future<Nothing> ready()
@@ -588,8 +462,10 @@ protected:
     // The below command is a chain of three commands:
     // <set ipset> && <check iptables rule exists> ||
     // <insert iptables rule>
-    if (overlays[name].has_mesos_bridge() ||
-        overlays[name].has_docker_bridge()) {
+    if (!overlays[name].has_mesos_bridge() && 
+        !overlays[name].has_docker_bridge()) {
+      return __configure(name, string(""));
+    } else {
       const string overlaySubnet = overlays[name].info().subnet();
 
       Try<string> command = strings::format(
@@ -612,7 +488,7 @@ protected:
       }
 
       LOG(INFO) << "Insert following iptables rule for overlay " << name
-        << ": " << command.get();
+                << ": " << command.get();
 
       return runScriptCommand(command.get())
         .then(defer(
@@ -620,8 +496,6 @@ protected:
               &Self::__configure,
               name,
               lambda::_1));
-    } else {
-      return __configure(name, string(""));
     }
   }
 
@@ -777,27 +651,26 @@ protected:
       return Failure("Failed to parse bridge ip: " + subnet.error());
     }
 
-    return runCommand(
-        "docker",
-        {"docker",
-         "network",
-         "create",
-         "--driver=bridge",
-         "--subnet=" + stringify(subnet.get()),
-         "--opt=com.docker.network.bridge.name=" +
-          overlay.docker_bridge().name(),
-         "--opt=com.docker.network.bridge.enable_ip_masquerade=false",
-         // The Docker networking documentation erroneously describes the
-         // MTU option as `com.docker.network.mtu`, however from the code
-         // snippet (https://github.com/docker/libnetwork/blob/
-         // 0fcaacd848f60973235ae82b8fd7d9409227bac8/netlabel/labels.go#L34)
-         // the below option seems to be write one.
-         "--opt=com.docker.network.driver.mtu=" +
-          stringify(networkConfig.overlay_mtu()),
-         name}).then(defer(self(),
-                           &Self::__configureDockerNetwork,
-                           name,
-                           lambda::_1));
+    Try<string> dockerCommand = strings::format(
+        "docker network create --driver=bridge --subnet=%s "
+        "--opt=com.docker.network.bridge.name=%s "
+        "--opt=com.docker.network.bridge.enable_ip_masquerade=false "
+        "--opt=com.docker.network.driver.mtu=%s %s",
+        stringify(subnet.get()),
+        overlay.docker_bridge().name(),
+        stringify(networkConfig.overlay_mtu()),
+        name);
+    if (dockerCommand.isError()) {
+      return Failure(
+          "Failed to create docker network command: " +
+          dockerCommand.error());
+    }
+
+    return runScriptCommand(dockerCommand.get())
+      .then(defer(self(),
+                  &Self::__configureDockerNetwork,
+                  name,
+                  lambda::_1));
   }
 
   Future<Nothing> __configureDockerNetwork(
