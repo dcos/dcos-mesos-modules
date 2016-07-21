@@ -53,6 +53,8 @@ AC_SUBST([MESOS_ROOT])
 MESOS_BUILD_DIR="${mesos_root}/build"
 AC_SUBST([MESOS_BUILD_DIR])
 
+AM_CONDITIONAL([SOURCE_PROVIDED], [test -d "$mesos_root"])
+
 if test -d "$mesos"; then
   MESOS_INCLUDE_PATH="-I${mesos}/include"
   MESOS_LDFLAGS="-L${mesos}/lib64 -L${mesos}/lib"
@@ -115,8 +117,6 @@ if test -d "$mesos_root"; then
   AC_CONFIG_LINKS([tests/containerizer/launcher.cpp:${MESOS_ROOT}/src/tests/containerizer/launcher.cpp])
   AC_CONFIG_LINKS([tests/containerizer/memory_test_helper.cpp:${MESOS_ROOT}/src/tests/containerizer/memory_test_helper.cpp])
 
-  # Enable flag to check whether root and build dir were provided.
-  AM_CONDITIONAL([SOURCE_PROVIDED], [test -d "$mesos_root"])
 fi
 
 
