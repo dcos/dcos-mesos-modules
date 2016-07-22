@@ -91,7 +91,7 @@ namespace overlay {
 namespace agent {
 
 constexpr Duration REGISTRATION_RETRY_INTERVAL_MAX = Minutes(10);
-constexpr Duration INITIAL_BACKOFF_PERIOD = Seconds(30);
+constexpr Duration INITIAL_BACKOFF_PERIOD = Seconds(5);
 
 
 static string OVERLAY_HELP()

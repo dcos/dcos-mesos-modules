@@ -37,6 +37,7 @@
 namespace http = process::http;
 
 using std::list;
+using std::ostream;
 using std::queue;
 using std::set;
 using std::string;
@@ -423,6 +424,86 @@ static Try<net::MAC> createMAC(const string& _mac, const bool& oui)
   return net::MAC(mac);
 }
 
+// Defines an operation that can be performed on a `State` object for
+// a given `AgentInfo`. Every operation returns a `Future<bool>` that
+// will be set once the operation is actually performed on the `State`
+// object. The operation is usually considered "performed" when the
+// mutated `State` is checkpointed to some storage (usually a
+// replicated log).
+class Operation : public process::Promise<bool> {
+public:
+  Operation() : success(false) {}
+
+  virtual ~Operation() {}
+
+  Try<bool> operator()(
+      State& networkState,
+      hashmap<net::IP, Agent>& agents)
+  {
+    const Try<bool> result = perform(networkState, agents);
+
+    success = !result.isError();
+
+    return result;
+  }
+
+  virtual const string description() const = 0;
+
+  // Sets the promise based on whether the operation was successful.
+  bool set() { return process::Promise<bool>::set(success); }
+
+protected:
+  virtual Try<bool> perform(
+      State& networkState,
+      hashmap<net::IP, Agent>& agents) = 0;
+
+private:
+  bool success;
+};
+
+
+// Add an `AgentInfo` to a `State` object.
+class AddAgent : public Operation {
+public:
+  explicit AddAgent(const AgentInfo& _agentInfo) 
+  {
+    agentInfo.CopyFrom(_agentInfo);
+  }
+
+  const std::string description() const
+  {
+    return "Add operation for agent: " + agentInfo.ip();
+  }
+
+protected:
+  Try<bool> perform(State& networkState, hashmap<net::IP, Agent> &agents) 
+  {
+    // Make sure the Agent we are going to add is already present in `agents`.
+    Try<net::IP> ip = net::IP::parse(agentInfo.ip(), AF_INET);
+    if (ip.isError()) {
+      return Error("Unable to parse the Agent IP: " + ip.error());
+    }
+
+    if (!agents.contains(ip.get())) {
+      return Error(
+          "Could not find the Agent (" + stringify(ip.get()) +
+          ") that needed to be added to `State`.");
+    }
+
+    networkState.add_agents()->CopyFrom(agentInfo);
+    return true;
+  }
+
+private:
+  AgentInfo agentInfo;
+};
+
+
+inline ostream& operator<<(ostream& stream, const Operation& operation)
+{
+  return stream << operation.description();
+}
+
 
 // `ManagerProcess` is responsible for managing all the overlays that
 // exist in the Mesos cluster. For each overlay the manager stores the
@@ -627,153 +708,27 @@ protected:
     install<AgentRegisteredMessage>(&ManagerProcess::agentRegistered);
   }
 
-  void recover()
-  {
-    CHECK(managerState == INIT);
-
-    // Nothing to recover.
-    if (replicatedLog.get() == nullptr) {
-      managerState = RECOVERED;
-      return;
-    }
-
-    managerState = RECOVERING;
-
-    replicatedLog->fetch<State>(REPLICATED_LOG_STORE_KEY)
-    .onAny(defer(self(),
-                 &ManagerProcess::_recover,
-                 lambda::_1));
-  }
-
-  void _recover(Future<Variable<State>> variable)
-  {
-    CHECK_NOTNULL(replicatedLog.get());
-
-    if (!variable.isReady()) {
-      LOG(WARNING) << "This " << self().id <<"might have been demoted."
-                   << "Aborting recovery of replicated log"
-                   <<(variable.isDiscarded() ? "discarded" : variable.failure());
-
-      managerState = INIT;
-
-      return;
-    }
-
-
-    LOG(INFO) << "Moving " << self() << " to `RECOVERED` state.";
-    managerState = RECOVERED;
-
-    State _networkState = variable.get().get();
-
-    // Only if the `network_config` is present does it imply that the
-    // overlay-master stored state in the replicated log, else  this
-    // is the first time an overlay-master is accessing the
-    // replicated log and hence the state will be empty.
-    if (_networkState.has_network()) {
-      LOG(INFO) << "Recovered network state from replicated log";
-      networkState.CopyFrom(_networkState); 
-    } else {
-      LOG(INFO) << "No network state present, hence nothing to"
-                << " recover from replicated log";
-      return;
-    }
-
-    // Re-populate the agents, the overlay subnets that have been
-    // allocated, and the VTEP IP and VTEP MAC that have been
-    // allocated. The information stored in the replicated log should
-    // not have any errors.
-    for (int i = 0; i < networkState.agents_size(); i++) {
-      const AgentInfo& agentInfo = networkState.agents(i);
-
-      // Cleare the `State` of the `AgentInfo`
-
-      Try<Agent> agent = Agent::create(agentInfo);
-      if (agent.isError()) {
-        LOG(ERROR) << "Could not recover Agent: "<< agent.error();
-        abort();
-      }
-
-      agents.emplace(agent->getIP(), agent.get());
-      VLOG(1) << "Recovered agent: " << agent->getIP();
-
-      for (int j = 0; j < agentInfo.overlays_size(); j++) {
-        const AgentOverlayInfo& overlay = agentInfo.overlays(j);
-
-        // clear the overlay state.
-        networkState.mutable_agents(i)->mutable_overlays(j)->clear_state();
-
-        Try<net::IPNetwork> network = net::IPNetwork::parse(
-            overlay.subnet(),
-            AF_INET);
-
-        if (network.isError()) {
-          LOG(ERROR) << "Unable to parse the retrieved network: "
-            << overlay.subnet() << ": "
-            << network.error();
-          abort();
-        }
-
-        // We should already have this particular overlay at bootup.
-        CHECK(overlays.contains(overlay.info().name()));
-        Try<Nothing> result = overlays.at(overlay.info().name()).reserve(network.get());
-        if (result.isError()) {
-          LOG(ERROR) << "Unable to reserve the subnet " << network.get()
-                     << ": " << result.error(); 
-          abort();
-        }
-
-        // All overlay instances on an Agent share the same VTEP IP
-        // and MAC. Hence, the backend information on all the overlay
-        // information would be the same. We therefore need to reserve
-        // the VTEP IP and MAC only once.
-        if (j == 0) {
-          Try<net::IPNetwork> vtepIP =
-            net::IPNetwork::parse(overlay.backend().vxlan().vtep_ip(), AF_INET);
-          if (vtepIP.isError()) {
-            LOG(ERROR) << "Unable to parse the retrieved `vtepIP`: "
-              << overlay.backend().vxlan().vtep_ip() << ": "
-              << vtepIP.error();
-            abort();
-          }
-
-          // NOTE: We only need to reserve the VTEP IP and not the
-          // VTEP MAC since the VTEP MAC is derived from the VTEP IP.
-          // Look at the `generateMAC` method in `VTEP` to see how
-          // this is done.
-          LOG(INFO) << "Reserving VTEP IP: " << vtepIP.get();
-          Try<Nothing> result = vtep.reserve(vtepIP.get());
-          if (result.isError()) {
-            LOG(ERROR) << "Unable to reserve VTEP IP: "
-              << vtepIP.get() << ": " << result.error();
-            abort();
-          }
-        }
-      }
-    }
-
-    return;
-  }
-
   void registerAgent(
       const UPID& pid,
       const RegisterAgentMessage& registerMessage)
   {
-    if (managerState == INIT) {
-      recover();
-      return;
-    } else if (managerState == RECOVERING) {
-      // We haven't recovered network state yet. Lets just return.
-      // The agent will try to re-reigster.
-      LOG(INFO) << MASTER_MANAGER_PROCESS_ID << " in `RECOVERING`"
-                << " state . Hence, not sending an update to agent"
-                << pid;
-      return;
+    if (replicatedLog.get() != nullptr) {
+      if (storedState.isNone() && !recovering) {
+        // We haven't started recovering.
+        recover();
+        return;
+      } else if (storedState.isNone() && recovering) {
+        // We are recovering. Drop the message, the agent will try to
+        // re-register.
+        LOG(INFO) << MASTER_MANAGER_PROCESS_ID << " in `RECOVERING`"
+          << " state . Hence, not sending an update to agent"
+          << pid;
+        return;
+      } // else -> `storedState.isSome` , we have recovered.
     }
 
-    list<AgentOverlayInfo> _overlays;
-
     if (agents.contains(pid.address.ip)) {
-      LOG(INFO) << "Agent " << pid << "re-registering";
+      LOG(INFO) << "Agent " << pid << "re-registering.";
 
       Agent& agent = agents.at(pid.address.ip);
 
@@ -787,11 +742,24 @@ protected:
         if (agentIP == networkState.agents(i).ip()) {
           networkState.mutable_agents(i)->CopyFrom(
               agents.at(pid.address.ip).getAgentInfo());
-          break;
+
+          // Given that `networkState` already has this Agent, the
+          // information is already stored in replicated log and hence
+          // we can just send an "ACK" to the agent with the
+          // configuration info
+          _registerAgent(pid, true);
+          return;
         }
       }
 
-      _overlays = agent.getOverlays();
+      // The fact that we have reached here implies that the Agent
+      // exists in the `agents` database, but its information has not
+      // been updated in the replicated log. Simply drop this message
+      // since the Agent will re-register.
+      LOG(INFO) << "Agent " << pid
+                << " info has not been updated in the replicated log."
+                << " Hence dropping this registration request.";
+      return;
     } else {
       // New Agent.
       LOG(INFO) << "Got registration from pid: " << pid;
@@ -870,66 +838,18 @@ protected:
         agent.addOverlay(_overlay);
       }
 
-      _overlays = agent.getOverlays();
-
-      // Update the `networkState` with this Agent.
-      networkState.add_agents()->CopyFrom(agent.getAgentInfo());
-    }
-
-    // We need write the updated state in the replicated log before we
-    // can send the overlay configuration to the Agent.
-    store()
-    .onAny(defer(self(),
-                 &ManagerProcess::_registerAgent,
-                 pid,
-                 lambda::_1));
-  }
-
-  void _registerAgent(const UPID& pid, Future<Nothing> result)
-  {
-    if (!result.isReady()) {
-      LOG(WARNING) << "Not sending configuration update to Agent: "
-                   << pid << ": "
-                   << (result.isDiscarded() ? "discarded" : result.failure());
-      demote();
+      // Update the `networkState in the replicated log before 
+      // sending the overlay configuration to the Agent.
+      update(Owned<Operation>(
+            new AddAgent(agents.at(pid.address.ip).getAgentInfo())))
+        .onAny(defer(self(),
+              &ManagerProcess::_registerAgent,
+              pid,
+              lambda::_1));
       return;
     }
 
-    CHECK(agents.contains(pid.address.ip));
-
-    list<AgentOverlayInfo> _overlays = agents.at(pid.address.ip).getOverlays();
-
-    // Create the network update message and send it to the Agent.
-    UpdateAgentOverlaysMessage update;
-
-    foreach(const AgentOverlayInfo& overlay, _overlays) {
-      update.add_overlays()->CopyFrom(overlay);
-    }
-
-    send(pid, update);
-  }
-
-  void demote()
-  {
-    managerState = INIT;
-
-    // We should forget all agents since when this master becomes
-    // the leader they will re-register and get added to the
-    // in-memory databse.
-    agents.clear();
-    networkState.clear_agents();
-
-    // While we should not clear all the overlays (since they are static) we
-    // need to de-allocate the address space of the overlays so that
-    // when this master becomes the leader it can reserve any
-    // addresses that were pending.
-    foreachvalue(Overlay& overlay, overlays) {
-      overlay.reset();
-    }
-
-    // We need to de-allocate the VTEP MAC and VTEP addresses
-    // allocated to the Agent as well.
-    vtep.reset();
+    UNREACHABLE();
   }
 
   void agentRegistered(const UPID& from, const AgentRegisteredMessage& message)
@@ -940,22 +860,81 @@ protected:
         agents.at(from.address.ip).updateOverlayState(message.overlays(i));
       }
 
-      // Update the Agent State.
-      const string agent = stringify(from.address.ip);
+      // We don't need to store the "state" of an overlay network on
+      // an Agent in the replicated log so go ahead and update the
+      // `networkState` without updating the overlay replicated log.
       for (int i = 0; i < networkState.agents_size(); i++) {
-        if (agent == networkState.agents(i).ip()) {
+        if (stringify(from.address.ip) == networkState.agents(i).ip()) {
           networkState.mutable_agents(i)->CopyFrom(
               agents.at(from.address.ip).getAgentInfo());
-          break;
+
+          send(from, AgentRegisteredAcknowledgement());
+          return;
         }
       }
-
-      send(from, AgentRegisteredAcknowledgement());
+      LOG(ERROR) << "Unable to find the registered agent in the `networkState`";
     } else {
       LOG(ERROR) << "Got ACK for network message for non-existent PID "
                  << from;
     }
   }
+
+  Future<http::Response> state(const http::Request& request)
+  {
+    VLOG(1) << "Responding to `state` endpoint";
+
+    return http::OK(
+        JSON::protobuf(networkState),
+        request.url.query.get("jsonp"));
+  }
+
+  void recover()
+  {
+    // Nothing to recover.
+    CHECK_NOTNULL(replicatedLog.get());
+
+    recovering = true;
+
+    replicatedLog->fetch<State>(REPLICATED_LOG_STORE_KEY)
+      .onAny(defer(self(),
+                   &ManagerProcess::_recover,
+                   lambda::_1));
+  }
+private:
+  bool recovering;
+  bool storing;
+
+  hashmap<string, Overlay> overlays;
+  hashmap<net::IP, Agent> agents;
+
+  Owned<mesos::state::protobuf::State> replicatedLog;
+
+  Option<Variable<State>> storedState;
+
+  State networkState;
+
+  // The set of operations that need to be performed on the
+  // `networkState` before writing to the replicated log.
+  std::deque<Owned<Operation>> operations;
+
+  Vtep vtep;
+
+  ManagerProcess(
+      const hashmap<string, Overlay>& _overlays,
+      const net::IPNetwork& vtepSubnet,
+      const net::MAC& vtepMACOUI,
+      const NetworkConfig& _networkConfig,
+      const Owned<mesos::state::protobuf::State> _replicatedLog)
+    : ProcessBase("overlay-master"),
+      recovering(false),
+      storing(false),
+      overlays(_overlays),
+      replicatedLog(_replicatedLog),
+      storedState(None()),
+      vtep(vtepSubnet, vtepMACOUI)
+  { 
+    networkState.mutable_network()->CopyFrom(_networkConfig);
+  };
 
   Try<Nothing> allocateBridges(
       AgentOverlayInfo& _overlay, 
@@ -1030,109 +1009,285 @@ protected:
     return Nothing();
   }
 
-  Future<http::Response> state(const http::Request& request)
-  {
-    VLOG(1) << "Responding to `state` endpoint";
-
-    return http::OK(
-        JSON::protobuf(networkState),
-        request.url.query.get("jsonp"));
-  }
-
-  Future<Nothing> store()
-  {
-    if (replicatedLog.get() == nullptr) {
-      return Nothing();
-    }
-
-    return replicatedLog->fetch<State>(REPLICATED_LOG_STORE_KEY)
-    .then(defer(self(),
-                &ManagerProcess::_store,
-                lambda::_1));
-  }
-
-  Future<Nothing> _store(const Future<Variable<State>>& variable)
+  void _recover(Future<Variable<State>> variable)
   {
     CHECK_NOTNULL(replicatedLog.get());
 
     if (!variable.isReady()) {
-      return Failure(
-          "Unable to store the network state: " +
-          (variable.isDiscarded() ? "discarded" : variable.failure()));
+      LOG(WARNING) << "This " << self().id <<"might have been demoted."
+                   << "Aborting recovery of replicated log"
+                   <<(variable.isDiscarded() ? "discarded" : variable.failure());
+
+      return;
     }
 
-    Variable<State> stateVariable = variable.get();
-    stateVariable = stateVariable.mutate(networkState);
+    State _networkState = variable.get().get();
 
-    return replicatedLog->store(stateVariable)
-      .then([](const Future<Option<Variable<State>>>& variable)
-            -> Future<Nothing> {
-        if (!variable.isReady()) {
-          return Failure(
-            "Unable to store the network state: " + 
-            (variable.isDiscarded() ? "discarded" : variable.failure()));
+    // Only if the `network_config` is present does it imply that the
+    // overlay-master stored state in the replicated log, else  this
+    // is the first time an overlay-master is accessing the
+    // replicated log and hence the state will be empty.
+    if (!_networkState.has_network()) {
+      LOG(INFO) << "No network state present, hence nothing to"
+                << " recover from replicated log";
+
+      // Update the `storeState` variable so that we know where to
+      // update the `State` in the replicated log.
+      storedState = variable.get();
+
+      LOG(INFO) << "Moving " << self() << " to `RECOVERED` state.";
+      return;
+    }
+
+    // Re-populate the agents, the overlay subnets that have been
+    // allocated, and the VTEP IP and VTEP MAC that have been
+    // allocated. The information stored in the replicated log should
+    // not have any errors.
+    for (int i = 0; i < _networkState.agents_size(); i++) {
+      const AgentInfo& agentInfo = _networkState.agents(i);
+
+      // Cleare the `State` of the `AgentInfo`
+
+      Try<Agent> agent = Agent::create(agentInfo);
+      if (agent.isError()) {
+        LOG(ERROR) << "Could not recover Agent: "<< agent.error();
+        abort();
+      }
+
+      agents.emplace(agent->getIP(), agent.get());
+      VLOG(1) << "Recovered agent: " << agent->getIP();
+
+      for (int j = 0; j < agentInfo.overlays_size(); j++) {
+        const AgentOverlayInfo& overlay = agentInfo.overlays(j);
+
+        // clear the overlay state.
+        _networkState.mutable_agents(i)->mutable_overlays(j)->clear_state();
+
+        Try<net::IPNetwork> network = net::IPNetwork::parse(
+            overlay.subnet(),
+            AF_INET);
+
+        if (network.isError()) {
+          LOG(ERROR) << "Unable to parse the retrieved network: "
+            << overlay.subnet() << ": "
+            << network.error();
+          abort();
         }
 
-        if (variable.get().isNone()) {
-          return Failure(
-            "Unable to store the network state. This"
-            " master might have been demoted");
+        // We should already have this particular overlay at bootup.
+        CHECK(overlays.contains(overlay.info().name()));
+        Try<Nothing> result = overlays.at(overlay.info().name()).reserve(network.get());
+        if (result.isError()) {
+          LOG(ERROR) << "Unable to reserve the subnet " << network.get()
+                     << ": " << result.error(); 
+          abort();
         }
 
-        LOG(INFO) << "Stored the network state successfully";
+        // All overlay instances on an Agent share the same VTEP IP
+        // and MAC. Hence, the backend information on all the overlay
+        // information would be the same. We therefore need to reserve
+        // the VTEP IP and MAC only once.
+        if (j == 0) {
+          Try<net::IPNetwork> vtepIP =
+            net::IPNetwork::parse(overlay.backend().vxlan().vtep_ip(), AF_INET);
+          if (vtepIP.isError()) {
+            LOG(ERROR) << "Unable to parse the retrieved `vtepIP`: "
+              << overlay.backend().vxlan().vtep_ip() << ": "
+              << vtepIP.error();
+            abort();
+          }
 
-        State storedNetworkState = variable.get().get().get();
-
-        VLOG(1) << "Stored the following network state:";
-        if (storedNetworkState.has_network()) {
-          VLOG(1) << "VTEP: " << storedNetworkState.network().vtep_subnet();
-          VLOG(1) << "VTEP OUI: " << storedNetworkState.network().vtep_mac_oui();
-          VLOG(1) << "Total overlays: " << storedNetworkState.network().overlays_size();
+          // NOTE: We only need to reserve the VTEP IP and not the
+          // VTEP MAC since the VTEP MAC is derived from the VTEP IP.
+          // Look at the `generateMAC` method in `VTEP` to see how
+          // this is done.
+          LOG(INFO) << "Reserving VTEP IP: " << vtepIP.get();
+          Try<Nothing> result = vtep.reserve(vtepIP.get());
+          if (result.isError()) {
+            LOG(ERROR) << "Unable to reserve VTEP IP: "
+              << vtepIP.get() << ": " << result.error();
+            abort();
+          }
         }
+      }
+    }
 
-        if (storedNetworkState.agents_size() > 0) {
-          VLOG(1) << "Total agents: " << storedNetworkState.agents_size();
-        }
+    // Recovery done. Copy the recovered state into the `State`
+    // object.
+    networkState.CopyFrom(_networkState);
 
-        return Nothing();
-      });
+    // Update the `storeState` variable so that we know where to
+    // update the `State` in the replicated log.
+    storedState = variable.get();
+
+    LOG(INFO) << "Moving " << self() << " to `RECOVERED` state.";
+    return;
   }
 
-private:
-  enum ManagerState {
-    INIT = 1,
-    RECOVERING = 2,
-    RECOVERED = 3
-  };
+  // Will be called once the operation is successfully applied to the
+  // `networkState`.
+  void _registerAgent(const UPID& pid, const Future<bool>& result)
+  {
+    if (!result.isReady()) {
+      LOG(WARNING) << "Unable to process registration request from "
+                   << pid << " due to: "
+                   << (result.isDiscarded() ? "discarded" : result.failure()); 
+      return;
+    }
 
-  ManagerProcess(
-      const hashmap<string, Overlay>& _overlays,
-      const net::IPNetwork& vtepSubnet,
-      const net::MAC& vtepMACOUI,
-      const NetworkConfig& _networkConfig,
-      const Owned<mesos::state::protobuf::State> _replicatedLog)
-    : ProcessBase("overlay-master"),
-      overlays(_overlays),
-      vtep(vtepSubnet, vtepMACOUI),
-      managerState(INIT),
-      replicatedLog(_replicatedLog)
-  { 
-    networkState.mutable_network()->CopyFrom(_networkConfig);
+    CHECK(agents.contains(pid.address.ip));
 
-    // If no replicated log set the state to `RECOVERED`.
-    managerState = RECOVERED;
-  };
+    list<AgentOverlayInfo> _overlays = agents.at(pid.address.ip).getOverlays();
 
-  hashmap<string, Overlay> overlays;
-  hashmap<net::IP, Agent> agents;
+    // Create the network update message and send it to the Agent.
+    UpdateAgentOverlaysMessage update;
 
-  Vtep vtep;
+    foreach(const AgentOverlayInfo& overlay, _overlays) {
+      update.add_overlays()->CopyFrom(overlay);
+    }
 
-  ManagerState managerState;
+    send(pid, update);
+  }
 
-  State networkState;
+  // Updates the `networkState` with the operation provided. If we are
+  // using the replicated log we will `queue` the operation and invoke
+  // `store, else we will apply the operation immediately. 
+  // In case the replicated log is being used, the stored operation is
+  // applied on a copy of `networkState` and the mutated `State` is
+  // written into the overlay replicated log. On a successful write
+  // the `networkState` is updated with the `State` that was stored in
+  // the replicated log.
+  Future<bool> update(const Owned<Operation> operation)
+  {
+    if (replicatedLog.get() == nullptr) {
+      Try<bool> result = (*operation)(networkState, agents);
+      if (result.isError()) {
+        return Failure(
+            "Unable to perform operation: " + result.error());
+      }
 
-  Owned<mesos::state::protobuf::State> replicatedLog;
+      return result.get();
+    }
+
+    operations.push_back(operation);
+    Future<bool> future = operation->future();
+
+    if (!storing) {
+      store();
+    }
+
+    return future;
+  }
+
+  void store()
+  {
+      // We should not be trying to store to the replicated log till
+      // recovery is complete.
+      CHECK(storedState.isSome());
+
+      storing = true;
+
+      CHECK_NOTNULL(replicatedLog.get());
+
+      State _networkState;
+      _networkState.CopyFrom(networkState);
+
+      foreach (Owned<Operation> operation, operations) {
+        (*operation)(_networkState, agents); 
+      }
+
+
+      Variable<State> stateVariable = storedState.get();
+      stateVariable = stateVariable.mutate(_networkState);
+
+      replicatedLog->store(stateVariable)
+        .onAny(defer(self(), &ManagerProcess::_store, lambda::_1, operations));
+
+      operations.clear();
+  }
+
+  void _store(
+      const Future<Option<Variable<State>>>& variable,
+      std::deque<Owned<Operation>> applied)
+  {
+    storing = false;
+
+    if (!variable.isReady()) { 
+      LOG(WARNING) << "Not updating `State` due to failure to write to log."
+                   << (variable.isDiscarded() ? "discarded" : variable.failure());
+      demote();
+      return;
+    }
+
+    if (variable.get().isNone()) {
+      LOG(WARNING) << "Not updating `State` since this Master might"
+                   << "have been demoted.";
+      demote();
+      return;
+    }
+
+    LOG(INFO) << "Stored the network state successfully";
+
+    State storedNetworkState = variable.get().get().get();
+
+    VLOG(1) << "Stored the following network state:";
+    if (storedNetworkState.has_network()) {
+      VLOG(1) << "VTEP: " << storedNetworkState.network().vtep_subnet();
+      VLOG(1) << "VTEP OUI: " << storedNetworkState.network().vtep_mac_oui();
+      VLOG(1) << "Total overlays: " << storedNetworkState.network().overlays_size();
+    }
+
+    if (storedNetworkState.agents_size() > 0) {
+      VLOG(1) << "Total agents: " << storedNetworkState.agents_size();
+    }
+
+    networkState.CopyFrom(storedNetworkState);
+
+    storedState = variable.get();
+
+    // Signal all operations are complete.
+    while (!applied.empty()) {
+      Owned<Operation> operation = applied.front();
+      applied.pop_front();
+
+      operation->set();
+
+      LOG(INFO) << "Applied operation '" << *operation << "'"
+                << " successfully.";
+    }
+
+    if (!operations.empty()) {
+      store();
+    }
+  }
+
+  void demote()
+  {
+    // Reset state of the replicated log.
+    recovering = false;
+    storing = false;
+    operations.clear();
+    storedState = None();
+
+    // We should forget all agents since when this master becomes
+    // the leader they will re-register and get added to the
+    // in-memory databse.
+    agents.clear();
+    networkState.clear_agents();
+
+
+    // While we should not clear all the overlays (since they are static) we
+    // need to de-allocate the address space of the overlays so that
+    // when this master becomes the leader it can reserve any
+    // addresses that were pending.
+    foreachvalue(Overlay& overlay, overlays) {
+      overlay.reset();
+    }
+
+    // We need to de-allocate the VTEP MAC and VTEP addresses
+    // allocated to the Agent as well.
+    vtep.reset();
+  }
 };
 
 
@@ -1169,10 +1324,10 @@ private:
   Owned<ManagerProcess> process;
 };
 
-} // namespace mesos {
-} // namespace modules {
-} // namespace overlay {
-} // namespace master {
+} // namespace master 
+} // namespace overlay 
+} // namespace modules 
+} // namespace mesos
 
 
 using mesos::modules::overlay::master::Manager;

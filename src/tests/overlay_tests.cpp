@@ -624,6 +624,139 @@ TEST_F(OverlayTest, checkDockerNetwork)
   ASSERT_SOME(json);
 }
 
+
+// Tests the ability of the `Master overlay module` to recover
+// checkpointed overlay `State`.
+TEST_F(OverlayTest, checkMasterRecovery)
+{
+  Try<Owned<cluster::Master>> master = StartMaster();
+  ASSERT_SOME(master);
+
+  LOG(INFO) << "Master PID: " << master.get()->pid;
+
+  // Ask overlay Master to use the replicated log by setting
+  // `replicated_log_dir`. We are not specifying `zk` configuration so
+  // the `quorum` will default to "1".
+  MasterConfig _masterOverlayConfig;
+  _masterOverlayConfig
+    .set_replicated_log_dir("overlay_replicated_log");
+
+  Try<Owned<Anonymous>> masterModule = startOverlayMaster(_masterOverlayConfig);
+  ASSERT_SOME(masterModule);
+
+  // Master `Anonymous` module created successfully. Lets see if we
+  // can hit the `state` endpoint of the Master.
+  UPID overlayMaster = UPID(master.get()->pid);
+  overlayMaster.id = MASTER_MANAGER_PROCESS_ID;
+
+  AgentConfig agentOverlayConfig;
+  agentOverlayConfig.set_master(stringify(overlayMaster.address));
+  // Enable Mesos network.
+  agentOverlayConfig.mutable_network_config()->set_mesos_bridge(true);
+  // Enable Docker network.
+  agentOverlayConfig.mutable_network_config()->set_docker_bridge(true);
+
+  // Setup a future to notify the test that Agent overlay module has
+  // registered.
+  Future<AgentRegisteredMessage> agentRegisteredMessage = 
+    FUTURE_PROTOBUF(AgentRegisteredMessage(), _, _);
+
+  Try<Owned<Anonymous>> agentOverlay = startOverlayAgent(agentOverlayConfig);
+  ASSERT_SOME(agentOverlay);
+
+  AWAIT_READY(agentRegisteredMessage);
+
+  // Agent manager has been created. Hit the `overlay` endpoint to
+  // check that module is up and responding.
+  UPID overlayAgent = UPID(master.get()->pid);
+  overlayAgent.id = AGENT_MANAGER_PROCESS_ID;
+
+   Future<Response> agentResponse = process::http::get(
+      overlayAgent,
+      "overlay");
+
+  AWAIT_EXPECT_RESPONSE_STATUS_EQ(OK().status, agentResponse);
+  AWAIT_EXPECT_RESPONSE_HEADER_EQ(
+      APPLICATION_JSON,
+      "Content-Type",
+      agentResponse);
+
+  // The `overlay` end-point is backed by the
+  // mesos::modules::overlay::AgentInfo protobuf, so need to parse the
+  // JSON and verify that the correct configuration is being
+  // reflected.
+  Try<AgentInfo> info = parseAgentOverlay(agentResponse->body);
+  ASSERT_SOME(info);
+
+  // There should be only 1 overlay.
+  ASSERT_EQ(1, info->overlays_size());
+  EXPECT_EQ(OVERLAY_NAME, info->overlays(0).info().name());
+  
+  Try<net::IPNetwork> agentNetwork = net::IPNetwork::parse(
+      info->overlays(0).subnet(), AF_INET);
+  ASSERT_SOME(agentNetwork);
+  EXPECT_EQ(24, agentNetwork->prefix());
+  
+  Try<net::IPNetwork> allocatedSubnet = net::IPNetwork::parse(
+      "192.168.0.0/24", AF_INET); 
+  ASSERT_SOME(allocatedSubnet);
+  EXPECT_EQ(allocatedSubnet.get(), agentNetwork.get());
+
+  // Hit the `state` end-point. We should be seeing the
+  // Agents overlay subnet allocation in the `state` endpoint.
+  Future<http::Response> masterResponse = process::http::get(
+      overlayMaster,
+      "state");
+
+  AWAIT_EXPECT_RESPONSE_STATUS_EQ(OK().status, masterResponse);
+  AWAIT_EXPECT_RESPONSE_HEADER_EQ(
+      APPLICATION_JSON,
+      "Content-Type",
+      masterResponse);
+
+  Try<State> state = parseMasterState(masterResponse->body);
+  ASSERT_SOME(state);
+  ASSERT_EQ(1, state->agents_size());
+
+  AgentInfo masterAgentInfo;
+  masterAgentInfo.CopyFrom(state->agents(0));
+  EXPECT_EQ(
+      info.get().SerializeAsString(),
+      masterAgentInfo.SerializeAsString());
+  
+  // Kill the master.
+  masterModule->reset();
+
+  masterModule = startOverlayMaster(_masterOverlayConfig);
+  ASSERT_SOME(masterModule);
+
+  // Re-start the master and wait for the Agent to re-register.
+  Future<AgentRegisteredMessage> agentReRegisteredMessage = 
+    FUTURE_PROTOBUF(AgentRegisteredMessage(), _, _);
+  AWAIT_READY(agentReRegisteredMessage);
+
+  // Hit the master end-point again.
+  masterResponse = process::http::get(
+      overlayMaster,
+      "state");
+
+  AWAIT_EXPECT_RESPONSE_STATUS_EQ(OK().status, masterResponse);
+  AWAIT_EXPECT_RESPONSE_HEADER_EQ(
+      APPLICATION_JSON,
+      "Content-Type",
+      masterResponse);
+
+  state = parseMasterState(masterResponse->body);
+  ASSERT_SOME(state);
+  ASSERT_EQ(1, state->agents_size());
+
+  AgentInfo recoveredMasterAgentInfo;
+  recoveredMasterAgentInfo.CopyFrom(state->agents(0));
+  EXPECT_EQ(
+      masterAgentInfo.SerializeAsString(),
+      recoveredMasterAgentInfo.SerializeAsString());
+}
+
 } // namespace tests {
 } // namespace overlay {
 } // namespace mesos {
