@@ -239,6 +239,6 @@ AC_CHECK_HEADER([picojson.h],
 CPPFLAGS=${old_CPPFLAGS}
 
 # Create Modules JSON blob.
-AC_CONFIG_FILES([modules.json], [])
+AC_CONFIG_FILES([remove_dockercfg_slave_modules.json], [])
 
 AC_OUTPUT
