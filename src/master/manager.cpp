@@ -343,15 +343,20 @@ public:
       return;
     }
 
-    overlays[overlay.info().name()].CopyFrom(overlay);
+    // Create a new overlay on this agent.
+    overlays.emplace(
+        overlay.info().name(),
+        Owned<AgentOverlayInfo>(new AgentOverlayInfo()));
+
+    overlays[overlay.info().name()]->CopyFrom(overlay);
   }
 
   list<AgentOverlayInfo> getOverlays() const
   {
     list<AgentOverlayInfo> _overlays;
 
-    foreachvalue (const AgentOverlayInfo& overlay, overlays) {
-      _overlays.push_back(overlay);
+    foreachvalue (const Owned<AgentOverlayInfo>& overlay, overlays) {
+      _overlays.push_back(*overlay);
     }
 
     return _overlays;
@@ -359,8 +364,8 @@ public:
 
   void clearOverlaysState()
   {
-    foreachvalue (AgentOverlayInfo& overlay, overlays) {
-      overlay.clear_state();
+    foreachvalue (Owned<AgentOverlayInfo>& overlay, overlays) {
+      overlay->clear_state();
     }
   }
 
@@ -370,8 +375,8 @@ public:
 
     info.set_ip(stringify(ip));
 
-    foreachvalue(const AgentOverlayInfo& overlay, overlays) {
-      info.add_overlays()->CopyFrom(overlay);
+    foreachvalue(const Owned<AgentOverlayInfo>& overlay, overlays) {
+      info.add_overlays()->CopyFrom(*overlay);
     }
 
     return info;
@@ -385,14 +390,14 @@ public:
                  << overlay.info().name() ;
     }
 
-    overlays[name].mutable_state()->set_status(overlay.state().status());
+    overlays.at(name)->mutable_state()->set_status(overlay.state().status());
   }
 
 private:
   net::IP ip;
 
   // A list of all overlay networks that reside on this agent.
-  hashmap<string, AgentOverlayInfo> overlays;
+  hashmap<string, Owned<AgentOverlayInfo>> overlays;
 };
 
 
@@ -416,7 +421,6 @@ static Try<net::MAC> createMAC(const string& _mac, const bool& oui)
             "Invalid OUI MAC address: " + _mac +
             ". Least significant three bytes should not be"
             " set for the OUI"); 
-
       }
     }
   }
@@ -437,8 +441,8 @@ public:
   virtual ~Operation() {}
 
   Try<bool> operator()(
-      State& networkState,
-      hashmap<net::IP, Agent>& agents)
+      State* networkState,
+      hashmap<net::IP, Agent>* agents)
   {
     const Try<bool> result = perform(networkState, agents);
 
@@ -454,8 +458,8 @@ public:
 
 protected:
   virtual Try<bool> perform(
-      State& networkState,
-      hashmap<net::IP, Agent>& agents) = 0;
+      State* networkState,
+      hashmap<net::IP, Agent>* agents) = 0;
 
 private:
   bool success;
@@ -476,7 +480,7 @@ public:
   }
 
 protected:
-  Try<bool> perform(State& networkState, hashmap<net::IP, Agent> &agents) 
+  Try<bool> perform(State* networkState, hashmap<net::IP, Agent>* agents) 
   {
     // Make sure the Agent we are going to add is already present in `agents`.
     Try<net::IP> ip = net::IP::parse(agentInfo.ip(), AF_INET);
@@ -484,13 +488,13 @@ protected:
       return Error("Unable to parse the Agent IP: " + ip.error());
     }
 
-    if (!agents.contains(ip.get())) {
+    if (!agents->contains(ip.get())) {
       return Error(
           "Could not find the Agent (" + stringify(ip.get()) +
           ") that needed to be added to `State`.");
     }
 
-    networkState.add_agents()->CopyFrom(agentInfo);
+    networkState->add_agents()->CopyFrom(agentInfo);
     return true;
   }
 
@@ -543,7 +547,7 @@ public:
           "Unable to parse VTEP MAC OUI: " + vtepMACOUI.error());
     }
 
-    hashmap<string, Overlay> overlays;
+    hashmap<string, Owned<Overlay>> overlays;
     IntervalSet<uint32_t> addressSpace;
 
     // Overlay networks cannot have overlapping IP addresses. This
@@ -611,10 +615,10 @@ public:
 
       overlays.emplace(
           overlay.name(),
-          Overlay(
+          Owned<Overlay>(new Overlay(
             overlay.name(),
             address.get(),
-            (uint8_t) overlay.prefix()));
+            (uint8_t) overlay.prefix())));
     }
 
     if (overlays.empty()) {
@@ -730,11 +734,11 @@ protected:
     if (agents.contains(pid.address.ip)) {
       LOG(INFO) << "Agent " << pid << "re-registering.";
 
-      Agent& agent = agents.at(pid.address.ip);
+      Agent* agent = &(agents.at(pid.address.ip));
 
       // Reset existing state of the overlays, since the Agent, after
       // restart, does not expect the overlays to have any state.
-      agent.clearOverlaysState();
+      agent->clearOverlaysState();
 
       // We need to update the Agents state in `networkState`
       const string agentIP = stringify(pid.address.ip);
@@ -765,7 +769,7 @@ protected:
       LOG(INFO) << "Got registration from pid: " << pid;
       agents.emplace(pid.address.ip, Agent(pid.address.ip));
 
-      Agent& agent = agents.at(pid.address.ip);
+      Agent* agent = &(agents.at(pid.address.ip));
 
       Try<net::IPNetwork> vtepIP = vtep.allocateIP();
       if (vtepIP.isError()) {
@@ -789,16 +793,16 @@ protected:
       // each overlay to the Agent. Allocate a VTEP IP and MAC for each
       // agent. Queue the message on the Agent. Finally, ask Master to
       // reliably send these messages to the Agent.
-      foreachpair (const string& name, Overlay& overlay, overlays) {
+      foreachpair (const string& name, Owned<Overlay>& overlay, overlays) {
         AgentOverlayInfo _overlay;
         Option<net::IPNetwork> agentSubnet = None();
 
         _overlay.mutable_info()->set_name(name);
-        _overlay.mutable_info()->set_subnet(stringify(overlay.network));
-        _overlay.mutable_info()->set_prefix(overlay.prefix);
+        _overlay.mutable_info()->set_subnet(stringify(overlay->network));
+        _overlay.mutable_info()->set_prefix(overlay->prefix);
 
         if (registerMessage.network_config().allocate_subnet()) {
-          Try<net::IPNetwork> _agentSubnet = overlay.allocate();
+          Try<net::IPNetwork> _agentSubnet = overlay->allocate();
           if (_agentSubnet.isError()) {
             LOG(ERROR) << "Cannot allocate subnet from overlay "
                        << name << " to Agent " << pid << ":"
@@ -811,14 +815,14 @@ protected:
 
           // Allocate bridges for Mesos and Docker.
           Try<Nothing> bridges = allocateBridges(
-              _overlay,
+              &_overlay,
               registerMessage.network_config());
 
           if (bridges.isError()) {
             LOG(ERROR) << "Unable to allocate bridge for network "
                        << name << ": " << bridges.error();
             if ( agentSubnet.isSome()) {
-              overlay.free(agentSubnet.get());
+              overlay->free(agentSubnet.get());
             }
             continue;
           }
@@ -835,7 +839,7 @@ protected:
 
         _overlay.mutable_backend()->CopyFrom(backend);
 
-        agent.addOverlay(_overlay);
+        agent->addOverlay(_overlay);
       }
 
       // Update the `networkState in the replicated log before 
@@ -850,6 +854,31 @@ protected:
     }
 
     UNREACHABLE();
+  }
+
+  // Will be called once the operation is successfully applied to the
+  // `networkState`.
+  void _registerAgent(const UPID& pid, const Future<bool>& result)
+  {
+    if (!result.isReady()) {
+      LOG(WARNING) << "Unable to process registration request from "
+                   << pid << " due to: "
+                   << (result.isDiscarded() ? "discarded" : result.failure()); 
+      return;
+    }
+
+    CHECK(agents.contains(pid.address.ip));
+
+    list<AgentOverlayInfo> _overlays = agents.at(pid.address.ip).getOverlays();
+
+    // Create the network update message and send it to the Agent.
+    UpdateAgentOverlaysMessage update;
+
+    foreach(const AgentOverlayInfo& overlay, _overlays) {
+      update.add_overlays()->CopyFrom(overlay);
+    }
+
+    send(pid, update);
   }
 
   void agentRegistered(const UPID& from, const AgentRegisteredMessage& message)
@@ -899,114 +928,6 @@ protected:
       .onAny(defer(self(),
                    &ManagerProcess::_recover,
                    lambda::_1));
-  }
-private:
-  bool recovering;
-  bool storing;
-
-  hashmap<string, Overlay> overlays;
-  hashmap<net::IP, Agent> agents;
-
-  Owned<mesos::state::protobuf::State> replicatedLog;
-
-  Option<Variable<State>> storedState;
-
-  State networkState;
-
-  // The set of operations that need to be performed on the
-  // `networkState` before writing to the replicated log.
-  std::deque<Owned<Operation>> operations;
-
-  Vtep vtep;
-
-  ManagerProcess(
-      const hashmap<string, Overlay>& _overlays,
-      const net::IPNetwork& vtepSubnet,
-      const net::MAC& vtepMACOUI,
-      const NetworkConfig& _networkConfig,
-      const Owned<mesos::state::protobuf::State> _replicatedLog)
-    : ProcessBase("overlay-master"),
-      recovering(false),
-      storing(false),
-      overlays(_overlays),
-      replicatedLog(_replicatedLog),
-      storedState(None()),
-      vtep(vtepSubnet, vtepMACOUI)
-  { 
-    networkState.mutable_network()->CopyFrom(_networkConfig);
-  };
-
-  Try<Nothing> allocateBridges(
-      AgentOverlayInfo& _overlay, 
-      const AgentNetworkConfig& networkConfig)
-  {
-    if (!networkConfig.mesos_bridge() &&
-        !networkConfig.docker_bridge()) {
-      return Nothing();
-    }
-    const string name = _overlay.info().name();
-
-    Try<IPNetwork> network = net::IPNetwork::parse(
-        _overlay.subnet(),
-        AF_INET);
-
-    if (network.isError()) {
-      return Error("Unable to parse the subnet of the network '" +
-          name + "' : " + network.error());
-    }
-
-    Try<struct in_addr> subnet = network->address().in();
-    Try<struct in_addr> subnetMask = network->netmask().in();
-
-    if (subnet.isError()) {
-      return Error("Unable to get a 'struct in_addr' representation of "
-          "the network :"  + subnet.error());
-    }
-
-    if (subnetMask.isError()) {
-      return Error("Unable to get a 'struct in_addr' representation of "
-          "the mask :"  + subnetMask.error());
-    }
-
-    uint32_t address = ntohl(subnet->s_addr);
-    uint32_t mask = ntohl(subnetMask->s_addr) |
-      (0x1 << (32 - (network->prefix() + 1)));
-
-    // Create the Mesos bridge.
-    if (networkConfig.mesos_bridge()) {
-      Try<IPNetwork> mesosSubnet = net::IPNetwork::create((IP(address)), (IP(mask)));
-
-      if (mesosSubnet.isError()) {
-        return Error(
-            "Could not create Mesos subnet for network '" +
-            name + "': " + mesosSubnet.error());
-      }
-
-      BridgeInfo mesosBridgeInfo;
-      mesosBridgeInfo.set_ip(stringify(mesosSubnet.get()));
-      mesosBridgeInfo.set_name(MESOS_BRIDGE_PREFIX + name);
-      _overlay.mutable_mesos_bridge()->CopyFrom(mesosBridgeInfo);
-    }
-
-    // Create the docker bridge.
-    if (networkConfig.docker_bridge()) {
-      Try<IPNetwork> dockerSubnet = net::IPNetwork::create(
-          IP(address | (0x1 << (32 - (network->prefix() + 1)))),
-          IP(mask));
-
-      if (dockerSubnet.isError()) {
-        return Error(
-            "Could not create Docker subnet for network '" +
-            name + "': " + dockerSubnet.error());
-      }
-
-      BridgeInfo dockerBridgeInfo;
-      dockerBridgeInfo.set_ip(stringify(dockerSubnet.get()));
-      dockerBridgeInfo.set_name(DOCKER_BRIDGE_PREFIX + name);
-      _overlay.mutable_docker_bridge()->CopyFrom(dockerBridgeInfo);
-    }
-
-    return Nothing();
   }
 
   void _recover(Future<Variable<State>> variable)
@@ -1076,7 +997,7 @@ private:
 
         // We should already have this particular overlay at bootup.
         CHECK(overlays.contains(overlay.info().name()));
-        Try<Nothing> result = overlays.at(overlay.info().name()).reserve(network.get());
+        Try<Nothing> result = overlays.at(overlay.info().name())->reserve(network.get());
         if (result.isError()) {
           LOG(ERROR) << "Unable to reserve the subnet " << network.get()
                      << ": " << result.error(); 
@@ -1124,29 +1045,113 @@ private:
     return;
   }
 
-  // Will be called once the operation is successfully applied to the
-  // `networkState`.
-  void _registerAgent(const UPID& pid, const Future<bool>& result)
+private:
+  bool recovering;
+  bool storing;
+
+  hashmap<string, Owned<Overlay>> overlays;
+  hashmap<net::IP, Agent> agents;
+
+  Owned<mesos::state::protobuf::State> replicatedLog;
+
+  Option<Variable<State>> storedState;
+
+  State networkState;
+
+  // The set of operations that need to be performed on the
+  // `networkState` before writing to the replicated log.
+  std::deque<Owned<Operation>> operations;
+
+  Vtep vtep;
+
+  ManagerProcess(
+      const hashmap<string, Owned<Overlay>>& _overlays,
+      const net::IPNetwork& vtepSubnet,
+      const net::MAC& vtepMACOUI,
+      const NetworkConfig& _networkConfig,
+      const Owned<mesos::state::protobuf::State> _replicatedLog)
+    : ProcessBase("overlay-master"),
+      recovering(false),
+      storing(false),
+      overlays(_overlays),
+      replicatedLog(_replicatedLog),
+      storedState(None()),
+      vtep(vtepSubnet, vtepMACOUI)
+  { 
+    networkState.mutable_network()->CopyFrom(_networkConfig);
+  };
+
+  Try<Nothing> allocateBridges(
+      AgentOverlayInfo* _overlay, 
+      const AgentNetworkConfig& networkConfig)
   {
-    if (!result.isReady()) {
-      LOG(WARNING) << "Unable to process registration request from "
-                   << pid << " due to: "
-                   << (result.isDiscarded() ? "discarded" : result.failure()); 
-      return;
+    if (!networkConfig.mesos_bridge() &&
+        !networkConfig.docker_bridge()) {
+      return Nothing();
+    }
+    const string name = _overlay->info().name();
+
+    Try<IPNetwork> network = net::IPNetwork::parse(
+        _overlay->subnet(),
+        AF_INET);
+
+    if (network.isError()) {
+      return Error("Unable to parse the subnet of the network '" +
+          name + "' : " + network.error());
     }
 
-    CHECK(agents.contains(pid.address.ip));
+    Try<struct in_addr> subnet = network->address().in();
+    Try<struct in_addr> subnetMask = network->netmask().in();
 
-    list<AgentOverlayInfo> _overlays = agents.at(pid.address.ip).getOverlays();
-
-    // Create the network update message and send it to the Agent.
-    UpdateAgentOverlaysMessage update;
-
-    foreach(const AgentOverlayInfo& overlay, _overlays) {
-      update.add_overlays()->CopyFrom(overlay);
+    if (subnet.isError()) {
+      return Error("Unable to get a 'struct in_addr' representation of "
+          "the network :"  + subnet.error());
     }
 
-    send(pid, update);
+    if (subnetMask.isError()) {
+      return Error("Unable to get a 'struct in_addr' representation of "
+          "the mask :"  + subnetMask.error());
+    }
+
+    uint32_t address = ntohl(subnet->s_addr);
+    uint32_t mask = ntohl(subnetMask->s_addr) |
+      (0x1 << (32 - (network->prefix() + 1)));
+
+    // Create the Mesos bridge.
+    if (networkConfig.mesos_bridge()) {
+      Try<IPNetwork> mesosSubnet = net::IPNetwork::create((IP(address)), (IP(mask)));
+
+      if (mesosSubnet.isError()) {
+        return Error(
+            "Could not create Mesos subnet for network '" +
+            name + "': " + mesosSubnet.error());
+      }
+
+      BridgeInfo mesosBridgeInfo;
+      mesosBridgeInfo.set_ip(stringify(mesosSubnet.get()));
+      mesosBridgeInfo.set_name(MESOS_BRIDGE_PREFIX + name);
+      _overlay->mutable_mesos_bridge()->CopyFrom(mesosBridgeInfo);
+    }
+
+    // Create the docker bridge.
+    if (networkConfig.docker_bridge()) {
+      Try<IPNetwork> dockerSubnet = net::IPNetwork::create(
+          IP(address | (0x1 << (32 - (network->prefix() + 1)))),
+          IP(mask));
+
+      if (dockerSubnet.isError()) {
+        return Error(
+            "Could not create Docker subnet for network '" +
+            name + "': " + dockerSubnet.error());
+      }
+
+      BridgeInfo dockerBridgeInfo;
+      dockerBridgeInfo.set_ip(stringify(dockerSubnet.get()));
+      dockerBridgeInfo.set_name(DOCKER_BRIDGE_PREFIX + name);
+      _overlay->mutable_docker_bridge()->CopyFrom(dockerBridgeInfo);
+    }
+
+    return Nothing();
   }
 
   // Updates the `networkState` with the operation provided. If we are
@@ -1160,7 +1165,7 @@ private:
   Future<bool> update(const Owned<Operation> operation)
   {
     if (replicatedLog.get() == nullptr) {
-      Try<bool> result = (*operation)(networkState, agents);
+      Try<bool> result = (*operation)(&networkState, &agents);
       if (result.isError()) {
         return Failure(
             "Unable to perform operation: " + result.error());
@@ -1193,7 +1198,7 @@ private:
       _networkState.CopyFrom(networkState);
 
       foreach (Owned<Operation> operation, operations) {
-        (*operation)(_networkState, agents); 
+        (*operation)(&_networkState, &agents); 
       }
 
 
@@ -1280,8 +1285,8 @@ private:
     // need to de-allocate the address space of the overlays so that
     // when this master becomes the leader it can reserve any
     // addresses that were pending.
-    foreachvalue(Overlay& overlay, overlays) {
-      overlay.reset();
+    foreachvalue(Owned<Overlay>& overlay, overlays) {
+      overlay->reset();
     }
 
     // We need to de-allocate the VTEP MAC and VTEP addresses
