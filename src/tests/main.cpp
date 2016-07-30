@@ -99,7 +99,7 @@ int main(int argc, char** argv)
   // If `process::initialize()` returns `false`, then it was called before this
   // invocation, meaning the authentication realm for libprocess-level HTTP
   // endpoints was set incorrectly. This should be the first invocation.
-  if (!process::initialize(None(), DEFAULT_HTTP_AUTHENTICATION_REALM)) {
+  if (!process::initialize(None(), READONLY_HTTP_AUTHENTICATION_REALM)) {
     EXIT(EXIT_FAILURE) << "The call to `process::initialize()` in the tests' "
                        << "`main()` was not the function's first invocation";
   }
