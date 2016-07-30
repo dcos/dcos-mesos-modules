@@ -196,11 +196,11 @@ protected:
 
     if (overlayMaster.isSome() && overlayMaster.get() == pid) {
       LOG(WARNING)
-        << "Overlay master disconnected!"
+        << "Overlay master disconnected! "
         << "Waiting for a new overlay master to be detected";
     }
     
-    LOG(INFO) << "Moving " << pid << "to `REGISTERING` state.";
+    LOG(INFO) << "Moving " << pid << " to `REGISTERING` state.";
 
     state = REGISTERING;
     doReliableRegistration(INITIAL_BACKOFF_PERIOD);
@@ -229,7 +229,15 @@ protected:
       // will skip the configuration. This might change soon.
       if (overlays.contains(name)) {
         LOG(INFO) << "Skipping configuration for overlay network '" << name
-                  << "' as it is being (or has been) configured";
+                  << "' as it is being (or has been) configured.";
+        if (overlays.at(name).has_state()) {
+          // Set a `Future` so that if we have state of the network we
+          // can report it back to the Master.
+          LOG(INFO) << "Overlay network '" << name << "'" << " has state "
+                    << "hence it has been configured. Sending update to "
+                    << "master: " << from;
+          futures.push_back(Nothing());
+        }
         continue;
       }
 
@@ -238,6 +246,16 @@ protected:
       overlays[name] = overlay;
 
       futures.push_back(configure(name));
+    }
+
+    // If we don't have any `Futures` setup that means this was a
+    // duplicate update corresponding to one already in progress. We
+    // should therefore not setup a response for acknowledging this
+    // registration.
+    if (futures.empty()) {
+      LOG(INFO) << "Looks like received a duplicate config update from "
+                << from << " dropping this message.";
+      return;
     }
 
     // Wait for all the networks to be configured.
@@ -433,8 +451,6 @@ protected:
   {
     CHECK(overlays.contains(name));
 
-    AgentOverlayInfo::State* state = overlays[name].mutable_state();
-
     Future<Nothing> mesos = std::get<0>(t);
     Future<Nothing> docker = std::get<1>(t);
 
@@ -449,8 +465,10 @@ protected:
     }
 
     if (!errors.empty()) {
+      AgentOverlayInfo::State* state = overlays[name].mutable_state();
       state->set_status(AgentOverlayInfo::State::STATUS_FAILED);
       state->set_error(strings::join(";", errors));
+
       return Failure(strings::join(";", errors));
     }
 

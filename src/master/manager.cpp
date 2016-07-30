@@ -627,12 +627,11 @@ public:
           " least one overlay");
     }
 
-    Storage* storage = nullptr;
+    Storage* storage = nullptr; 
+    Log* log = nullptr;
 
     // Check if we need to create the replicated log.
     if (masterConfig.has_replicated_log_dir()) {
-      Log* log = nullptr;
-
       Try<Nothing> mkdir = os::mkdir(masterConfig.replicated_log_dir());
       if (mkdir.isError()) {
         return Error(
@@ -687,8 +686,26 @@ public:
           vtepSubnet.get(),
           vtepMACOUI.get(),
           networkConfig,
-          replicatedLog));
+          replicatedLog,
+          storage,
+          log));
   }
+
+  ~ManagerProcess()
+  {
+    LOG(INFO) << "Shutting down the master manager process...";
+
+    replicatedLog.reset();
+
+    if (storage != nullptr)  {
+      delete storage;
+    }
+
+    if (log != nullptr)  {
+      delete log;
+    }
+  }
+
 
 protected:
   virtual void initialize()
@@ -716,9 +733,14 @@ protected:
       const UPID& pid,
       const RegisterAgentMessage& registerMessage)
   {
+    LOG(INFO) << "Got registration from pid: " << pid;
+
     if (replicatedLog.get() != nullptr) {
       if (storedState.isNone() && !recovering) {
         // We haven't started recovering.
+        LOG(INFO) << MASTER_MANAGER_PROCESS_ID << " moving to `RECOVERING`"
+          << " state . Hence, not sending an update to agent"
+          << pid;
         recover();
         return;
       } else if (storedState.isNone() && recovering) {
@@ -732,21 +754,12 @@ protected:
     }
 
     if (agents.contains(pid.address.ip)) {
-      LOG(INFO) << "Agent " << pid << "re-registering.";
+      LOG(INFO) << "Agent " << pid << " re-registering.";
 
-      Agent* agent = &(agents.at(pid.address.ip));
-
-      // Reset existing state of the overlays, since the Agent, after
-      // restart, does not expect the overlays to have any state.
-      agent->clearOverlaysState();
-
-      // We need to update the Agents state in `networkState`
+      // Ensure that the agent is added to the replicated log.
       const string agentIP = stringify(pid.address.ip);
       for (int i = 0; i < networkState.agents_size(); i++) {
         if (agentIP == networkState.agents(i).ip()) {
-          networkState.mutable_agents(i)->CopyFrom(
-              agents.at(pid.address.ip).getAgentInfo());
-
           // Given that `networkState` already has this Agent, the
           // information is already stored in replicated log and hence
           // we can just send an "ACK" to the agent with the
@@ -766,7 +779,7 @@ protected:
       return;
     } else {
       // New Agent.
-      LOG(INFO) << "Got registration from pid: " << pid;
+      LOG(INFO) << "New registration from pid: " << pid;
       agents.emplace(pid.address.ip, Agent(pid.address.ip));
 
       Agent* agent = &(agents.at(pid.address.ip));
@@ -878,6 +891,11 @@ protected:
       update.add_overlays()->CopyFrom(overlay);
     }
 
+    // Clear the state for all overlays in this update.
+    for (int i = 0; i < update.overlays_size(); i++) {
+      update.mutable_overlays(i)->clear_state();
+    }
+
     send(pid, update);
   }
 
@@ -890,13 +908,14 @@ protected:
       }
 
       // We don't need to store the "state" of an overlay network on
-      // an Agent in the replicated log so go ahead and update the
+      // an agent in the replicated log so go ahead and update the
       // `networkState` without updating the overlay replicated log.
       for (int i = 0; i < networkState.agents_size(); i++) {
         if (stringify(from.address.ip) == networkState.agents(i).ip()) {
           networkState.mutable_agents(i)->CopyFrom(
               agents.at(from.address.ip).getAgentInfo());
 
+          LOG(INFO) << "Sending register ACK to: " << from;
           send(from, AgentRegisteredAcknowledgement());
           return;
         }
@@ -1058,6 +1077,12 @@ private:
 
   State networkState;
 
+  // We need to keep track of `storage` and `log`, since we will need
+  // to free them up when the master manager process is deleted.
+  Storage* storage;
+
+  Log* log;
+
   // The set of operations that need to be performed on the
   // `networkState` before writing to the replicated log.
   std::deque<Owned<Operation>> operations;
@@ -1069,13 +1094,17 @@ private:
       const net::IPNetwork& vtepSubnet,
       const net::MAC& vtepMACOUI,
       const NetworkConfig& _networkConfig,
-      const Owned<mesos::state::protobuf::State> _replicatedLog)
+      const Owned<mesos::state::protobuf::State> _replicatedLog,
+      Storage* _storage,
+      Log* _log)
     : ProcessBase("overlay-master"),
       recovering(false),
       storing(false),
       overlays(_overlays),
       replicatedLog(_replicatedLog),
       storedState(None()),
+      storage(_storage),
+      log(_log),
       vtep(vtepSubnet, vtepMACOUI)
   { 
     networkState.mutable_network()->CopyFrom(_networkConfig);
