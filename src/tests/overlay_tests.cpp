@@ -111,6 +111,7 @@ using mesos::modules::overlay::AgentInfo;
 using mesos::modules::overlay::AGENT_MANAGER_PROCESS_ID;
 using mesos::modules::overlay::MASTER_MANAGER_PROCESS_ID;
 using mesos::modules::overlay::internal::AgentConfig;
+using mesos::modules::overlay::internal::AgentRegisteredAcknowledgement;
 using mesos::modules::overlay::internal::AgentRegisteredMessage;
 using mesos::modules::overlay::internal::MasterConfig;
 using mesos::modules::overlay::OverlayInfo;
@@ -275,6 +276,8 @@ protected:
            OVERLAY_NAME});
       AWAIT_READY(docker);
     }
+
+    MesosTest::TearDown();
   }
 
   // Initialized the overlay Master module using the
@@ -415,8 +418,8 @@ TEST_F(OverlayTest, checkMasterAgentComm)
   Future<AgentRegisteredMessage> agentRegisteredMessage = 
     FUTURE_PROTOBUF(AgentRegisteredMessage(), _, _);
 
-  Try<Owned<Anonymous>> agentOverlay = startOverlayAgent(agentOverlayConfig);
-  ASSERT_SOME(agentOverlay);
+  Try<Owned<Anonymous>> agentModule = startOverlayAgent(agentOverlayConfig);
+  ASSERT_SOME(agentModule);
 
   AWAIT_READY(agentRegisteredMessage);
 
@@ -506,8 +509,8 @@ TEST_F(OverlayTest, checkMesosNetwork)
   Future<AgentRegisteredMessage> agentRegisteredMessage = 
     FUTURE_PROTOBUF(AgentRegisteredMessage(), _, _);
 
-  Try<Owned<Anonymous>> agentOverlay = startOverlayAgent(agentOverlayConfig);
-  ASSERT_SOME(agentOverlay);
+  Try<Owned<Anonymous>> agentModule = startOverlayAgent(agentOverlayConfig);
+  ASSERT_SOME(agentModule);
 
   AWAIT_READY(agentRegisteredMessage);
 
@@ -587,8 +590,8 @@ TEST_F(OverlayTest, checkDockerNetwork)
   Future<AgentRegisteredMessage> agentRegisteredMessage = 
     FUTURE_PROTOBUF(AgentRegisteredMessage(), _, _);
 
-  Try<Owned<Anonymous>> agentOverlay = startOverlayAgent(agentOverlayConfig);
-  ASSERT_SOME(agentOverlay);
+  Try<Owned<Anonymous>> agentModule = startOverlayAgent(agentOverlayConfig);
+  ASSERT_SOME(agentModule);
 
   AWAIT_READY(agentRegisteredMessage);
 
@@ -658,13 +661,13 @@ TEST_F(OverlayTest, checkMasterRecovery)
 
   // Setup a future to notify the test that Agent overlay module has
   // registered.
-  Future<AgentRegisteredMessage> agentRegisteredMessage = 
-    FUTURE_PROTOBUF(AgentRegisteredMessage(), _, _);
+  Future<AgentRegisteredAcknowledgement> agentRegisteredAcknowledgement = 
+    FUTURE_PROTOBUF(AgentRegisteredAcknowledgement(), _, _);
 
-  Try<Owned<Anonymous>> agentOverlay = startOverlayAgent(agentOverlayConfig);
-  ASSERT_SOME(agentOverlay);
+  Try<Owned<Anonymous>> agentModule = startOverlayAgent(agentOverlayConfig);
+  ASSERT_SOME(agentModule);
 
-  AWAIT_READY(agentRegisteredMessage);
+  AWAIT_READY(agentRegisteredAcknowledgement);
 
   // Agent manager has been created. Hit the `overlay` endpoint to
   // check that module is up and responding.
@@ -722,7 +725,9 @@ TEST_F(OverlayTest, checkMasterRecovery)
   masterAgentInfo.CopyFrom(state->agents(0));
   EXPECT_EQ(
       info.get().SerializeAsString(),
-      masterAgentInfo.SerializeAsString());
+      masterAgentInfo.SerializeAsString())
+      << "Agent response: " << agentResponse->body
+      << " Master response: " << masterResponse->body;
   
   // Kill the master.
   masterModule->reset();
@@ -731,9 +736,9 @@ TEST_F(OverlayTest, checkMasterRecovery)
   ASSERT_SOME(masterModule);
 
   // Re-start the master and wait for the Agent to re-register.
-  Future<AgentRegisteredMessage> agentReRegisteredMessage = 
-    FUTURE_PROTOBUF(AgentRegisteredMessage(), _, _);
-  AWAIT_READY(agentReRegisteredMessage);
+  agentRegisteredAcknowledgement = FUTURE_PROTOBUF(
+      AgentRegisteredAcknowledgement(), _, _);
+  AWAIT_READY(agentRegisteredAcknowledgement);
 
   // Hit the master end-point again.
   masterResponse = process::http::get(
@@ -790,13 +795,13 @@ TEST_F(OverlayTest, checkAgentRecovery)
 
   // Setup a future to notify the test that Agent overlay module has
   // registered.
-  Future<AgentRegisteredMessage> agentRegisteredMessage = 
-    FUTURE_PROTOBUF(AgentRegisteredMessage(), _, _);
+  Future<AgentRegisteredAcknowledgement> agentRegisteredAcknowledgement = 
+    FUTURE_PROTOBUF(AgentRegisteredAcknowledgement(), _, _);
 
   Try<Owned<Anonymous>> agentModule = startOverlayAgent(agentOverlayConfig);
   ASSERT_SOME(agentModule);
 
-  AWAIT_READY(agentRegisteredMessage);
+  AWAIT_READY(agentRegisteredAcknowledgement);
 
   // Agent manager has been created. Hit the `overlay` endpoint to
   // check that module is up and responding.
@@ -834,10 +839,9 @@ TEST_F(OverlayTest, checkAgentRecovery)
   ASSERT_SOME(allocatedSubnet);
   EXPECT_EQ(allocatedSubnet.get(), agentNetwork.get());
 
-  // Re-start the agent and wait for the Agent to re-register.
-  Future<AgentRegisteredMessage> agentReRegisteredMessage = 
-    FUTURE_PROTOBUF(AgentRegisteredMessage(), _, _);
-
+  // Re-start the agent and wait for the agent to re-register.
+  Future<AgentRegisteredAcknowledgement> agentReRegisteredAcknowledgement = 
+    FUTURE_PROTOBUF(AgentRegisteredAcknowledgement(), _, _);
   // Kill the agent.
   agentModule->reset();
 
@@ -845,7 +849,7 @@ TEST_F(OverlayTest, checkAgentRecovery)
   agentModule = startOverlayAgent(agentOverlayConfig);
   ASSERT_SOME(agentModule);
 
-  AWAIT_READY(agentReRegisteredMessage);
+  AWAIT_READY(agentReRegisteredAcknowledgement);
   // Hit the master end-point again.
   agentResponse = process::http::get(
       overlayAgent,
