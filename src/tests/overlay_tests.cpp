@@ -484,7 +484,7 @@ TEST_F(OverlayTest, checkMasterAgentComm)
 
 // Tests the ability of the `Agent overlay module` to create Mesos CNI
 // networks when `mesos bridge` has been enabled.
-TEST_F(OverlayTest, checkMesosNetwork)
+TEST_F(OverlayTest, ROOT_checkMesosNetwork)
 {
   Try<Owned<cluster::Master>> master = StartMaster();
   ASSERT_SOME(master);
@@ -565,7 +565,7 @@ TEST_F(OverlayTest, checkMesosNetwork)
 
 // Tests the ability of the `Agent overlay module` to create Docker
 // network.
-TEST_F(OverlayTest, checkDockerNetwork)
+TEST_F(OverlayTest, ROOT_checkDockerNetwork)
 {
   Try<Owned<cluster::Master>> master = StartMaster();
   ASSERT_SOME(master);
@@ -630,7 +630,7 @@ TEST_F(OverlayTest, checkDockerNetwork)
 
 // Tests the ability of the `Master overlay module` to recover
 // checkpointed overlay `State`.
-TEST_F(OverlayTest, checkMasterRecovery)
+TEST_F(OverlayTest, ROOT_checkMasterRecovery)
 {
   Try<Owned<cluster::Master>> master = StartMaster();
   ASSERT_SOME(master);
@@ -764,7 +764,7 @@ TEST_F(OverlayTest, checkMasterRecovery)
 
 // Tests the ability of the `Agent overlay module` to recover
 // `AgentInfo` from the master.
-TEST_F(OverlayTest, checkAgentRecovery)
+TEST_F(OverlayTest, ROOT_checkAgentRecovery)
 {
   Try<Owned<cluster::Master>> master = StartMaster();
   ASSERT_SOME(master);
