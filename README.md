@@ -1,4 +1,4 @@
-[![Build Status](https://jenkins.mesosphere.com/service/jenkins/job/mesos-overlay-modules/badge/icon)](https://jenkins.mesosphere.com/service/jenkins/job/mesos-overlay-modules)
+[![Build Status](https://jenkins.mesosphere.com/service/jenkins/buildStatus/icon?job=mesos-overlay-modules)](https://jenkins.mesosphere.com/service/jenkins/job/mesos-overlay-modules)
 
 # Mesos Module(s) for DC/OS Overlay Network
 The DC/OS overlay network requires a Master module and an Agent module
