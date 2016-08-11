@@ -584,6 +584,12 @@ public:
             overlay.name());
       }
 
+      if (RESERVED_NETWORKS.contains(overlay.name())) {
+        return Error(
+          "Overlay network name: " + overlay.name() +
+          " is a reserved network name");
+      }
+
       // The overlay name is used to derive the Mesos bridge and
       // Docker bridge names. Since, in Linux, network device names
       // cannot excced 15 characters, we need to impose the limit on

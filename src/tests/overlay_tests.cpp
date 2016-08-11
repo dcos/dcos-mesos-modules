@@ -110,6 +110,7 @@ using mesos::modules::ModuleManager;
 using mesos::modules::overlay::AgentInfo;
 using mesos::modules::overlay::AGENT_MANAGER_PROCESS_ID;
 using mesos::modules::overlay::MASTER_MANAGER_PROCESS_ID;
+using mesos::modules::overlay::RESERVED_NETWORKS;
 using mesos::modules::overlay::internal::AgentConfig;
 using mesos::modules::overlay::internal::AgentRegisteredAcknowledgement;
 using mesos::modules::overlay::internal::AgentRegisteredMessage;
@@ -305,6 +306,11 @@ protected:
   {
     masterOverlayConfig.MergeFrom(_masterOverlayConfig);
     return startOverlayMaster();
+  }
+
+  void clearOverlays()
+  {
+    masterOverlayConfig.mutable_network()->clear_overlays();
   }
 
   // Initializes the overlay Agent module using the
@@ -867,6 +873,34 @@ TEST_F(OverlayTest, ROOT_checkAgentRecovery)
   EXPECT_EQ(
       info.get().SerializeAsString(),
       reRegisterInfo.get().SerializeAsString());
+}
+
+
+// Tests if reserved network names are correctly rejected by the
+// master overlay module.
+TEST_F(OverlayTest, checkReservedNetworks)
+{
+  // Try creating a master module with an overlay network that has a
+  // reserved name. The creation should fail.
+  foreach(const string& networkName, RESERVED_NETWORKS) {
+    // Whatever `MasterConfig` is given to the fixture is "merged"
+    // with the existing `MasterConfig`. So need to clear the existing
+    // overlays to test the reserved overlay network. Otherwise any
+    // "reserved" network that was added in the previous iteration
+    // would persist and would make this test void.
+    clearOverlays();
+
+    OverlayInfo overlay;
+    overlay.set_name(networkName);
+    overlay.set_subnet("9.0.0.0/8");
+    overlay.set_prefix(24);
+
+    MasterConfig masterOverlayConfig;
+    masterOverlayConfig.mutable_network()->add_overlays()->CopyFrom(overlay);
+
+    Try<Owned<Anonymous>> masterModule = startOverlayMaster(masterOverlayConfig);
+    ASSERT_ERROR(masterModule);
+  }
 }
 
 } // namespace tests {
