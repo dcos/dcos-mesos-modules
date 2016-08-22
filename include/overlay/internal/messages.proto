@@ -56,7 +56,7 @@ message AgentNetworkConfig {
 
 // Used by Agent to store the configuration specified by the operator.
 message AgentConfig {
-  required string master = 1;
+  optional string master = 1;
   required string cni_dir = 2;
   optional AgentNetworkConfig network_config = 3;
 }
@@ -65,8 +65,8 @@ message AgentConfig {
 // Used by the Master to determine the zookeeper config required for
 // leader election by the replicated log.
 message ZookeeperConfig {
-  required string url = 1;
-  required uint32 quorum = 2;
+  optional string url = 1;
+  optional uint32 quorum = 2;
   optional uint32 session_timeout = 3 [default = 10];
 }
 

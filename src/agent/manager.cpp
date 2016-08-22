@@ -76,6 +76,8 @@ using mesos::modules::Module;
 using mesos::modules::overlay::AgentOverlayInfo;
 using mesos::modules::overlay::AgentInfo;
 using mesos::modules::overlay::BridgeInfo;
+using mesos::modules::overlay::MESOS_MASTER;
+using mesos::modules::overlay::MESOS_ZK;
 using mesos::modules::overlay::internal::AgentConfig;
 using mesos::modules::overlay::internal::AgentNetworkConfig;
 using mesos::modules::overlay::internal::AgentRegisteredAcknowledgement;
@@ -820,6 +822,7 @@ Anonymous* createOverlayAgentManager(const Parameters& parameters)
       if (!os::exists(parameter.value())) {
         LOG(ERROR) << "Unable to find Agent configuration: "
                    << parameter.value();
+
         return nullptr;
       }
 
@@ -827,6 +830,7 @@ Anonymous* createOverlayAgentManager(const Parameters& parameters)
       if (config.isError()) {
         LOG(ERROR) << "Unable to read the Agent "
                    << "configuration: " << config.error();
+
         return nullptr;
       }
 
@@ -851,6 +855,7 @@ Anonymous* createOverlayAgentManager(const Parameters& parameters)
         LOG(ERROR)
           << "Unable to parse the Agent JSON configuration: "
           << _agentConfig.error();
+
         return nullptr;
       }
 
@@ -860,15 +865,40 @@ Anonymous* createOverlayAgentManager(const Parameters& parameters)
 
   if (agentConfig.isNone()) {
     LOG(ERROR) << "Missing `agent_config`";
+
     return nullptr;
   }
 
+  Option<string> master = None();
+  if (master.isNone() && agentConfig->has_master()) {
+    master = agentConfig->master();
+  } else {
+    master = os::getenv(MESOS_MASTER);
 
-  Try<MasterDetector*> detector =
-    MasterDetector::create(agentConfig->master());
+    // If the agent is running as part of the master it will need to
+    // get the ZK URL from 'MESOS_ZK'.
+    if (master.isNone()) {
+      master = os::getenv(MESOS_ZK);
+    }
+  }
+
+  // We should have learned about the master either from the JSON
+  // config of the module, or from the 'MESOS_MASTER' environment
+  // variable.
+  if (master.isNone()) {
+    LOG(ERROR)
+      << "Master unspecified, hence cannot create a "
+      << "`MasterDetector`. Please specify master either through "
+      << "the JSON config, or 'MESOS_MASTER' environment variable";
+
+    return nullptr;
+  }
+
+  Try<MasterDetector*> detector = MasterDetector::create(master.get());
   if (detector.isError()) {
     LOG(ERROR) << "Unable to create master detector: "
                << detector.error();
+
     return nullptr;
   }
 
@@ -876,6 +906,8 @@ Anonymous* createOverlayAgentManager(const Parameters& parameters)
   if (mkdir.isError()) {
     LOG(ERROR)
       << "Failed to create CNI config directory: " << mkdir.error();
+
+    return nullptr;
   }
 
   Try<Manager*> manager = Manager::createManager(
@@ -886,6 +918,7 @@ Anonymous* createOverlayAgentManager(const Parameters& parameters)
     LOG(ERROR)
       << "Unable to create Agent manager module: "
       << manager.error();
+
     return nullptr;
   }
 

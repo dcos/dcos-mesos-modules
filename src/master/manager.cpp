@@ -64,6 +64,8 @@ using mesos::modules::overlay::BackendInfo;
 using mesos::modules::overlay::NetworkConfig;
 using mesos::modules::overlay::VxLANInfo;
 using mesos::modules::overlay::State;
+using mesos::modules::overlay::MESOS_ZK;
+using mesos::modules::overlay::MESOS_QUORUM;
 using mesos::modules::overlay::internal::AgentNetworkConfig;
 using mesos::modules::overlay::internal::AgentRegisteredAcknowledgement;
 using mesos::modules::overlay::internal::AgentRegisteredMessage;
@@ -647,17 +649,52 @@ public:
 
       LOG(INFO) << "Initializing the replicated log.";
 
-      if (masterConfig.has_zk()) {
-        LOG(INFO) << "Using replicated log with zookeeper for leader"
-                  << " election.";
-        Try<zookeeper::URL> url =
-          zookeeper::URL::parse(masterConfig.zk().url());
+      // The ZK URL and Quorum can be specified through the JSON
+      // config or through environment variables.
+      Option<string> zkURL = None();
+      if (masterConfig.has_zk() && masterConfig.zk().has_url()) {
+           zkURL = masterConfig.zk().url();
+      } else {
+        zkURL = os::getenv(MESOS_ZK);
+      }
+
+      Option<uint32_t> quorum = None();
+      if (masterConfig.has_zk() && masterConfig.zk().has_quorum()) {
+          quorum = masterConfig.zk().quorum();
+      } else {
+        Option<string> _quorum = os::getenv(MESOS_QUORUM);
+        if (_quorum.isSome()) {
+          Try<uint32_t> result = numify<uint32_t>(_quorum.get());
+          if (result.isError()) {
+            return Error(
+                "Error parsing environment variable 'MESOS_QUORUM'(" +
+                _quorum.get() + "): " + result.error());
+          }
+
+          quorum = result.get();
+        } 
+      }
+
+      if (zkURL.isSome() && quorum.isNone()) {
+        return Error(
+            "Cannot use replicated log with ZK URL '" + zkURL.get() +
+            "' without a quorum. Please specify quorum to be "
+            "used with zookeeper");
+      }
+
+      if (zkURL.isSome() && quorum.isSome()) {
+        LOG(INFO)
+          << "Using replicated log with zookeeper URL "
+          << zkURL.get() << " with a quorum of " << quorum.get()
+          << " for leader election.";
+
+        Try<zookeeper::URL> url = zookeeper::URL::parse(zkURL.get());
         if (url.isError()) {
           return Error("Error parsing ZooKeeper URL: " + url.error());
         }
 
         log = new Log(
-            (int)masterConfig.zk().quorum(),
+            (int)quorum.get(),
             path::join(
               masterConfig.replicated_log_dir(),
               REPLICATED_LOG_STORE),
@@ -668,6 +705,9 @@ public:
             true);
       } else {
         // Use replicated log without ZooKeeper.
+        LOG(INFO)
+          << "Using replicated log with local storage with a quorum of one.";
+
         log = new Log(
             1,
             path::join(

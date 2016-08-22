@@ -14,6 +14,9 @@ namespace overlay {
 
 
 constexpr char MESOS_BRIDGE_PREFIX[] = "m-";
+constexpr char MESOS_MASTER[] = "MESOS_MASTER";
+constexpr char MESOS_QUORUM[] = "MESOS_QUORUM";
+constexpr char MESOS_ZK[] = "MESOS_ZK";
 constexpr char DOCKER_BRIDGE_PREFIX[] = "d-";
 constexpr char MASTER_MANAGER_PROCESS_ID[] = "overlay-master";
 constexpr char AGENT_MANAGER_PROCESS_ID[] = "overlay-agent";
