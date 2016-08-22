@@ -38,20 +38,20 @@ inline process::Future<std::string> runScriptCommand(
           process::Future<std::string>>& t) -> process::Future<std::string> {
         process::Future<Option<int>> status = std::get<0>(t);
         if (!status.isReady()) {
-        return process::Failure(
-          "Failed to get the exit status of '" + command +"': " +
-          (status.isFailed() ? status.failure() : "discarded"));
+          return process::Failure(
+            "Failed to get the exit status of '" + command +"': " +
+            (status.isFailed() ? status.failure() : "discarded"));
         }
 
         if (status->isNone()) {
-        return process::Failure("Failed to reap the subprocess");
+          return process::Failure("Failed to reap the subprocess");
         }
 
         process::Future<std::string> out = std::get<1>(t);
         if (!out.isReady()) {
-        return process::Failure(
-          "Failed to read stderr from the subprocess: " +
-          (out.isFailed() ? out.failure() : "discarded"));
+          return process::Failure(
+            "Failed to read stderr from the subprocess: " +
+            (out.isFailed() ? out.failure() : "discarded"));
         }
 
         process::Future<std::string> err = std::get<2>(t);

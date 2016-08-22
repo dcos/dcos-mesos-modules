@@ -59,6 +59,9 @@ message AgentConfig {
   optional string master = 1;
   required string cni_dir = 2;
   optional AgentNetworkConfig network_config = 3;
+  // Number of times the agent will attempt to configure virtual
+  // networks by re-registering with the master.
+  optional uint32 max_configuration_attempts = 4 [default = 4];
 }
 
 

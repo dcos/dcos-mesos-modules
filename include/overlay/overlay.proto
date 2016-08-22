@@ -64,6 +64,7 @@ message AgentOverlayInfo {
       STATUS_INVALID = 0;
       STATUS_OK = 1;
       STATUS_FAILED = 2;
+      STATUS_CONFIGURING = 3;
     }
 
     optional Status status = 1 [default = STATUS_INVALID];
