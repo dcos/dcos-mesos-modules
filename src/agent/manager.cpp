@@ -201,9 +201,8 @@ protected:
     LOG(INFO) << "Overlay master " << pid << " has exited";
 
     if (overlayMaster.isSome() && overlayMaster.get() == pid) {
-      LOG(WARNING)
-        << "Overlay master disconnected! "
-        << "Waiting for a new overlay master to be detected";
+      LOG(WARNING) << "Overlay master disconnected! "
+                   << "Waiting for a new overlay master to be detected";
     }
     
     LOG(INFO) << "Moving " << pid << " to `REGISTERING` state.";
@@ -241,12 +240,11 @@ protected:
 
         if ((status == OverlayState::STATUS_OK) ||
             (status == OverlayState::STATUS_CONFIGURING)) {
-          LOG(INFO)
-            << "Skipping configuration for overlay network '"
-            << name << "' as it "
-            << ((status == OverlayState::STATUS_OK) ?
-                "has been " : "is being ")
-            <<"configured.";
+          LOG(INFO) << "Skipping configuration for overlay network '"
+                    << name << "' as it "
+                    << ((status == OverlayState::STATUS_OK) ?
+                       "has been " : "is being ")
+                    << "configured.";
 
           if (status == OverlayState::STATUS_OK) { 
             // We still set a `Future` for this overlay, so as to inform
@@ -270,9 +268,8 @@ protected:
     // should therefore not setup a response for acknowledging this
     // registration.
     if (futures.empty()) {
-      LOG(INFO)
-        << "Looks like we received a duplicate config update from "
-        << from << " dropping this message.";
+      LOG(INFO) << "Looks like we received a duplicate config update from "
+                << from << " dropping this message.";
       return;
     }
 
@@ -287,9 +284,8 @@ protected:
       const Future<list<Future<Nothing>>>& results)
   {
     if (!results.isReady()) {
-      LOG(ERROR)
-        << "Unable to configure any overlay: "
-        << (results.isDiscarded() ? "discarded" : results.failure());
+      LOG(ERROR) << "Unable to configure any overlay: "
+                 << (results.isDiscarded() ? "discarded" : results.failure());
 
       return;
     }
@@ -305,9 +301,8 @@ protected:
     }
 
     if (!messages.empty()){
-      LOG(ERROR)
-        << "Unable to configure some of the overlays on this Agent: "
-        << strings::join("\n", messages);
+      LOG(ERROR) << "Unable to configure some of the overlays on this Agent: "
+                 << strings::join("\n", messages);
     }
 
     if (state != REGISTERING) {
@@ -361,9 +356,9 @@ protected:
       if (!overlay.has_state() ||
           !overlay.state().has_status() ||
           overlay.state().status() != OverlayState::STATUS_OK) {
-        LOG(ERROR)
-          << "Overlay " << overlay.info().name() << " has not been "
-          << "configured hence dropping register acknowledgment from master.";
+        LOG(ERROR) << "Overlay " << overlay.info().name() << " has not been "
+                   << "configured hence dropping register "
+                   << "acknowledgment from master.";
         return; 
       }
     }
