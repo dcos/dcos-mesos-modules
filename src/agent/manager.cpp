@@ -61,7 +61,6 @@ using process::DESCRIPTION;
 using process::Future;
 using process::Failure;
 using process::HELP;
-using process::NO_SETSID;
 using process::Owned;
 using process::Promise;
 using process::Subprocess;
