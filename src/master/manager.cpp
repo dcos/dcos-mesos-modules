@@ -702,7 +702,8 @@ public:
             Seconds(masterConfig.zk().session_timeout()),
             path::join(url.get().path, REPLICATED_LOG_STORE_REPLICAS),
             url.get().authentication,
-            true);
+            true,
+            "overlay/");
       } else {
         // Use replicated log without ZooKeeper.
         LOG(INFO)
@@ -714,7 +715,8 @@ public:
               masterConfig.replicated_log_dir(),
               REPLICATED_LOG_STORE),
             set<UPID>(),
-            true);
+            true,
+            "overlay/");
       }
 
       storage = new LogStorage(log);
