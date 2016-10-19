@@ -87,6 +87,11 @@ AC_ARG_WITH([zookeeper],
                             available with Mesos.])],
             [with_zookeeper=$withval], [])
 
+AC_ARG_WITH([systemd],
+            [AS_HELP_STRING([--with-systemd@<:@=DIR@:>@],
+                            [Systemd development header path])],
+            [with_systemd=$withval], [])
+
 
 MESOS_CXXFLAGS=
 
@@ -198,6 +203,10 @@ else
         -I${mesos_build_dir}/3rdparty/zookeeper-3.4.8/src/c/generated"
     fi
   fi
+fi
+
+if test -n "`echo $with_systemd`"; then
+  MESOS_CPPFLAGS="${MESOS_CPPFLAGS} -I${with_systemd}"
 fi
 
 # Enable flag to check whether root and build dir were provided.
@@ -322,6 +331,11 @@ AC_CHECK_HEADER([picojson.h],
                 [MESOS_CPPFLAGS+=" -DPICOJSON_USE_INT64 -D__STDC_FORMAT_MACROS"],
                 [AC_MSG_ERROR([picojson is not installed.])])
 
+# Check for the systemd journal header.
+AC_CHECK_HEADER([systemd/sd-journal.h],
+                [],
+                [AC_MSG_ERROR([systemd journald headers not found.])])
+
 LDFLAGS=${old_LDFLAGS}
 CPPFLAGS=${old_CPPFLAGS}
 
@@ -345,6 +359,7 @@ if test -d "$mesos_root"; then
 fi
 
 # Create Modules JSON blobs.
+AC_CONFIG_FILES([journald/modules.json], [])
 AC_CONFIG_FILES([overlay/agent_modules.json], [])
 AC_CONFIG_FILES([overlay/master_modules.json], [])
 

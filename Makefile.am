@@ -37,6 +37,33 @@ if SOURCE_PROVIDED
 PROTOCFLAGS += -I$(MESOS_ROOT)/include
 endif
 
+###############################################################################
+# Journald ContainerLogger Module.
+###############################################################################
+
+# Library with the ContainerLogger module.
+pkglib_LTLIBRARIES += libjournaldlogger.la
+libjournaldlogger_la_SOURCES =				\
+  journald/journald.hpp					\
+  journald/lib_journald.hpp				\
+  journald/lib_journald.cpp
+
+libjournaldlogger_la_LDFLAGS =				\
+  -release $(PACKAGE_VERSION)				\
+  -shared $(MESOS_LDFLAGS)
+
+# Companion binary for the ContainerLogger module.
+bin_PROGRAMS += mesos-journald-logger
+mesos_journald_logger_SOURCES =				\
+  journald/journald.hpp					\
+  journald/journald.cpp
+
+mesos_journald_logger_LDFLAGS = $(MESOS_LDFLAGS) -lsystemd
+
+###############################################################################
+# Overlay Modules.
+###############################################################################
+
 OVERLAY_PROTOS =					\
   overlay/overlay.pb.cc					\
   overlay/overlay.pb.h					\
