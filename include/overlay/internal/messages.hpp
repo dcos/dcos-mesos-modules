@@ -1,7 +1,0 @@
-#ifndef __OVERLAY_INTERNAL_MESSAGES_HPP__
-#define __OVERLAY_INTERNAL_MESSAGES_HPP__
-
-// ONLY USEFUL AFTER RUNNING PROTOC.
-#include <overlay/internal/messages.pb.h>
-
-#endif // __OVERLAY_INTERNAL_MESSAGES_HPP__

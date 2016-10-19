@@ -1,5 +1,6 @@
-#ifndef __OVERLAY_INTERNAL_UTIL_HPP__
-#define __OVERLAY_INTERNAL_UTIL_HPP__
+#ifndef __OVERLAY_UTILS_HPP__
+#define __OVERLAY_UTILS_HPP__
+
 #include <vector>
 
 #include <process/collect.hpp>
@@ -133,4 +134,5 @@ inline process::Future<std::string> runCommand(
 } // namespace overlay{
 } // namespace modules {
 } // namespace mesos {
-#endif
+
+#endif // __OVERLAY_UTILS_HPP__

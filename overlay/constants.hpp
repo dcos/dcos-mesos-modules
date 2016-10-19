@@ -1,5 +1,5 @@
-#ifndef __AGENT_MANAGER_HPP__
-#define __AGENT_MANAGER_HPP__
+#ifndef __OVERLAY_CONSTANTS_HPP__
+#define __OVERLAY_CONSTANTS_HPP__
 
 #include <vector>
 
@@ -13,7 +13,8 @@ namespace agent {
 constexpr char IPSET_OVERLAY[] = "overlay";
 
 } // namespace agent {
-} // namespace overlay{
+} // namespace overlay {
 } // namespace modules {
 } // namespace mesos {
-#endif
+
+#endif // __OVERLAY_CONSTANTS_HPP__

@@ -1,4 +1,5 @@
-/* file is © 2016 Mesosphere, Inc. (“Mesosphere”).  Mesosphere licenses
+/**
+ * This file is © 2016 Mesosphere, Inc. (“Mesosphere”).  Mesosphere licenses
  * this file to you solely pursuant to the following terms (and you may not use
  * this file except in compliance with such terms):
  *
@@ -65,18 +66,17 @@
 
 #include <stout/os/read.hpp>
 
-#include "agent/constants.hpp"
-
 #include "hook/manager.hpp"
 
 #include "master/detector/standalone.hpp"
 
 #include "module/manager.hpp"
 
+#include "overlay/constants.hpp"
+#include "overlay/messages.pb.h"
 #include "overlay/overlay.hpp"
 #include "overlay/overlay.pb.h"
-#include "overlay/internal/messages.pb.h"
-#include "overlay/internal/utils.hpp"
+#include "overlay/utils.hpp"
 
 #include "slave/flags.hpp"
 
@@ -135,8 +135,8 @@ constexpr char MASTER_OVERLAY_MODULE_NAME[] =
 constexpr char AGENT_OVERLAY_MODULE_NAME[] =
   "com_mesosphere_mesos_OverlayAgentManager";
 
-class OverlayTest : public MesosTest 
-{ 
+class OverlayTest : public MesosTest
+{
 protected:
   virtual void SetUp()
   {
@@ -226,7 +226,7 @@ protected:
     ASSERT_SOME(cleanup);
 
     Future<string> cleanupResult = runScriptCommand(cleanup.get());
-      
+
     cleanupResult.await();
   }
 
@@ -400,7 +400,7 @@ TEST_F(OverlayTest, checkMasterAgentComm)
       APPLICATION_JSON,
       "Content-Type",
       masterResponse);
-      
+
   // The `state` end-point is backed by the
   // mesos::modules::overlay::State protobuf, so need to parse the
   // JSON and verify that the correct configuration is being
@@ -421,7 +421,7 @@ TEST_F(OverlayTest, checkMasterAgentComm)
 
   // Setup a future to notify the test that Agent overlay module has
   // registered.
-  Future<AgentRegisteredMessage> agentRegisteredMessage = 
+  Future<AgentRegisteredMessage> agentRegisteredMessage =
     FUTURE_PROTOBUF(AgentRegisteredMessage(), _, _);
 
   Try<Owned<Anonymous>> agentModule = startOverlayAgent(agentOverlayConfig);
@@ -454,14 +454,14 @@ TEST_F(OverlayTest, checkMasterAgentComm)
   // There should be only 1 overlay.
   ASSERT_EQ(1, info->overlays_size());
   EXPECT_EQ(OVERLAY_NAME, info->overlays(0).info().name());
-  
+
   Try<net::IPNetwork> agentNetwork = net::IPNetwork::parse(
       info->overlays(0).subnet(), AF_INET);
   ASSERT_SOME(agentNetwork);
   EXPECT_EQ(24, agentNetwork->prefix());
-  
+
   Try<net::IPNetwork> allocatedSubnet = net::IPNetwork::parse(
-      "192.168.0.0/24", AF_INET); 
+      "192.168.0.0/24", AF_INET);
   ASSERT_SOME(allocatedSubnet);
   EXPECT_EQ(allocatedSubnet.get(), agentNetwork.get());
 
@@ -512,7 +512,7 @@ TEST_F(OverlayTest, ROOT_checkMesosNetwork)
 
   // Setup a future to notify the test that Agent overlay module has
   // registered.
-  Future<AgentRegisteredMessage> agentRegisteredMessage = 
+  Future<AgentRegisteredMessage> agentRegisteredMessage =
     FUTURE_PROTOBUF(AgentRegisteredMessage(), _, _);
 
   Try<Owned<Anonymous>> agentModule = startOverlayAgent(agentOverlayConfig);
@@ -593,7 +593,7 @@ TEST_F(OverlayTest, ROOT_checkDockerNetwork)
 
   // Setup a future to notify the test that Agent overlay module has
   // registered.
-  Future<AgentRegisteredMessage> agentRegisteredMessage = 
+  Future<AgentRegisteredMessage> agentRegisteredMessage =
     FUTURE_PROTOBUF(AgentRegisteredMessage(), _, _);
 
   Try<Owned<Anonymous>> agentModule = startOverlayAgent(agentOverlayConfig);
@@ -667,7 +667,7 @@ TEST_F(OverlayTest, ROOT_checkMasterRecovery)
 
   // Setup a future to notify the test that Agent overlay module has
   // registered.
-  Future<AgentRegisteredAcknowledgement> agentRegisteredAcknowledgement = 
+  Future<AgentRegisteredAcknowledgement> agentRegisteredAcknowledgement =
     FUTURE_PROTOBUF(AgentRegisteredAcknowledgement(), _, _);
 
   Try<Owned<Anonymous>> agentModule = startOverlayAgent(agentOverlayConfig);
@@ -700,14 +700,14 @@ TEST_F(OverlayTest, ROOT_checkMasterRecovery)
   // There should be only 1 overlay.
   ASSERT_EQ(1, info->overlays_size());
   EXPECT_EQ(OVERLAY_NAME, info->overlays(0).info().name());
-  
+
   Try<net::IPNetwork> agentNetwork = net::IPNetwork::parse(
       info->overlays(0).subnet(), AF_INET);
   ASSERT_SOME(agentNetwork);
   EXPECT_EQ(24, agentNetwork->prefix());
-  
+
   Try<net::IPNetwork> allocatedSubnet = net::IPNetwork::parse(
-      "192.168.0.0/24", AF_INET); 
+      "192.168.0.0/24", AF_INET);
   ASSERT_SOME(allocatedSubnet);
   EXPECT_EQ(allocatedSubnet.get(), agentNetwork.get());
 
@@ -734,7 +734,7 @@ TEST_F(OverlayTest, ROOT_checkMasterRecovery)
       masterAgentInfo.SerializeAsString())
       << "Agent response: " << agentResponse->body
       << " Master response: " << masterResponse->body;
-  
+
   // Kill the master.
   masterModule->reset();
 
@@ -801,7 +801,7 @@ TEST_F(OverlayTest, ROOT_checkAgentRecovery)
 
   // Setup a future to notify the test that Agent overlay module has
   // registered.
-  Future<AgentRegisteredAcknowledgement> agentRegisteredAcknowledgement = 
+  Future<AgentRegisteredAcknowledgement> agentRegisteredAcknowledgement =
     FUTURE_PROTOBUF(AgentRegisteredAcknowledgement(), _, _);
 
   Try<Owned<Anonymous>> agentModule = startOverlayAgent(agentOverlayConfig);
@@ -834,19 +834,19 @@ TEST_F(OverlayTest, ROOT_checkAgentRecovery)
   // There should be only 1 overlay.
   ASSERT_EQ(1, info->overlays_size());
   EXPECT_EQ(OVERLAY_NAME, info->overlays(0).info().name());
-  
+
   Try<net::IPNetwork> agentNetwork = net::IPNetwork::parse(
       info->overlays(0).subnet(), AF_INET);
   ASSERT_SOME(agentNetwork);
   EXPECT_EQ(24, agentNetwork->prefix());
-  
+
   Try<net::IPNetwork> allocatedSubnet = net::IPNetwork::parse(
-      "192.168.0.0/24", AF_INET); 
+      "192.168.0.0/24", AF_INET);
   ASSERT_SOME(allocatedSubnet);
   EXPECT_EQ(allocatedSubnet.get(), agentNetwork.get());
 
   // Re-start the agent and wait for the agent to re-register.
-  Future<AgentRegisteredAcknowledgement> agentReRegisteredAcknowledgement = 
+  Future<AgentRegisteredAcknowledgement> agentReRegisteredAcknowledgement =
     FUTURE_PROTOBUF(AgentRegisteredAcknowledgement(), _, _);
   // Kill the agent.
   agentModule->reset();

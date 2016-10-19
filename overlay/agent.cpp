@@ -35,11 +35,10 @@
 #include <mesos/module.hpp>
 #include <mesos/module/anonymous.hpp>
 
-#include <agent/constants.hpp>
-
-#include <overlay/overlay.hpp>
-#include <overlay/internal/utils.hpp>
-#include <overlay/internal/messages.hpp>
+#include "constants.hpp"
+#include "messages.hpp"
+#include "overlay.hpp"
+#include "utils.hpp"
 
 
 namespace http = process::http;
@@ -106,6 +105,7 @@ static string OVERLAY_HELP()
           "Shows the Agent IP, Agent subnet, VTEP IP, VTEP MAC and bridges."));
 }
 
+
 class ManagerProcess : public ProtobufProcess<ManagerProcess>
 {
 public:
@@ -113,12 +113,12 @@ public:
       const string& cniDir,
       const AgentNetworkConfig& networkConfig,
       const uint32_t maxConfigAttempts,
-      Owned<MasterDetector>& detector) 
+      Owned<MasterDetector>& detector)
   {
     // It is imperative that MASQUERADE rules are not enforced on
     // overlay traffic. To ensure that overlay traffic is not NATed,
     // the Agent module disables masquerade on Docker and Mesos
-    // network, and installs MASQUERADE rules during initialization. 
+    // network, and installs MASQUERADE rules during initialization.
     // The MASQUERADE rule works as follows:
     // * The Agent creates an 'ipset' which will hold all the overlay
     // subnets that are configured on the agent.
@@ -203,7 +203,7 @@ protected:
       LOG(WARNING) << "Overlay master disconnected! "
                    << "Waiting for a new overlay master to be detected";
     }
-    
+
     LOG(INFO) << "Moving " << pid << " to `REGISTERING` state.";
 
     state = REGISTERING;
@@ -245,14 +245,14 @@ protected:
                        "has been " : "is being ")
                     << "configured.";
 
-          if (status == OverlayState::STATUS_OK) { 
+          if (status == OverlayState::STATUS_OK) {
             // We still set a `Future` for this overlay, so as to inform
             // the Master about the state of this overlay network.
             futures.push_back(Nothing());
           }
 
           continue;
-        } 
+        }
       }
 
       CHECK(!overlay.has_state());
@@ -317,7 +317,7 @@ protected:
     foreachvalue (const AgentOverlayInfo& overlay, overlays) {
       // Every overlay network should have a status, and it should be
       // either in `STATUS_OK` or `STATUS_FAILED`.
-      CHECK(overlay.has_state()); 
+      CHECK(overlay.has_state());
       CHECK(overlay.state().has_status());
       CHECK(overlay.state().status() != OverlayState::STATUS_CONFIGURING);
       CHECK(overlay.state().status() != OverlayState::STATUS_INVALID);
@@ -358,7 +358,7 @@ protected:
         LOG(ERROR) << "Overlay " << overlay.info().name() << " has not been "
                    << "configured hence dropping register "
                    << "acknowledgment from master.";
-        return; 
+        return;
       }
     }
 
@@ -526,7 +526,7 @@ protected:
     // The below command is a script consisting of three commands:
     // <set ipset> && <check iptables rule exists> ||
     // <insert iptables rule>
-    if (!overlays[name].has_mesos_bridge() && 
+    if (!overlays[name].has_mesos_bridge() &&
         !overlays[name].has_docker_bridge()) {
       return overlaySuccess("");
     } else {
@@ -537,7 +537,7 @@ protected:
           " iptables -t nat -C POSTROUTING -s %s -m set"
           " --match-set %s dst -j MASQUERADE ||"
           " iptables -t nat -A POSTROUTING -s %s -m"
-          " set --match-set %s dst -j MASQUERADE", 
+          " set --match-set %s dst -j MASQUERADE",
           IPSET_OVERLAY,
           overlaySubnet,
           overlaySubnet,
@@ -812,7 +812,7 @@ public:
       const AgentConfig& agentConfig,
       Owned<MasterDetector> detector)
   {
-    Try<Owned<ManagerProcess>> process = 
+    Try<Owned<ManagerProcess>> process =
       ManagerProcess::createManagerProcess(
           agentConfig.cni_dir(),
           agentConfig.has_network_config() ?
@@ -878,7 +878,7 @@ Anonymous* createOverlayAgentManager(const Parameters& parameters)
         return nullptr;
       }
 
-      Try<string> config = os::read(parameter.value()); 
+      Try<string> config = os::read(parameter.value());
       if (config.isError()) {
         LOG(ERROR) << "Unable to read the Agent "
                    << "configuration: " << config.error();
@@ -965,7 +965,7 @@ Anonymous* createOverlayAgentManager(const Parameters& parameters)
   Try<Manager*> manager = Manager::createManager(
       agentConfig.get(),
       Owned<MasterDetector>(detector.get()));
-  
+
   if (manager.isError()) {
     LOG(ERROR)
       << "Unable to create Agent manager module: "

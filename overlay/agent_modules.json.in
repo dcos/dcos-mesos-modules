@@ -1,13 +1,11 @@
 {
-  "libraries":
-  [
+  "libraries": [
     {
       "file": "@abs_top_builddir@/.libs/libmesos_network_overlay.@LIB_EXT@",
-      "modules":
-      [
+      "modules": [
         {
           "name": "com_mesosphere_mesos_OverlayAgentManager",
-            "parameters" : [
+          "parameters" : [
             {
               "key" : "agent_config",
               "value" : "/var/lib/mesos/overlay-agent-config.json"

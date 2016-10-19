@@ -31,8 +31,8 @@
 #include <mesos/state/storage.hpp>
 #include <mesos/zookeeper/detector.hpp>
 
-#include <overlay/overlay.hpp>
-#include <overlay/internal/messages.hpp>
+#include "messages.hpp"
+#include "overlay.hpp"
 
 namespace http = process::http;
 
@@ -104,7 +104,7 @@ struct Vtep
     //
     // NOTE: The below shift operation results in `32 - network.prefix()
     // remaining bits in the LSB of `endIP`.
-    uint32_t endIP = 0xffffffff >> network.prefix(); 
+    uint32_t endIP = 0xffffffff >> network.prefix();
 
     freeIP += (Bound<uint32_t>::closed(1), Bound<uint32_t>::closed(endIP - 1));
   }
@@ -145,7 +145,7 @@ struct Vtep
 
   // We generate the VTEP MAC from the IP by taking the least 24 bits
   // of the IP and using the 24 bits as the NIC of the MAC.
-  // 
+  //
   // NOTE: There is a caveat to using this technique to generating the
   // MAC, namely if the CIDR prefix of the IP is less than 8 then we
   // the MAC being generated is not guaranteed to be unique.
@@ -165,7 +165,7 @@ struct Vtep
     mac[0] = oui[0];
     mac[1] = oui[1];
     mac[2] = oui[2];
-    
+
     //Set the NIC.
     mac[3] = nic[1];
     mac[4] = nic[2];
@@ -210,7 +210,7 @@ struct Overlay
        Bound<uint32_t>::closed(endSubnet));
   }
 
-  OverlayInfo getOverlayInfo() const 
+  OverlayInfo getOverlayInfo() const
   {
     OverlayInfo overlay;
 
@@ -277,7 +277,7 @@ struct Overlay
     }
 
     freeNetworks -= _subnet;
-    
+
     return Nothing();
   }
 
@@ -322,7 +322,7 @@ public:
     }
 
     Agent agent(_ip.get());
-    
+
     for (int i = 0; i < agentInfo.overlays_size(); i++) {
       agent.addOverlay(agentInfo.overlays(i));
     }
@@ -404,7 +404,7 @@ private:
 
 
 // Helper function to convert std::string to `net::MAC`.
-static Try<net::MAC> createMAC(const string& _mac, const bool& oui) 
+static Try<net::MAC> createMAC(const string& _mac, const bool& oui)
 {
   vector<string> tokens = strings::split(_mac, ":");
   if (tokens.size() != 6) {
@@ -422,13 +422,14 @@ static Try<net::MAC> createMAC(const string& _mac, const bool& oui)
         return Error(
             "Invalid OUI MAC address: " + _mac +
             ". Least significant three bytes should not be"
-            " set for the OUI"); 
+            " set for the OUI");
       }
     }
   }
 
   return net::MAC(mac);
 }
+
 
 // Defines an operation that can be performed on a `State` object for
 // a given `AgentInfo`. Every operation returns a `Future<bool>` that
@@ -471,7 +472,7 @@ private:
 // Add an `AgentInfo` to a `State` object.
 class AddAgent : public Operation {
 public:
-  explicit AddAgent(const AgentInfo& _agentInfo) 
+  explicit AddAgent(const AgentInfo& _agentInfo)
   {
     agentInfo.CopyFrom(_agentInfo);
   }
@@ -482,7 +483,7 @@ public:
   }
 
 protected:
-  Try<bool> perform(State* networkState, hashmap<net::IP, Agent>* agents) 
+  Try<bool> perform(State* networkState, hashmap<net::IP, Agent>* agents)
   {
     // Make sure the Agent we are going to add is already present in `agents`.
     Try<net::IP> ip = net::IP::parse(agentInfo.ip(), AF_INET);
@@ -635,7 +636,7 @@ public:
           " least one overlay");
     }
 
-    Storage* storage = nullptr; 
+    Storage* storage = nullptr;
     Log* log = nullptr;
 
     // Check if we need to create the replicated log.
@@ -672,7 +673,7 @@ public:
           }
 
           quorum = result.get();
-        } 
+        }
       }
 
       if (zkURL.isSome() && quorum.isNone()) {
@@ -903,7 +904,7 @@ protected:
         agent->addOverlay(_overlay);
       }
 
-      // Update the `networkState in the replicated log before 
+      // Update the `networkState in the replicated log before
       // sending the overlay configuration to the Agent.
       update(Owned<Operation>(
             new AddAgent(agents.at(pid.address.ip).getAgentInfo())))
@@ -924,7 +925,7 @@ protected:
     if (!result.isReady()) {
       LOG(WARNING) << "Unable to process registration request from "
                    << pid << " due to: "
-                   << (result.isDiscarded() ? "discarded" : result.failure()); 
+                   << (result.isDiscarded() ? "discarded" : result.failure());
       return;
     }
 
@@ -1067,7 +1068,7 @@ protected:
         Try<Nothing> result = overlays.at(overlay.info().name())->reserve(network.get());
         if (result.isError()) {
           LOG(ERROR) << "Unable to reserve the subnet " << network.get()
-                     << ": " << result.error(); 
+                     << ": " << result.error();
           abort();
         }
 
@@ -1154,12 +1155,12 @@ private:
       storage(_storage),
       log(_log),
       vtep(vtepSubnet, vtepMACOUI)
-  { 
+  {
     networkState.mutable_network()->CopyFrom(_networkConfig);
   };
 
   Try<Nothing> allocateBridges(
-      AgentOverlayInfo* _overlay, 
+      AgentOverlayInfo* _overlay,
       const AgentNetworkConfig& networkConfig)
   {
     if (!networkConfig.mesos_bridge() &&
@@ -1233,7 +1234,7 @@ private:
 
   // Updates the `networkState` with the operation provided. If we are
   // using the replicated log we will `queue` the operation and invoke
-  // `store, else we will apply the operation immediately. 
+  // `store, else we will apply the operation immediately.
   // In case the replicated log is being used, the stored operation is
   // applied on a copy of `networkState` and the mutated `State` is
   // written into the overlay replicated log. On a successful write
@@ -1275,7 +1276,7 @@ private:
       _networkState.CopyFrom(networkState);
 
       foreach (Owned<Operation> operation, operations) {
-        (*operation)(&_networkState, &agents); 
+        (*operation)(&_networkState, &agents);
       }
 
 
@@ -1294,7 +1295,7 @@ private:
   {
     storing = false;
 
-    if (!variable.isReady()) { 
+    if (!variable.isReady()) {
       LOG(WARNING) << "Not updating `State` due to failure to write to log."
                    << (variable.isDiscarded() ? "discarded" : variable.failure());
       demote();
@@ -1406,9 +1407,9 @@ private:
   Owned<ManagerProcess> process;
 };
 
-} // namespace master 
-} // namespace overlay 
-} // namespace modules 
+} // namespace master
+} // namespace overlay
+} // namespace modules
 } // namespace mesos
 
 
@@ -1492,4 +1493,3 @@ Module<Anonymous> com_mesosphere_mesos_OverlayMasterManager(
     "Master Overlay Helper Module",
     NULL,
     createOverlayMasterManager);
-

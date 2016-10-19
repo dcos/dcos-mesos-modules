@@ -1,17 +1,17 @@
 #ifndef __OVERLAY_OVERLAY_HPP__
 #define __OVERLAY_OVERLAY_HPP__
 
-// ONLY USEFUL AFTER RUNNING PROTOC.
 #include <string>
 
 #include <stout/hashset.hpp>
 
+// ONLY USEFUL AFTER RUNNING PROTOC.
 #include <overlay/overlay.pb.h>
+
 
 namespace mesos {
 namespace modules {
 namespace overlay {
-
 
 constexpr char MESOS_BRIDGE_PREFIX[] = "m-";
 constexpr char MESOS_MASTER[] = "MESOS_MASTER";
@@ -34,7 +34,7 @@ const hashset<std::string> RESERVED_NETWORKS = {
     LINUX_NET_DEV_NAME_LENGTH - std::string(MESOS_BRIDGE_PREFIX).size() :   \
     LINUX_NET_DEV_NAME_LENGTH - std::string(DOCKER_BRIDGE_PREFIX).size())
 
-} // namespace overlay{
+} // namespace overlay {
 } // namespace modules {
 } // namespace mesos {
 

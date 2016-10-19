@@ -2,11 +2,11 @@ package mesos.modules.overlay;
 
 
 message BridgeInfo {
-	// The device name for the bridge.
+  // The device name for the bridge.
   required string name = 1;
 
-	// IP in CIDR format allocated to this bridge. The bridge will act
-	// as a gateway for all containers associated with it.
+  // IP in CIDR format allocated to this bridge. The bridge will act
+  // as a gateway for all containers associated with it.
   required string ip = 2;
 }
 

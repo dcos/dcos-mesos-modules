@@ -1,6 +1,6 @@
 package mesos.modules.overlay.internal;
 
-import "include/overlay/overlay.proto";
+import "overlay/overlay.proto";
 
 
 // Message used by the Agent to register with the overlay-master.
@@ -43,7 +43,7 @@ message AgentRegisteredAcknowledgement {
 // directly talk to containers on the overlay.
 message AgentNetworkConfig {
   optional bool allocate_subnet = 1 [default = true];
-  optional bool mesos_bridge = 2 [default = true];  
+  optional bool mesos_bridge = 2 [default = true];
   optional bool docker_bridge = 3 [default = true];
   // The overhead of the VxLAN header is 54 bytes:
   // Ethernet(18) + IP(20) + udp (8) + VxLAN(8) = 54
