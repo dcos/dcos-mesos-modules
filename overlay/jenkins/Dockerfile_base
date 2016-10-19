@@ -1,4 +1,4 @@
-#Base image for mesos-overlay-modules unit-test.
+# Base image for mesos-overlay-modules unit-test.
 FROM ubuntu:14.04
 
 RUN apt-get update && \
