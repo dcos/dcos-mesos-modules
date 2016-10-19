@@ -18,6 +18,8 @@ For more details, please see
 
 ## Prerequisites
 
+### Mesos
+
 To build Mesos modules, you first need to build Mesos.
 On a fresh clone of the Mesos repository:
 ```
@@ -27,8 +29,9 @@ mkdir build
 cd build
 ../configure --enable-libevent --enable-ssl --enable-install-module-dependencies
 make
-make install
 ```
+
+### Google-protobuf
 
 Building these modules requires an installation of `google-protobuf`.
 One way is to do the following:

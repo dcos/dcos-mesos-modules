@@ -48,10 +48,9 @@ overlay/%.pb.cc overlay/%.pb.h: $(top_srcdir)/overlay/%.proto
 	$(PROTOC) $(PROTOCFLAGS) --cpp_out=. $^
 
 BUILT_SOURCES += $(OVERLAY_PROTOS)
-
 CLEANFILES += $(OVERLAY_PROTOS)
 
-# Library master/agent anonymous modules.
+# Library with both master and agent anonymous modules.
 pkglib_LTLIBRARIES += libmesos_network_overlay.la
 libmesos_network_overlay_la_SOURCES =			\
   overlay/agent.cpp					\
@@ -62,10 +61,11 @@ libmesos_network_overlay_la_LDFLAGS =			\
   -release $(PACKAGE_VERSION)				\
   -shared $(MESOS_LDFLAGS)
 
-if SOURCE_PROVIDED
-# Test (make check) binary for the secrets hook and isolator.
-check_PROGRAMS = test-overlay
+###############################################################################
+# Unit tests.
+###############################################################################
 
+if SOURCE_PROVIDED
 MESOS_TEST_SOURCES =					\
   tests/main.cpp					\
   tests/cluster.cpp					\
@@ -94,6 +94,9 @@ MESOS_TESTS_CPPFLAGS =					\
   -DTESTLIBEXECDIR=\"nowhere\"				\
   -DSBINDIR=\"nowhere\"					\
   -DPKGDATADIR=\"nowhere\"
+
+# Test (make check) binary for the overlay modules.
+check_PROGRAMS = test-overlay
 
 test_overlay_SOURCES =					\
   tests/overlay_tests.cpp				\

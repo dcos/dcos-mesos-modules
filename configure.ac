@@ -51,47 +51,41 @@ AC_ARG_ENABLE([optimize],
 ###############################################################################
 
 AC_ARG_WITH([mesos],
-            [AS_HELP_STRING([--with-mesos=dir],
+            [AS_HELP_STRING([--with-mesos=@<:@=DIR@:>@],
                             [provide root dir for Mesos installation])],
-            [mesos=$withval],
-            [mesos=no])
+            [mesos=$withval], [])
 
 AC_ARG_WITH([mesos_root],
-            [AS_HELP_STRING([--with-mesos-root=dir],
+            [AS_HELP_STRING([--with-mesos-root=@<:@=DIR@:>@],
                             [provide root dir for Mesos sources])],
-            [mesos_root=$withval],
-            [mesos_root=no])
+            [mesos_root=$withval], [])
 
 AC_ARG_WITH([mesos_build_dir],
-            [AS_HELP_STRING([--with-mesos-build-dir=dir],
+            [AS_HELP_STRING([--with-mesos-build-dir=@<:@=DIR@:>@],
                             [provide Mesos build dir])],
-            [mesos_build_dir=$withval],
-            [mesos_build_dir=no])
+            [mesos_build_dir=$withval], [])
 
 AC_ARG_WITH([protobuf],
-            [AS_HELP_STRING([--with-protobuf=dir],
+            [AS_HELP_STRING([--with-protobuf=@<:@=DIR@:>@],
                             [provide install location of protobuf])],
-            [protobuf=$withval],
-            [protobuf=/usr])
+            [with_protobuf=$withval], [])
 
 AC_ARG_WITH([glog],
-            [AS_HELP_STRING([--with-glog=dir],
+            [AS_HELP_STRING([--with-glog=@<:@=DIR@:>@],
                             [provide install location of glog])],
-            [glog=$withval],
-            [glog=/usr])
+            [with_glog=$withval], [])
 
 AC_ARG_WITH([openssl],
-            [AS_HELP_STRING([--with-openssl=dir],
+            [AS_HELP_STRING([--with-openssl=@<:@=DIR@:>@],
                             [provide install location of openssl])],
-            [openssl=$withval],
-            [openssl=/usr])
+            [with_openssl=$withval], [])
 
 AC_ARG_WITH([zookeeper],
             [AS_HELP_STRING([--with-zookeeper@<:@=DIR@:>@],
                             [Zookeeper installation path that is
                             different from the bundled installation
                             available with Mesos.])],
-            [], [])
+            [with_zookeeper=$withval], [])
 
 
 MESOS_CXXFLAGS=
@@ -147,10 +141,14 @@ else
   fi
 
   if test -d "$mesos_build_dir"; then
+    # Add built sources (i.e. protoc'd protobufs).
     MESOS_CPPFLAGS="${MESOS_CPPFLAGS} -I${mesos_build_dir}/include"
 
     # Add src to include path.
     MESOS_CPPFLAGS="${MESOS_CPPFLAGS} -I${mesos_build_dir}/src"
+
+    # Add the built libmesos.
+    MESOS_LDFLAGS="${MESOS_LDFLAGS} -L${mesos_build_dir}/src -lmesos"
   else
     AC_MSG_ERROR([Invalid mesos build path; use --with-mesos-build-dir=<DIR>
                   <DIR> is the Mesos build directory.])
@@ -301,10 +299,7 @@ LDFLAGS="${LDFLAGS} ${MESOS_LDFLAGS}"
 
 # Check if headers and library were located.
 AC_CHECK_HEADER([glog/logging.h],
-                [AC_LINK_IFELSE(
-                    [AC_LANG_PROGRAM([#include <glog/logging.h>], [])],
-                    [],
-                    [AC_MSG_ERROR([glog is not installed.])])],
+                [],
                 [AC_MSG_ERROR([cannot find glog header.])])
 
 AC_CHECK_HEADERS([zookeeper.h],
@@ -312,26 +307,12 @@ AC_CHECK_HEADERS([zookeeper.h],
                  [AC_MSG_ERROR([zookeeper.h not found.])])
 
 AC_CHECK_HEADER([google/protobuf/message.h],
-                [AC_LINK_IFELSE(
-                    [AC_LANG_PROGRAM([#include <google/protobuf/message.h>], [])],
-                    [],
-                    [AC_MSG_ERROR([google protobuf is not installed.])])],
+                [],
                 [AC_MSG_ERROR([google protobuf is not installed.])])
 
 AC_CHECK_HEADERS([openssl/ssl.h],
-                 [AC_CHECK_LIB([ssl],
-                               [SSL_CTX_new],
-                               [],
-                               [AC_MSG_ERROR([cannot find libssl
--------------------------------------------------------------------
-libssl is required for an SSL-enabled build.
--------------------------------------------------------------------
-                                ])])],
-                  [AC_MSG_ERROR([cannot find libssl headers
--------------------------------------------------------------------
-libssl is required for an SSL-enabled build.
--------------------------------------------------------------------
-])])
+                 [],
+                 [AC_MSG_ERROR([cannot find libssl headers])])
 
 AC_CHECK_HEADERS([boost/lexical_cast.hpp boost/functional/hash.hpp],
                 [],
