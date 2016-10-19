@@ -93,6 +93,8 @@ public:
       labels = executorInfo.labels();
     }
 
+    // NOTE: This field is required by the master/agent, but the protobuf
+    // is optional for backwards compatibility.
     CHECK(executorInfo.has_framework_id());
     label.set_key("FRAMEWORK_ID");
     label.set_value(executorInfo.framework_id().value());
@@ -102,10 +104,40 @@ public:
     label.set_value(executorInfo.executor_id().value());
     labels.add_labels()->CopyFrom(label);
 
+    // NOTE: AgentID is generally unknown/irrelevant to the containerizer.
+    // However, because we expect some degree of log aggregation,
+    // we derive the AgentID based on the `sandboxDirectory`.
+    label.set_key("AGENT_ID");
+
+    // We will fail to determine the AgentID in two cases:
+    //   * In unit tests, where the containerizer is mocked. The sandbox
+    //     directory does not always follow convention during tests.
+    //   * Or, if the agent's sandbox directory structure changes.
+    label.set_value("UNKNOWN");
+
+    vector<string> sandboxTokens = strings::tokenize(sandboxDirectory, "/");
+    for (int i = sandboxTokens.size() - 2; i >= 0; i--) {
+      if (sandboxTokens[i] == "slaves") {
+        label.set_value(sandboxTokens[i + 1]);
+        break;
+      }
+    }
+    labels.add_labels()->CopyFrom(label);
+
     // NOTE: ContainerID isn't passed into the container logger as part of
     // ExecutorInfo.  It can be retrieved from the `sandboxDirectory`.
     label.set_key("CONTAINER_ID");
     label.set_value(Path(sandboxDirectory).basename());
+    labels.add_labels()->CopyFrom(label);
+
+    // If the executor is named, use that name to present the logs.
+    // Otherwise, default to the ExecutorID.
+    // This is the value that shows up in the typical journald view.
+    label.set_key("SYSLOG_IDENTIFIER");
+    label.set_value(
+        executorInfo.has_name() ?
+        executorInfo.name() :
+        executorInfo.executor_id().value());
     labels.add_labels()->CopyFrom(label);
 
     mesos::journald::logger::Flags loggerFlags;

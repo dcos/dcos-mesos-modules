@@ -4,7 +4,7 @@ The `JournaldContainerLogger` module takes all executor and tasks logs
 and pipes them to the local systemd journald.  Each log line is tagged
 some information to make filtering and querying feasible:
 
-* `FrameworkID`, `ExecutorID`, and `ContainerID`.
+* `FrameworkID`, `AgentID`, `ExecutorID`, and `ContainerID`.
 * Any labels found inside the `ExecutorInfo`.
 * `STDOUT` or `STDERR`.
 
