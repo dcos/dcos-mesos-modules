@@ -4,9 +4,9 @@ The `JournaldContainerLogger` module takes all executor and tasks logs
 and pipes them to the local systemd journald.  Each log line is tagged
 some information to make filtering and querying feasible:
 
-* `FrameworkID`, `AgentID`, `ExecutorID`, and `ContainerID`.
+* `FRAMEWORK_ID`, `AGENT_ID`, `EXECUTOR_ID`, and `CONTAINER_ID`.
 * Any labels found inside the `ExecutorInfo`.
-* `STDOUT` or `STDERR`.
+* `STREAM` == `STDOUT` or `STDERR`.
 
 ## Using the ContainerLogger module
 
@@ -17,6 +17,9 @@ mesos-agent.sh --master=<some-master>                      \
   --container_logger="com_mesosphere_mesos_JournaldLogger" \
   --work_dir=/some/other/work/dir
 ```
+
+> **NOTE**: If you do not install the mesos source (i.e. `make install`)
+> You may need to run `sudo ldconfig /path/to/mesos/build/src/.libs`.
 
 ## Run things that output
 

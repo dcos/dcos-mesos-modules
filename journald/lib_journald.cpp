@@ -130,9 +130,6 @@ public:
         executorInfo.executor_id().value());
     labels.add_labels()->CopyFrom(label);
 
-    mesos::journald::logger::Flags loggerFlags;
-    loggerFlags.labels = stringify(JSON::protobuf(labels));
-
     // NOTE: We manually construct a pipe here instead of using
     // `Subprocess::PIPE` so that the ownership of the FDs is properly
     // represented.  The `Subprocess` spawned below owns the read-end
@@ -158,6 +155,13 @@ public:
       return Failure("Failed to cloexec: " + cloexec.error());
     }
 
+    label.set_key("STREAM");
+    label.set_value("STDOUT");
+    labels.add_labels()->CopyFrom(label);
+
+    mesos::journald::logger::Flags outFlags;
+    outFlags.labels = stringify(JSON::protobuf(labels));
+
     // Spawn a process to handle stdout.
     Try<Subprocess> outProcess = subprocess(
         path::join(flags.companion_dir, mesos::journald::logger::NAME),
@@ -165,7 +169,7 @@ public:
         Subprocess::FD(outfds.read, Subprocess::IO::OWNED),
         Subprocess::PATH("/dev/null"),
         Subprocess::FD(STDERR_FILENO),
-        &loggerFlags,
+        &outFlags,
         environment,
         None(),
         {Subprocess::ParentHook(&systemd::mesos::extendLifetime)},
@@ -199,6 +203,14 @@ public:
       return Failure("Failed to cloexec: " + cloexec.error());
     }
 
+    labels.mutable_labels()->DeleteSubrange(labels.labels().size() - 1, 1);
+    label.set_key("STREAM");
+    label.set_value("STDERR");
+    labels.add_labels()->CopyFrom(label);
+
+    mesos::journald::logger::Flags errFlags;
+    errFlags.labels = stringify(JSON::protobuf(labels));
+
     // Spawn a process to handle stderr.
     Try<Subprocess> errProcess = subprocess(
         path::join(flags.companion_dir, mesos::journald::logger::NAME),
@@ -206,7 +218,7 @@ public:
         Subprocess::FD(errfds.read, Subprocess::IO::OWNED),
         Subprocess::PATH("/dev/null"),
         Subprocess::FD(STDERR_FILENO),
-        &loggerFlags,
+        &errFlags,
         environment,
         None(),
         {Subprocess::ParentHook(&systemd::mesos::extendLifetime)},
