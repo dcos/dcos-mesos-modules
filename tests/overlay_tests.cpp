@@ -66,6 +66,8 @@
 
 #include <stout/os/read.hpp>
 
+#include "common/shell.hpp"
+
 #include "hook/manager.hpp"
 
 #include "master/detector/standalone.hpp"
@@ -76,7 +78,7 @@
 #include "overlay/messages.pb.h"
 #include "overlay/overlay.hpp"
 #include "overlay/overlay.pb.h"
-#include "overlay/utils.hpp"
+
 
 #include "slave/flags.hpp"
 
@@ -105,6 +107,9 @@ using mesos::internal::slave::Slave;
 
 using mesos::master::detector::MasterDetector;
 
+using mesos::modules::common::runCommand;
+using mesos::modules::common::runScriptCommand;
+
 using mesos::modules::Anonymous;
 using mesos::modules::ModuleManager;
 using mesos::modules::overlay::AgentInfo;
@@ -118,8 +123,6 @@ using mesos::modules::overlay::internal::MasterConfig;
 using mesos::modules::overlay::OverlayInfo;
 using mesos::modules::overlay::State;
 using mesos::modules::overlay::agent::IPSET_OVERLAY;
-using mesos::modules::overlay::utils::runCommand;
-using mesos::modules::overlay::utils::runScriptCommand;
 
 namespace mesos {
 namespace overlay {

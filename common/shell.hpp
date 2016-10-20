@@ -10,8 +10,7 @@
 
 namespace mesos {
 namespace modules {
-namespace overlay {
-namespace utils {
+namespace common {
 
 // Run `command` as a shell script. This is useful when wanting to
 // chain shell commands.
@@ -130,8 +129,7 @@ inline process::Future<std::string> runCommand(
     });
 };
 
-} // namespace utils {
-} // namespace overlay{
+} // namespace common {
 } // namespace modules {
 } // namespace mesos {
 

@@ -38,7 +38,8 @@
 #include "constants.hpp"
 #include "messages.hpp"
 #include "overlay.hpp"
-#include "utils.hpp"
+
+#include "common/shell.hpp"
 
 
 namespace http = process::http;
@@ -71,6 +72,8 @@ using mesos::Parameters;
 
 using mesos::master::detector::MasterDetector;
 
+using mesos::modules::common::runScriptCommand;
+
 using mesos::modules::Anonymous;
 using mesos::modules::Module;
 using mesos::modules::overlay::AgentOverlayInfo;
@@ -84,8 +87,6 @@ using mesos::modules::overlay::internal::AgentRegisteredAcknowledgement;
 using mesos::modules::overlay::internal::AgentRegisteredMessage;
 using mesos::modules::overlay::internal::RegisterAgentMessage;
 using mesos::modules::overlay::internal::UpdateAgentOverlaysMessage;
-using mesos::modules::overlay::utils::runCommand;
-using mesos::modules::overlay::utils::runScriptCommand;
 
 namespace mesos {
 namespace modules {
