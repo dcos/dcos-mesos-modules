@@ -58,7 +58,9 @@ mesos_journald_logger_SOURCES =				\
   journald/journald.hpp					\
   journald/journald.cpp
 
-mesos_journald_logger_LDFLAGS = $(MESOS_LDFLAGS) -lsystemd
+mesos_journald_logger_LDFLAGS =				\
+  $(MESOS_LDFLAGS)					\
+  -lsystemd
 
 ###############################################################################
 # Overlay Modules.
@@ -93,7 +95,10 @@ libmesos_network_overlay_la_LDFLAGS =			\
 ###############################################################################
 
 if SOURCE_PROVIDED
-MESOS_TEST_SOURCES =					\
+check_PROGRAMS=
+
+pkglib_LTLIBRARIES += libmesos_tests.la
+libmesos_tests_la_SOURCES =				\
   tests/main.cpp					\
   tests/cluster.cpp					\
   tests/containerizer.cpp				\
@@ -108,10 +113,12 @@ MESOS_TEST_SOURCES =					\
   tests/containerizer/memory_test_helper.cpp
 
 # Additional flags needed to build the Mesos test helpers.
-MESOS_TESTS_CPPFLAGS =					\
+libmesos_tests_la_CPPFLAGS =				\
   -I$(MESOS_BUILD_DIR)/include/mesos			\
   -I$(ZOOKEEPER)/include				\
   -I$(ZOOKEEPER)/generated				\
+  -isystem $(GMOCK)/include				\
+  -I$(GTEST)/include					\
   -DMODULES_BUILD_DIR=\"$(abs_top_builddir)\"		\
   -DSOURCE_DIR=\"$(MESOS_ROOT)\"			\
   -DBUILD_DIR=\"$(MESOS_BUILD_DIR)\"			\
@@ -120,27 +127,46 @@ MESOS_TESTS_CPPFLAGS =					\
   -DPKGLIBEXECDIR=\"nowhere\"				\
   -DTESTLIBEXECDIR=\"nowhere\"				\
   -DSBINDIR=\"nowhere\"					\
-  -DPKGDATADIR=\"nowhere\"
+  -DPKGDATADIR=\"nowhere\"				\
+  $(AM_CPPFLAGS)
+
+libmesos_tests_la_LDFLAGS =				\
+  -release $(PACKAGE_VERSION)				\
+  -shared $(MESOS_LDFLAGS)
+
+# Test (make check) binary for the journald module.
+check_PROGRAMS += test-journald
+
+test_journald_SOURCES =					\
+  tests/journald_tests.cpp
+
+test_journald_CPPFLAGS =				\
+  $(libmesos_tests_la_CPPFLAGS)
+
+test_journald_LDADD =					\
+  $(MESOS_LDFLAGS)					\
+  $(MESOS_BUILD_DIR)/$(BUNDLE_SUBDIR)/.libs/libgmock.la	\
+  $(MESOS_BUILD_DIR)/src/.libs/libmesos.la		\
+  libmesos_tests.la					\
+  libjournaldlogger.la
 
 # Test (make check) binary for the overlay modules.
-check_PROGRAMS = test-overlay
+check_PROGRAMS += test-overlay
 
 test_overlay_SOURCES =					\
-  tests/overlay_tests.cpp				\
-  $(MESOS_TEST_SOURCES)
+  tests/overlay_tests.cpp
 
 test_overlay_CPPFLAGS =					\
-  -isystem $(GMOCK)/include				\
-  -I$(GTEST)/include					\
-  $(MESOS_TESTS_CPPFLAGS)				\
-  $(AM_CPPFLAGS)
+  $(libmesos_tests_la_CPPFLAGS)
 
 test_overlay_LDADD =					\
   $(MESOS_LDFLAGS)					\
   $(MESOS_BUILD_DIR)/$(BUNDLE_SUBDIR)/.libs/libgmock.la	\
   $(MESOS_BUILD_DIR)/src/.libs/libmesos.la		\
+  libmesos_tests.la					\
   libmesos_network_overlay.la
 endif
 
 check-local: $(check_PROGRAMS)
+	./test-journald --verbose
 	LIBPROCESS_IP=127.0.0.1 LIBPROCESS_PORT=5050 ./test-overlay --verbose

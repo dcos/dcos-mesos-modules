@@ -69,21 +69,11 @@ public:
     environment.erase("LIBPROCESS_PORT");
     environment.erase("LIBPROCESS_ADVERTISE_PORT");
 
-    // Workaround for running this module on an agent spawned using the
-    // libtool scripts inside the Mesos build directory.
-    if (environment.count("LD_LIBRARY_PATH") <= 0 &&
-        environment.count("MESOS_NATIVE_LIBRARY") > 0) {
-      environment["LD_LIBRARY_PATH"] =
-        Path(environment.at("MESOS_NATIVE_LIBRARY")).dirname();
-    }
-
     // Use the number of worker threads for libprocess that was passed
     // in through the flags.
     CHECK_GT(flags.libprocess_num_worker_threads, 0u);
     environment["LIBPROCESS_NUM_WORKER_THREADS"] =
       stringify(flags.libprocess_num_worker_threads);
-
-    LOG(INFO) << stringify(environment);
 
     // Pass in the FrameworkID, ExecutorID, and ContainerID as labels.
     // And include all labels inside the `ExecutorInfo`.

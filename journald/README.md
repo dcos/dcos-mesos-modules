@@ -43,3 +43,8 @@ You can then view the logs like:
 ```
 journalctl FRAMEWORK_ID=<FRAMEWORK_ID> -f
 ```
+
+## Unit tests
+
+> **NOTE**: Due to the hard dependency on systemd, the unit test(s) for
+> this module must be run as ROOT.
