@@ -359,6 +359,7 @@ if test -d "$mesos_root"; then
 fi
 
 # Create Modules JSON blobs.
+AC_CONFIG_FILES([dockercfg/modules.json], [])
 AC_CONFIG_FILES([journald/modules.json], [])
 AC_CONFIG_FILES([overlay/agent_modules.json], [])
 AC_CONFIG_FILES([overlay/master_modules.json], [])

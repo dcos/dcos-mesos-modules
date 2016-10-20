@@ -1,0 +1,12 @@
+{
+  "libraries": [
+    {
+      "file": "@abs_top_builddir@/.libs/libremovedockercfg.@LIB_EXT@",
+      "modules": [
+        {
+          "name": "com_mesosphere_dcos_RemoverHook"
+        }
+      ]
+    }
+  ]
+}

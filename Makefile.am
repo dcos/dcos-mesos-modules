@@ -38,6 +38,19 @@ PROTOCFLAGS += -I$(MESOS_ROOT)/include
 endif
 
 ###############################################################################
+# Dockercfg Remover Hook.
+###############################################################################
+
+# Library with the .dockercfg remover hook.
+pkglib_LTLIBRARIES += libremovedockercfg.la
+libremovedockercfg_la_SOURCES =				\
+  dockercfg/remover.cpp
+
+libremovedockercfg_la_LDFLAGS =				\
+  -release $(PACKAGE_VERSION)				\
+  -shared $(MESOS_LDFLAGS)
+
+###############################################################################
 # Journald ContainerLogger Module.
 ###############################################################################
 
@@ -134,6 +147,22 @@ libmesos_tests_la_LDFLAGS =				\
   -release $(PACKAGE_VERSION)				\
   -shared $(MESOS_LDFLAGS)
 
+# Test (make check) binary for the dockercfg hook.
+check_PROGRAMS += test-dockercfg
+
+test_dockercfg_SOURCES =				\
+  tests/dockercfg_tests.cpp
+
+test_dockercfg_CPPFLAGS =				\
+  $(libmesos_tests_la_CPPFLAGS)
+
+test_dockercfg_LDADD =					\
+  $(MESOS_LDFLAGS)					\
+  $(MESOS_BUILD_DIR)/$(BUNDLE_SUBDIR)/.libs/libgmock.la	\
+  $(MESOS_BUILD_DIR)/src/.libs/libmesos.la		\
+  libmesos_tests.la					\
+  libremovedockercfg.la
+
 # Test (make check) binary for the journald module.
 check_PROGRAMS += test-journald
 
@@ -168,5 +197,6 @@ test_overlay_LDADD =					\
 endif
 
 check-local: $(check_PROGRAMS)
+	./test-dockercfg
 	./test-journald --verbose
 	LIBPROCESS_IP=127.0.0.1 LIBPROCESS_PORT=5050 ./test-overlay --verbose
