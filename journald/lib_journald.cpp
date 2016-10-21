@@ -31,15 +31,18 @@ using namespace process;
 
 using mesos::slave::ContainerLogger;
 
+// Forward declare some functions located in `src/linux/systemd.cpp`.
+// This is not exposed in the Mesos public headers, but is necessary to
+// keep the ContainerLogger's companion binaries alive if the agent dies.
 namespace systemd {
 namespace mesos {
 
-// Forward declare a function located in `src/linux/systemd.cpp`.
-// This is not exposed in the Mesos public headers, but is necessary to
-// keep the ContainerLogger's companion binaries alive if the agent dies.
 Try<Nothing> extendLifetime(pid_t child);
 
 } // namespace mesos {
+
+bool enabled();
+
 } // namespace systemd {
 
 namespace mesos {
@@ -162,6 +165,15 @@ public:
     mesos::journald::logger::Flags outFlags;
     outFlags.labels = stringify(JSON::protobuf(labels));
 
+    // If we are on systemd, then extend the life of the process as we
+    // do with the executor. Any grandchildren's lives will also be
+    // extended.
+    std::vector<Subprocess::ParentHook> parentHooks;
+    if (systemd::enabled()) {
+      parentHooks.emplace_back(Subprocess::ParentHook(
+          &systemd::mesos::extendLifetime));
+    }
+
     // Spawn a process to handle stdout.
     Try<Subprocess> outProcess = subprocess(
         path::join(flags.companion_dir, mesos::journald::logger::NAME),
@@ -172,7 +184,7 @@ public:
         &outFlags,
         environment,
         None(),
-        {Subprocess::ParentHook(&systemd::mesos::extendLifetime)},
+        parentHooks,
         {Subprocess::ChildHook::SETSID()});
 
     if (outProcess.isError()) {
@@ -221,7 +233,7 @@ public:
         &errFlags,
         environment,
         None(),
-        {Subprocess::ParentHook(&systemd::mesos::extendLifetime)},
+        parentHooks,
         {Subprocess::ChildHook::SETSID()});
 
     if (errProcess.isError()) {

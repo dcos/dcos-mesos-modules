@@ -5,8 +5,6 @@
 
 #include <mesos/slave/container_logger.hpp>
 
-#include <linux/systemd.hpp>
-
 #include <stout/flags.hpp>
 #include <stout/option.hpp>
 
@@ -38,11 +36,6 @@ struct Flags : public virtual flags::FlagsBase
 
           if (!os::exists(executablePath)) {
             return Error("Cannot find: " + executablePath);
-          }
-
-          // Check if systemd exists on this platform.
-          if (!systemd::exists()) {
-            return Error("Systemd was not found");
           }
 
           return None();
