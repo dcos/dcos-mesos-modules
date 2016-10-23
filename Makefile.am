@@ -71,7 +71,7 @@ mesos_journald_logger_SOURCES =				\
   journald/journald.hpp					\
   journald/journald.cpp
 
-SYSTEMD_JOURNALD = `pkg-config --cflags --libs libsystemd-journal`
+SYSTEMD_JOURNALD = `pkg-config --cflags --libs libsystemd`
 
 mesos_journald_logger_LDFLAGS =				\
   $(MESOS_LDFLAGS)					\
