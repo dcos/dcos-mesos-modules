@@ -97,30 +97,38 @@ public:
     label.set_value(executorInfo.executor_id().value());
     labels.add_labels()->CopyFrom(label);
 
+    // Derive the AgentID and ContainerID from the sandbox directory.
+    // See: src/slave/paths.hpp in the Mesos codebase for more info.
+    //
+    // * The AgentID always occurs after the `slaves` directory.
+    // * The ContainerID deals with nested containers by concatenating the
+    //   top-level and sub-container IDs with a `.` separator.
+    vector<string> sandboxTokens = strings::tokenize(sandboxDirectory, "/");
+    Option<string> agentId = None();
+    Option<string> containerId = None();
+    for (int i = sandboxTokens.size() - 2; i >= 0; i -= 2) {
+      if (sandboxTokens[i] == "slaves") {
+        agentId = sandboxTokens[i + 1];
+      } else if (sandboxTokens[i] == "runs" ||
+                 sandboxTokens[i] == "containers") {
+        containerId = sandboxTokens[i + 1] +
+          (containerId.isSome() ? "." + containerId.get(): "");
+      }
+    }
+
     // NOTE: AgentID is generally unknown/irrelevant to the containerizer.
     // However, because we expect some degree of log aggregation,
     // we derive the AgentID based on the `sandboxDirectory`.
+    CHECK(agentId.isSome());
     label.set_key("AGENT_ID");
-
-    // We will fail to determine the AgentID in two cases:
-    //   * In unit tests, where the containerizer is mocked. The sandbox
-    //     directory does not always follow convention during tests.
-    //   * Or, if the agent's sandbox directory structure changes.
-    label.set_value("UNKNOWN");
-
-    vector<string> sandboxTokens = strings::tokenize(sandboxDirectory, "/");
-    for (int i = sandboxTokens.size() - 2; i >= 0; i--) {
-      if (sandboxTokens[i] == "slaves") {
-        label.set_value(sandboxTokens[i + 1]);
-        break;
-      }
-    }
+    label.set_value(agentId.get());
     labels.add_labels()->CopyFrom(label);
 
     // NOTE: ContainerID isn't passed into the container logger as part of
     // ExecutorInfo.  It can be retrieved from the `sandboxDirectory`.
+    CHECK(containerId.isSome());
     label.set_key("CONTAINER_ID");
-    label.set_value(Path(sandboxDirectory).basename());
+    label.set_value(containerId.get());
     labels.add_labels()->CopyFrom(label);
 
     // If the executor is named, use that name to present the logs.
