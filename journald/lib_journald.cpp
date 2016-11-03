@@ -176,9 +176,9 @@ public:
     // If we are on systemd, then extend the life of the process as we
     // do with the executor. Any grandchildren's lives will also be
     // extended.
-    std::vector<Subprocess::ParentHook> parentHooks;
+    std::vector<Subprocess::Hook> parentHooks;
     if (systemd::enabled()) {
-      parentHooks.emplace_back(Subprocess::ParentHook(
+      parentHooks.emplace_back(Subprocess::Hook(
           &systemd::mesos::extendLifetime));
     }
 
@@ -189,11 +189,11 @@ public:
         Subprocess::FD(outfds.read, Subprocess::IO::OWNED),
         Subprocess::PATH("/dev/null"),
         Subprocess::FD(STDERR_FILENO),
-        &outFlags,
+        SETSID,
+        outFlags,
         environment,
         None(),
-        parentHooks,
-        {Subprocess::ChildHook::SETSID()});
+        parentHooks);
 
     if (outProcess.isError()) {
       os::close(outfds.write.get());
@@ -238,11 +238,11 @@ public:
         Subprocess::FD(errfds.read, Subprocess::IO::OWNED),
         Subprocess::PATH("/dev/null"),
         Subprocess::FD(STDERR_FILENO),
-        &errFlags,
+        SETSID,
+        errFlags,
         environment,
         None(),
-        parentHooks,
-        {Subprocess::ChildHook::SETSID()});
+        parentHooks);
 
     if (errProcess.isError()) {
       os::close(outfds.write.get());

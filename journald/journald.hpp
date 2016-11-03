@@ -32,7 +32,7 @@ struct Flags : public virtual flags::FlagsBase
       "before it is written to journald.  See '--labels'."
       "\n");
 
-    add(&Flags::labels,
+    add(&labels,
         "labels",
         "Labels to append to each line of logs written to journald.\n"
         "This field should be the jsonified 'Labels' protobuf. i.e.:\n"
