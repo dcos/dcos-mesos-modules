@@ -22,7 +22,7 @@ struct Flags : public virtual flags::FlagsBase
 {
   Flags()
   {
-    add(&companion_dir,
+    add(&Flags::companion_dir,
         "companion_dir",
         None(),
         "Directory where this module's companion binary is located.\n"
@@ -41,7 +41,7 @@ struct Flags : public virtual flags::FlagsBase
           return None();
         });
 
-    add(&libprocess_num_worker_threads,
+    add(&Flags::libprocess_num_worker_threads,
         "libprocess_num_worker_threads",
         "Number of Libprocess worker threads.\n"
         "Defaults to 8.  Must be at least 1.",
@@ -77,14 +77,6 @@ public:
 
   // This is a noop.  The journald container logger has nothing to initialize.
   virtual Try<Nothing> initialize();
-
-  // TODO(josephw): Remove this after bumping the Mesos version.
-  virtual process::Future<Nothing> recover(
-      const ExecutorInfo& executorInfo,
-      const std::string& sandboxDirectory)
-  {
-    return Nothing();
-  }
 
   virtual process::Future<mesos::slave::ContainerLogger::SubprocessInfo>
   prepare(

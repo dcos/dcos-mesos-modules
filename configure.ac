@@ -350,6 +350,7 @@ if test -d "$mesos_root"; then
   AC_CONFIG_LINKS([tests/environment.cpp:${MESOS_ROOT}/src/tests/environment.cpp])
   AC_CONFIG_LINKS([tests/flags.cpp:${MESOS_ROOT}/src/tests/flags.cpp])
   AC_CONFIG_LINKS([tests/mesos.cpp:${MESOS_ROOT}/src/tests/mesos.cpp])
+  AC_CONFIG_LINKS([tests/mock_registrar.cpp:${MESOS_ROOT}/src/tests/mock_registrar.cpp])
   AC_CONFIG_LINKS([tests/module.cpp:${MESOS_ROOT}/src/tests/module.cpp])
   AC_CONFIG_LINKS([tests/script.cpp:${MESOS_ROOT}/src/tests/script.cpp])
   AC_CONFIG_LINKS([tests/utils.cpp:${MESOS_ROOT}/src/tests/utils.cpp])
