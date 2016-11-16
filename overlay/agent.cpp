@@ -145,6 +145,8 @@ public:
           
     }
 
+    const string ipset = networkConfig.ipset();
+
     // It is imperative that MASQUERADE rules are not enforced on
     // overlay traffic. To ensure that overlay traffic is not NATed,
     // the Agent module disables masquerade on Docker and Mesos
@@ -165,13 +167,17 @@ public:
     // `docker_bridge` have been enabled in the `AgentNetworkConfig`.
     if (networkConfig.mesos_bridge() || networkConfig.docker_bridge()) {
       Try<string> ipsetCommand = strings::format(
-          "ipset create -exist %s hash:net counters && "
-          "ipset add -exist %s 0.0.0.0/1 && "
-          "ipset add -exist %s 128.0.0.0/1 && "
-          "ipset add -exist %s 127.0.0.0/1",
+          "%s create -exist %s hash:net counters && "
+          "%s add -exist %s 0.0.0.0/1 && "
+          "%s add -exist %s 128.0.0.0/1 && "
+          "%s add -exist %s 127.0.0.0/1",
+          ipset,
           IPSET_OVERLAY,
+          ipset,
           IPSET_OVERLAY,
+          ipset,
           IPSET_OVERLAY,
+          ipset,
           IPSET_OVERLAY);
 
       if (ipsetCommand.isError()) {
@@ -179,14 +185,14 @@ public:
             "Unable to create `ipset` command: " + ipsetCommand.error());
       }
 
-      Future<string> ipset = runScriptCommand(ipsetCommand.get());
+      Future<string> ipsetScript = runScriptCommand(ipsetCommand.get());
 
-      ipset.await();
+      ipsetScript.await();
 
-      if (!ipset.isReady()) {
+      if (!ipsetScript.isReady()) {
         return Error(
             "Unable to create ipset:" +
-            (ipset.isFailed() ? ipset.failure() : "discarded"));
+            (ipsetScript.isFailed() ? ipsetScript.failure() : "discarded"));
       }
     }
 
@@ -373,24 +379,27 @@ protected:
     configAttempts++;
 
     if (configAttempts > maxConfigAttempts) {
-      EXIT(EXIT_FAILURE)
-        << "Could not configure some overlay networks after "
-        << configAttempts << " attempts hence bailing ... ";
-    }
-
-    // We move into `REGISTERED` state only if all overlays have been
-    // configured correctly. Dropping the register acknowledgment
-    // will force the agent to re-register, trying to re-configure the
-    // network again.
-    foreachvalue (const AgentOverlayInfo& overlay, overlays) {
-      if (!overlay.has_state() ||
-          !overlay.state().has_status() ||
-          overlay.state().status() != OverlayState::STATUS_OK) {
-        LOG(ERROR) << "Overlay " << overlay.info().name() << " has not been "
-                   << "configured hence dropping register "
-                   << "acknowledgment from master.";
-        return;
+      // We move into `REGISTERED` state only if all overlays have been
+      // configured correctly. Dropping the register acknowledgment
+      // will force the agent to re-register, trying to re-configure the
+      // network again.
+      foreachvalue (const AgentOverlayInfo& overlay, overlays) {
+        if (!overlay.has_state() ||
+            !overlay.state().has_status() ||
+            overlay.state().status() != OverlayState::STATUS_OK) {
+          LOG(ERROR) << "Overlay " << overlay.info().name() << " has not been "
+            << "configured hence dropping register "
+            << "acknowledgment from master.";
+          return;
+        }
       }
+    } else {
+      LOG(ERROR) << "Could not configure some overlay networks after "
+                 << configAttempts
+                 << " attempts, hence continuing with registration"
+                 << " with partially configured overlay."
+                 << " Please fix the reported errors and restart"
+                 << " the agent to re-try overlay configuration";
     }
 
     state = REGISTERED;
@@ -402,11 +411,20 @@ protected:
           overlay.state().has_status() &&
           overlay.state().status() == OverlayState::STATUS_OK &&
           overlay.has_mesos_bridge()) {
-        CHECK(os::exists(
-              path::join(cniTempDir, overlay.info().name() + ".cni"))); 
-
         string tmpCni = path::join(cniTempDir, overlay.info().name() + ".cni");
         string cni = path::join(cniDir, overlay.info().name() + ".cni");
+
+        // This might be a re-registration attempt with the Master, in
+        // which case the CNI config would already have been
+        // configured.
+        if (os::exists(cni)) {
+          continue;
+        }
+
+        // Given that a CNI config does not exist, and the Mesos
+        // network configuration has gone through we should be seeing
+        // a CNI configuration in the temp directory.
+        CHECK(os::exists(tmpCni)); 
 
         Try<Nothing> rename = os::rename(tmpCni, cni);
         CHECK(!rename.isError())
@@ -593,15 +611,18 @@ protected:
       const string overlaySubnet = overlays[name].info().subnet();
 
       Try<string> command = strings::format(
-          "ipset add -exist %s %s" " nomatch &&"
-          " iptables -t nat -C POSTROUTING -s %s -m set"
+          "%s add -exist %s %s" " nomatch &&"
+          " %s -t nat -C POSTROUTING -s %s -m set"
           " --match-set %s dst -j MASQUERADE ||"
-          " iptables -t nat -A POSTROUTING -s %s -m"
+          " %s -t nat -A POSTROUTING -s %s -m"
           " set --match-set %s dst -j MASQUERADE",
+          ipset,
           IPSET_OVERLAY,
           overlaySubnet,
+          iptables,
           overlaySubnet,
           IPSET_OVERLAY,
+          iptables,
           overlaySubnet,
           IPSET_OVERLAY);
 
@@ -722,14 +743,14 @@ protected:
   Future<bool> checkDockerNetwork(const string& name)
   {
     vector<string> argv = {
-      "docker",
+      docker,
       "network",
       "inspect",
       name
     };
 
     Try<Subprocess> s = subprocess(
-        "docker",
+        docker,
         argv,
         Subprocess::PATH("/dev/null"),
         Subprocess::PATH("/dev/null"),
@@ -778,10 +799,11 @@ protected:
     }
 
     Try<string> dockerCommand = strings::format(
-        "docker network create --driver=bridge --subnet=%s "
+        "%s network create --driver=bridge --subnet=%s "
         "--opt=com.docker.network.bridge.name=%s "
         "--opt=com.docker.network.bridge.enable_ip_masquerade=false "
         "--opt=com.docker.network.driver.mtu=%s %s",
+        docker,
         stringify(subnet.get()),
         overlay.docker_bridge().name(),
         stringify(networkConfig.overlay_mtu()),
@@ -821,8 +843,8 @@ protected:
     // However, Docker disallows this. So we will install a de-funct
     // rule in the DOCKER-ISOLATION chain to bypass any isolation
     // docker might be trying to enforce.
-    const string iptablesCommand = "iptables -D DOCKER-ISOLATION -j RETURN; "
-        "iptables -I DOCKER-ISOLATION 1 -j RETURN";
+    const string iptablesCommand = iptables +" -D DOCKER-ISOLATION "
+      "-j RETURN; " + iptables + " -I DOCKER-ISOLATION 1 -j RETURN";
 
     return runScriptCommand(iptablesCommand)
       .then([]() -> Future<Nothing> {
@@ -846,6 +868,9 @@ private:
     : ProcessBase(AGENT_MANAGER_PROCESS_ID),
       cniDir(_cniDir),
       cniTempDir(_cniTempDir),
+      ipset(_networkConfig.ipset()),
+      iptables(_networkConfig.iptables()),
+      docker(_networkConfig.docker()),
       networkConfig(_networkConfig),
       maxConfigAttempts(_maxConfigAttempts),
       detector(_detector)
@@ -857,6 +882,7 @@ private:
     if (networkConfig.mesos_bridge() == false) {
       connected.set(Nothing());
     }
+
   }
 
   const string cniDir;
@@ -865,6 +891,9 @@ private:
                            // copied over to the CNI configuration
                            // directory (`cniDir`) once the overlay
                            // has been configured successfully.
+  const string ipset;
+  const string iptables;
+  const string docker;
   const AgentNetworkConfig networkConfig;
 
   State state;
