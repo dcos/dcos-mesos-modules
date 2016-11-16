@@ -93,6 +93,7 @@ namespace modules {
 namespace overlay {
 namespace agent {
 
+constexpr Duration DOCKER_TIMEOUT = Minutes(1);
 constexpr Duration REGISTRATION_RETRY_INTERVAL_MAX = Minutes(10);
 constexpr Duration INITIAL_BACKOFF_PERIOD = Seconds(5);
 
@@ -106,6 +107,15 @@ static string OVERLAY_HELP()
           "Shows the Agent IP, Agent subnet, VTEP IP, VTEP MAC and bridges."));
 }
 
+
+template<typename T>
+static Future<T> failDockerNetwork(
+    Future<T> future,
+    const string& error)
+{
+  future.discard();
+  return Failure(error);
+}
 
 class ManagerProcess : public ProtobufProcess<ManagerProcess>
 {
@@ -569,7 +579,7 @@ protected:
       // when a future is READY, all the READY callbacks are invoked
       // before the `onAny` callbacks are invoked. This can result in
       // the callback setup by `await` being invoked before the
-      // `onAny` call we seutp in this `Future`. This can cause
+      // `onAny` call we setup in this `Future`. This can cause
       // problems since we check the overlay `State` in
       // `_updateAgentOverlays`, which might not be set if this race
       // were to occur, even though the overlay configuration went
@@ -649,6 +659,11 @@ protected:
     }
 
     return checkDockerNetwork(name)
+      .after(DOCKER_TIMEOUT,
+             lambda::bind(&failDockerNetwork<bool>,
+                          lambda::_1,
+                          "Unable to check docker network due to "
+                          "timeout after " + stringify(DOCKER_TIMEOUT)))
       .then(defer(self(),
                   &Self::_configureDockerNetwork,
                   name,
@@ -729,6 +744,12 @@ protected:
     }
 
     return runScriptCommand(dockerCommand.get())
+      .after(DOCKER_TIMEOUT,
+             lambda::bind(&failDockerNetwork<string>,
+                          lambda::_1,
+                          "Did not get a response from docker for " +
+                          stringify(DOCKER_TIMEOUT) +
+                          " hence failing docker network creation"))
       .then(defer(self(),
                   &Self::__configureDockerNetwork,
                   name,
