@@ -12,6 +12,7 @@
 #include <stout/jsonify.hpp>
 #include <stout/os.hpp>
 #include <stout/os/exists.hpp>
+#include <stout/os/rename.hpp>
 #include <stout/os/write.hpp>
 #include <stout/protobuf.hpp>
 #include <stout/try.hpp>
@@ -93,6 +94,7 @@ namespace modules {
 namespace overlay {
 namespace agent {
 
+constexpr char CNI_TMP_DIR[] = "/tmp/mesos-overlay/cni";
 constexpr Duration DOCKER_TIMEOUT = Minutes(1);
 constexpr Duration REGISTRATION_RETRY_INTERVAL_MAX = Minutes(10);
 constexpr Duration INITIAL_BACKOFF_PERIOD = Seconds(5);
@@ -126,6 +128,23 @@ public:
       const uint32_t maxConfigAttempts,
       Owned<MasterDetector>& detector)
   {
+    // Create a temp directory to store the CNI configs during overlay
+    // configuration.
+    Try<Nothing> dir = os::mkdir(CNI_TMP_DIR);
+    if (dir.isError()) {
+        return Error(
+            "Unable to create temp base directory "
+            + stringify(CNI_TMP_DIR)
+            + " for CNI: " + dir.error());
+    }
+
+    Try<string> cniTempDir = os::mkdtemp(path::join(CNI_TMP_DIR,"XXXXXX"));
+    if (cniTempDir.isError()) {
+      return Error(
+          "Unable to create temp directory for CNI: " + cniTempDir.error());
+          
+    }
+
     // It is imperative that MASQUERADE rules are not enforced on
     // overlay traffic. To ensure that overlay traffic is not NATed,
     // the Agent module disables masquerade on Docker and Mesos
@@ -174,6 +193,7 @@ public:
     return Owned<ManagerProcess>(
         new ManagerProcess(
           cniDir,
+          cniTempDir.get(),
           networkConfig,
           maxConfigAttempts,
           detector));
@@ -374,6 +394,35 @@ protected:
     }
 
     state = REGISTERED;
+
+    // Copy over the CNI configuration files for overlay networks that
+    // are healthy.
+    foreachvalue (const AgentOverlayInfo& overlay, overlays) {
+      if (overlay.has_state() && 
+          overlay.state().has_status() &&
+          overlay.state().status() == OverlayState::STATUS_OK &&
+          overlay.has_mesos_bridge()) {
+        CHECK(os::exists(
+              path::join(cniTempDir, overlay.info().name() + ".cni"))); 
+
+        string tmpCni = path::join(cniTempDir, overlay.info().name() + ".cni");
+        string cni = path::join(cniDir, overlay.info().name() + ".cni");
+
+        Try<Nothing> rename = os::rename(tmpCni, cni);
+        CHECK(!rename.isError())
+          << "Could not move CNI config for overlay network "
+          << overlay.info().name()
+          << " to CNI config directory '" << cniDir << "'";
+      }
+    }
+
+    if (os::exists(cniTempDir)) {
+      Try<Nothing> result = os::rmdir(cniTempDir);
+      if (result.isError()) {
+        LOG(ERROR) << "Unable to remove temp dir "
+                   << cniTempDir << " : " << result.error();
+      }
+    }
 
     connected.set(Nothing());
   }
@@ -636,7 +685,7 @@ protected:
     };
 
     Try<Nothing> write = os::write(
-        path::join(cniDir, name + ".cni"),
+        path::join(cniTempDir, name + ".cni"),
         jsonify(config));
 
     if (write.isError()) {
@@ -790,11 +839,13 @@ private:
 
   ManagerProcess(
       const string& _cniDir,
+      const string& _cniTempDir,
       const AgentNetworkConfig _networkConfig,
       const uint32_t _maxConfigAttempts,
       Owned<MasterDetector> _detector)
     : ProcessBase(AGENT_MANAGER_PROCESS_ID),
       cniDir(_cniDir),
+      cniTempDir(_cniTempDir),
       networkConfig(_networkConfig),
       maxConfigAttempts(_maxConfigAttempts),
       detector(_detector)
@@ -809,6 +860,11 @@ private:
   }
 
   const string cniDir;
+  const string cniTempDir; // A temporary directory used to store the
+                           // CNI config during configuration. It is
+                           // copied over to the CNI configuration
+                           // directory (`cniDir`) once the overlay
+                           // has been configured successfully.
   const AgentNetworkConfig networkConfig;
 
   State state;
