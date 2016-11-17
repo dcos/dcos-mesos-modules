@@ -74,6 +74,7 @@
 
 #include "module/manager.hpp"
 
+#include "overlay/agent.hpp"
 #include "overlay/constants.hpp"
 #include "overlay/messages.pb.h"
 #include "overlay/overlay.hpp"
@@ -84,7 +85,8 @@
 
 #include "tests/mesos.hpp"
 
-using namespace process;
+namespace overlayAgent = mesos::modules::overlay::agent;
+namespace http = process::http;
 
 using namespace mesos::internal::tests;
 
@@ -136,8 +138,6 @@ constexpr char OVERLAY_NAME[] = "mz-overlay";
 constexpr char MASTER_JSON_CONFIG[] = "master.json";
 constexpr char MASTER_OVERLAY_MODULE_NAME[] =
   "com_mesosphere_mesos_OverlayMasterManager";
-constexpr char AGENT_OVERLAY_MODULE_NAME[] =
-  "com_mesosphere_mesos_OverlayAgentManager";
 
 class OverlayTest : public MesosTest
 {
@@ -236,6 +236,8 @@ protected:
 
   virtual void TearDown()
   {
+    stopOverlayAgent();
+
     LOG(INFO) << "Unloading all modules...";
     // Unload all modules.
     foreach (const Modules::Library& library, modules.libraries()) {
@@ -321,32 +323,44 @@ protected:
   // `agentOverlayConfig` initialized during `Setup`. By default the
   // `agentOverlayConfig` has the Mesos and the Docker networks
   // disabled, and only has the subnet allocation enabled.
-  Try<Owned<Anonymous>> startOverlayAgent()
+  Try<Owned<overlayAgent::ManagerProcess>> startOverlayAgent()
   {
-    Try<Nothing> write = os::write(
-        AGENT_JSON_CONFIG,
-        stringify(JSON::protobuf(agentOverlayConfig)));
-    if(write.isError()) {
-      return Error("Unabled to write agent config: " + write.error());
+    Try<Owned<overlayAgent::ManagerProcess>> _agentModule =
+      overlayAgent::ManagerProcess::create(agentOverlayConfig);
+
+    if (_agentModule.isError()) {
+      return Error("Unable to create overlay Agent module: " + _agentModule.error());
     }
 
-    Try<Anonymous*> create = ModuleManager::create<Anonymous>(
-        AGENT_OVERLAY_MODULE_NAME);
-    if (create.isError()) {
-      return Error("Unable to create Agent module: " + create.error());
-    }
+    agentModule = _agentModule.get();
 
-    return Owned<Anonymous>(create.get());
+    spawn(agentModule->get());
+
+    return agentModule.get();
   }
 
   // Takes in a user-defined `_agentOverlayConfig` and merges with the
   // `agentOverlayConfig`, before initializing the overlay Agent
   // module.
-  Try<Owned<Anonymous>> startOverlayAgent(
+  Try<Owned<overlayAgent::ManagerProcess>> startOverlayAgent(
       const AgentConfig& _agentOverlayConfig)
   {
     agentOverlayConfig.MergeFrom(_agentOverlayConfig);
     return startOverlayAgent();
+  }
+
+  Try<Nothing> stopOverlayAgent()
+  {
+    if (agentModule.isSome()) {
+      terminate(agentModule->get());
+      wait(agentModule->get());
+
+      agentModule = None();
+    } else {
+      return Error("Uninitalized Agent module");
+    }
+
+    return Nothing();
   }
 
   Try<State> parseMasterState(const string& state)
@@ -375,6 +389,8 @@ private:
   Modules modules;
 
   MasterConfig masterOverlayConfig;
+
+  Option<Owned<overlayAgent::ManagerProcess>> agentModule;
 };
 
 
@@ -428,10 +444,15 @@ TEST_F(OverlayTest, checkMasterAgentComm)
   Future<AgentRegisteredMessage> agentRegisteredMessage =
     FUTURE_PROTOBUF(AgentRegisteredMessage(), _, _);
 
-  Try<Owned<Anonymous>> agentModule = startOverlayAgent(agentOverlayConfig);
+  Try<Owned<overlayAgent::ManagerProcess>> agentModule = startOverlayAgent(
+      agentOverlayConfig);
+
   ASSERT_SOME(agentModule);
 
   AWAIT_READY(agentRegisteredMessage);
+
+  // Check that the agent is allowed to progress.
+  AWAIT_READY(agentModule.get()->ready());
 
   // Agent manager has been created. Hit the `overlay` endpoint to
   // check that module is up and responding.
@@ -519,10 +540,15 @@ TEST_F(OverlayTest, ROOT_checkMesosNetwork)
   Future<AgentRegisteredMessage> agentRegisteredMessage =
     FUTURE_PROTOBUF(AgentRegisteredMessage(), _, _);
 
-  Try<Owned<Anonymous>> agentModule = startOverlayAgent(agentOverlayConfig);
+  Try<Owned<overlayAgent::ManagerProcess>> agentModule = startOverlayAgent(
+      agentOverlayConfig);
+
   ASSERT_SOME(agentModule);
 
   AWAIT_READY(agentRegisteredMessage);
+
+  // Check the agent is allowed to progress.
+  AWAIT_READY(agentModule.get()->ready());
 
   // Verify that `ipset` has been created and the `iptables` entries
   // exist.
@@ -600,10 +626,15 @@ TEST_F(OverlayTest, ROOT_checkDockerNetwork)
   Future<AgentRegisteredMessage> agentRegisteredMessage =
     FUTURE_PROTOBUF(AgentRegisteredMessage(), _, _);
 
-  Try<Owned<Anonymous>> agentModule = startOverlayAgent(agentOverlayConfig);
+  Try<Owned<overlayAgent::ManagerProcess>> agentModule = startOverlayAgent(
+      agentOverlayConfig);
+
   ASSERT_SOME(agentModule);
 
   AWAIT_READY(agentRegisteredMessage);
+
+  // Check the agent is allowed to progress.
+  AWAIT_READY(agentModule.get()->ready());
 
   // Verify that `ipset` has been created and the `iptables` entries
   // exist.
@@ -674,10 +705,15 @@ TEST_F(OverlayTest, ROOT_checkMasterRecovery)
   Future<AgentRegisteredAcknowledgement> agentRegisteredAcknowledgement =
     FUTURE_PROTOBUF(AgentRegisteredAcknowledgement(), _, _);
 
-  Try<Owned<Anonymous>> agentModule = startOverlayAgent(agentOverlayConfig);
-  ASSERT_SOME(agentModule);
+  Try<Owned<overlayAgent::ManagerProcess>> agentModule = startOverlayAgent(
+      agentOverlayConfig);
+
+  ASSERT_SOME(agentModule );
 
   AWAIT_READY(agentRegisteredAcknowledgement);
+
+  // Check the agent is allowed to progress.
+  AWAIT_READY(agentModule.get()->ready());
 
   // Agent manager has been created. Hit the `overlay` endpoint to
   // check that module is up and responding.
@@ -809,10 +845,15 @@ TEST_F(OverlayTest, ROOT_checkAgentRecovery)
   Future<AgentRegisteredAcknowledgement> agentRegisteredAcknowledgement =
     FUTURE_PROTOBUF(AgentRegisteredAcknowledgement(), _, _);
 
-  Try<Owned<Anonymous>> agentModule = startOverlayAgent(agentOverlayConfig);
+  Try<Owned<overlayAgent::ManagerProcess>> agentModule  = startOverlayAgent(
+      agentOverlayConfig);
+
   ASSERT_SOME(agentModule);
 
   AWAIT_READY(agentRegisteredAcknowledgement);
+
+  // Check the agent is allowed to progress.
+  AWAIT_READY(agentModule.get()->ready());
 
   // Agent manager has been created. Hit the `overlay` endpoint to
   // check that module is up and responding.
@@ -854,13 +895,18 @@ TEST_F(OverlayTest, ROOT_checkAgentRecovery)
   Future<AgentRegisteredAcknowledgement> agentReRegisteredAcknowledgement =
     FUTURE_PROTOBUF(AgentRegisteredAcknowledgement(), _, _);
   // Kill the agent.
-  agentModule->reset();
+  Try<Nothing> stop = stopOverlayAgent();
+  ASSERT_SOME(stop);
 
   // re-start the agent.
-  agentModule = startOverlayAgent(agentOverlayConfig);
-  ASSERT_SOME(agentModule);
+  agentModule  = startOverlayAgent(agentOverlayConfig);
+  ASSERT_SOME(agentModule );
 
   AWAIT_READY(agentReRegisteredAcknowledgement);
+
+  // Check the agent is allowed to progress.
+  AWAIT_READY(agentModule.get()->ready());
+
   // Hit the master end-point again.
   agentResponse = process::http::get(
       overlayAgent,
@@ -918,7 +964,9 @@ TEST_F(OverlayTest, ROOT_checkAgentNetworkConfigChange)
   Future<AgentRegisteredAcknowledgement> agentRegisteredAcknowledgement =
     FUTURE_PROTOBUF(AgentRegisteredAcknowledgement(), _, _);
 
-  Try<Owned<Anonymous>> agentModule = startOverlayAgent(agentOverlayConfig);
+  Try<Owned<overlayAgent::ManagerProcess>> agentModule = startOverlayAgent(
+      agentOverlayConfig);
+
   ASSERT_SOME(agentModule);
 
   AWAIT_READY(agentRegisteredAcknowledgement);
@@ -992,7 +1040,8 @@ TEST_F(OverlayTest, ROOT_checkAgentNetworkConfigChange)
     FUTURE_PROTOBUF(AgentRegisteredAcknowledgement(), _, _);
 
   // Kill the agent.
-  agentModule->reset();
+  Try<Nothing> stop = stopOverlayAgent();
+  ASSERT_SOME(stop);
 
   // Reset the `mesos_bridge` and `docker_bridge` before restarting.
   agentOverlayConfig.mutable_network_config()->set_mesos_bridge(false);
