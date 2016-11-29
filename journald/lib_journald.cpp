@@ -61,7 +61,8 @@ public:
   // journald along with labels to disambiguate the logs from other containers.
   Future<SubprocessInfo> prepare(
       const ExecutorInfo& executorInfo,
-      const std::string& sandboxDirectory)
+      const std::string& sandboxDirectory,
+      const Option<std::string>& user)
   {
     // Inherit most, but not all of the agent's environment.
     // Since the subprocess links to libmesos, it will need some of the
@@ -286,13 +287,15 @@ Try<Nothing> JournaldContainerLogger::initialize()
 
 Future<SubprocessInfo> JournaldContainerLogger::prepare(
     const ExecutorInfo& executorInfo,
-    const std::string& sandboxDirectory)
+    const std::string& sandboxDirectory,
+    const Option<std::string>& user)
 {
   return dispatch(
       process.get(),
       &JournaldContainerLoggerProcess::prepare,
       executorInfo,
-      sandboxDirectory);
+      sandboxDirectory,
+      user);
 }
 
 } // namespace journald {
