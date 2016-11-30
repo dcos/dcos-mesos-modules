@@ -35,6 +35,7 @@
 #include <mesos/module.hpp>
 #include <mesos/module/anonymous.hpp>
 
+#include "agent.hpp"
 #include "constants.hpp"
 #include "messages.hpp"
 #include "overlay.hpp"
@@ -107,762 +108,768 @@ static string OVERLAY_HELP()
 }
 
 
-class ManagerProcess : public ProtobufProcess<ManagerProcess>
+Try<Owned<ManagerProcess>> ManagerProcess::create(const AgentConfig& agentConfig)
 {
-public:
-  static Try<Owned<ManagerProcess>> createManagerProcess(
-      const string& cniDir,
-      const AgentNetworkConfig& networkConfig,
-      const uint32_t maxConfigAttempts,
-      Owned<MasterDetector>& detector)
-  {
-    // It is imperative that MASQUERADE rules are not enforced on
-    // overlay traffic. To ensure that overlay traffic is not NATed,
-    // the Agent module disables masquerade on Docker and Mesos
-    // network, and installs MASQUERADE rules during initialization.
-    // The MASQUERADE rule works as follows:
-    // * The Agent creates an 'ipset' which will hold all the overlay
-    // subnets that are configured on the agent.
-    // * The Agent inserts an 'iptables' rule that uses the 'ipset' to
-    // ensure that traffic destined to any of the overlay subnet is
-    // not masqueraded.
-    //
-    // NOTE: We need to serialize the execution of the 'ipset' command
-    // to ensure that the MASQUERADE rules have been installed
-    // correctly before allowing the creation of the
-    // `ManagerProcess`.
-    //
-    // NOTE: We should set up the `ipset` only if `mesos_bridge` or
-    // `docker_bridge` have been enabled in the `AgentNetworkConfig`.
-    if (networkConfig.mesos_bridge() || networkConfig.docker_bridge()) {
-      Try<string> ipsetCommand = strings::format(
-          "ipset create -exist %s hash:net counters && "
-          "ipset add -exist %s 0.0.0.0/1 && "
-          "ipset add -exist %s 128.0.0.0/1 && "
-          "ipset add -exist %s 127.0.0.0/1",
-          IPSET_OVERLAY,
-          IPSET_OVERLAY,
-          IPSET_OVERLAY,
-          IPSET_OVERLAY);
+  Option<string> master = None();
+  if (master.isNone() && agentConfig.has_master()) {
+    master = agentConfig.master();
+  } else {
+    master = os::getenv(MESOS_MASTER);
 
-      if (ipsetCommand.isError()) {
-        return Error(
-            "Unable to create `ipset` command: " + ipsetCommand.error());
-      }
+    // If the agent is running as part of the master it will need to
+    // get the ZK URL from 'MESOS_ZK'.
+    if (master.isNone()) {
+      master = os::getenv(MESOS_ZK);
+    }
+  }
 
-      Future<string> ipset = runScriptCommand(ipsetCommand.get());
+  // We should have learned about the master either from the JSON
+  // config of the module, or from the 'MESOS_MASTER' environment
+  // variable.
+  if (master.isNone()) {
+    return Error(
+        "Master unspecified, hence cannot create a "
+        "`MasterDetector`. Please specify master either through "
+        "the JSON config, or 'MESOS_MASTER' environment variable");
+  }
 
-      ipset.await();
+  Try<MasterDetector*> detector = MasterDetector::create(master.get());
+  if (detector.isError()) {
+    return Error("Unable to create master detector: " + detector.error());
+  }
 
-      if (!ipset.isReady()) {
-        return Error(
-            "Unable to create ipset:" +
-            (ipset.isFailed() ? ipset.failure() : "discarded"));
-      }
+  Try<Nothing> mkdir = os::mkdir(agentConfig.cni_dir());
+  if (mkdir.isError()) {
+    return Error("Failed to create CNI config directory: " + mkdir.error());
+  }
+
+  AgentNetworkConfig networkConfig;
+  if (agentConfig.has_network_config()) {
+      networkConfig.CopyFrom(agentConfig.network_config());
+  }
+
+  // It is imperative that MASQUERADE rules are not enforced on
+  // overlay traffic. To ensure that overlay traffic is not NATed,
+  // the Agent module disables masquerade on Docker and Mesos
+  // network, and installs MASQUERADE rules during initialization.
+  // The MASQUERADE rule works as follows:
+  // * The Agent creates an 'ipset' which will hold all the overlay
+  // subnets that are configured on the agent.
+  // * The Agent inserts an 'iptables' rule that uses the 'ipset' to
+  // ensure that traffic destined to any of the overlay subnet is
+  // not masqueraded.
+  //
+  // NOTE: We need to serialize the execution of the 'ipset' command
+  // to ensure that the MASQUERADE rules have been installed
+  // correctly before allowing the creation of the
+  // `ManagerProcess`.
+  //
+  // NOTE: We should set up the `ipset` only if `mesos_bridge` or
+  // `docker_bridge` have been enabled in the `AgentNetworkConfig`.
+  if (networkConfig.mesos_bridge() || networkConfig.docker_bridge()) {
+    Try<string> ipsetCommand = strings::format(
+        "ipset create -exist %s hash:net counters && "
+        "ipset add -exist %s 0.0.0.0/1 && "
+        "ipset add -exist %s 128.0.0.0/1 && "
+        "ipset add -exist %s 127.0.0.0/1",
+        IPSET_OVERLAY,
+        IPSET_OVERLAY,
+        IPSET_OVERLAY,
+        IPSET_OVERLAY);
+
+    if (ipsetCommand.isError()) {
+      return Error(
+          "Unable to create `ipset` command: " + ipsetCommand.error());
     }
 
-    return Owned<ManagerProcess>(
-        new ManagerProcess(
-          cniDir,
-          networkConfig,
-          maxConfigAttempts,
-          detector));
-  }
+    Future<string> ipset = runScriptCommand(ipsetCommand.get());
 
-  Future<Nothing> ready()
-  {
-    return connected.future();
-  }
+    ipset.await();
 
-protected:
-  virtual void initialize()
-  {
-    LOG(INFO) << "Initializing overlay agent manager";
-
-    route("/overlay",
-          OVERLAY_HELP(),
-          &ManagerProcess::overlay);
-
-    state = REGISTERING;
-
-    detector->detect()
-      .onAny(defer(self(), &ManagerProcess::detected, lambda::_1));
-
-    // Install message handlers.
-    install<UpdateAgentOverlaysMessage>(
-        &ManagerProcess::updateAgentOverlays);
-
-    install<AgentRegisteredAcknowledgement>(
-        &ManagerProcess::agentRegisteredAcknowledgement);
-  }
-
-  virtual void exited(const UPID& pid)
-  {
-    LOG(INFO) << "Overlay master " << pid << " has exited";
-
-    if (overlayMaster.isSome() && overlayMaster.get() == pid) {
-      LOG(WARNING) << "Overlay master disconnected! "
-                   << "Waiting for a new overlay master to be detected";
+    if (!ipset.isReady()) {
+      return Error(
+          "Unable to create ipset:" +
+          (ipset.isFailed() ? ipset.failure() : "discarded"));
     }
-
-    LOG(INFO) << "Moving " << pid << " to `REGISTERING` state.";
-
-    state = REGISTERING;
-    doReliableRegistration(INITIAL_BACKOFF_PERIOD);
   }
 
-  void updateAgentOverlays(
-      const UPID& from,
-      const UpdateAgentOverlaysMessage& message)
-  {
-    LOG(INFO) << "Received 'UpdateAgentOverlaysMessage' from " << from;
+  return Owned<ManagerProcess>(
+      new ManagerProcess(
+        agentConfig.cni_dir(),
+        networkConfig,
+        agentConfig.max_configuration_attempts(),
+        Owned<MasterDetector>(detector.get())));
+}
 
-    if (state != REGISTERING) {
-      LOG(WARNING) << "Ignored 'UpdateAgentOverlaysMessage' from " << from
-                   << " because overlay agent is not in DISCONNECTED state";
-      return;
-    }
 
-    list<Future<Nothing>> futures;
-    foreach (const AgentOverlayInfo& overlay, message.overlays()) {
-      const string name = overlay.info().name();
+Future<Nothing> ManagerProcess::ready()
+{
+  return connected.future();
+}
 
-      LOG(INFO) << "Configuring overlay network '" << name << "'";
 
-      // TODO(jieyu): Here, we assume that the overlay configuration
-      // never changes. Therefore, if the overlay is in `STATUS_OK` or
-      // if it is in `STATUS_CONFIGURING` state, we will skip the
-      // configuration. This might change soon.
-      if (overlays.contains(name) &&
-          overlays.at(name).has_state() &&
-          overlays.at(name).state().has_status() ) {
-        OverlayState::Status status = overlays.at(name).state().status();
+void ManagerProcess::initialize()
+{
+  LOG(INFO) << "Initializing overlay agent manager";
 
-        if ((status == OverlayState::STATUS_OK) ||
-            (status == OverlayState::STATUS_CONFIGURING)) {
-          LOG(INFO) << "Skipping configuration for overlay network '"
-                    << name << "' as it "
-                    << ((status == OverlayState::STATUS_OK) ?
-                       "has been " : "is being ")
-                    << "configured.";
+  route("/overlay",
+      OVERLAY_HELP(),
+      &ManagerProcess::overlay);
 
-          if (status == OverlayState::STATUS_OK) {
-            // We still set a `Future` for this overlay, so as to inform
-            // the Master about the state of this overlay network.
-            futures.push_back(Nothing());
-          }
+  state = REGISTERING;
 
-          continue;
+  detector->detect()
+    .onAny(defer(self(), &ManagerProcess::detected, lambda::_1));
+
+  // Install message handlers.
+  install<UpdateAgentOverlaysMessage>(
+      &ManagerProcess::updateAgentOverlays);
+
+  install<AgentRegisteredAcknowledgement>(
+      &ManagerProcess::agentRegisteredAcknowledgement);
+}
+
+
+void ManagerProcess::exited(const UPID& pid)
+{
+  LOG(INFO) << "Overlay master " << pid << " has exited";
+
+  if (overlayMaster.isSome() && overlayMaster.get() == pid) {
+    LOG(WARNING) << "Overlay master disconnected! "
+                 << "Waiting for a new overlay master to be detected";
+  }
+
+  LOG(INFO) << "Moving " << pid << " to `REGISTERING` state.";
+
+  state = REGISTERING;
+  doReliableRegistration(INITIAL_BACKOFF_PERIOD);
+}
+
+void ManagerProcess::updateAgentOverlays(
+    const UPID& from,
+    const UpdateAgentOverlaysMessage& message)
+{
+  LOG(INFO) << "Received 'UpdateAgentOverlaysMessage' from " << from;
+
+  if (state != REGISTERING) {
+    LOG(WARNING) << "Ignored 'UpdateAgentOverlaysMessage' from " << from
+                 << " because overlay agent is not in DISCONNECTED state";
+    return;
+  }
+
+  list<Future<Nothing>> futures;
+  foreach (const AgentOverlayInfo& overlay, message.overlays()) {
+    const string name = overlay.info().name();
+
+    LOG(INFO) << "Configuring overlay network '" << name << "'";
+
+    // TODO(jieyu): Here, we assume that the overlay configuration
+    // never changes. Therefore, if the overlay is in `STATUS_OK` or
+    // if it is in `STATUS_CONFIGURING` state, we will skip the
+    // configuration. This might change soon.
+    if (overlays.contains(name) &&
+        overlays.at(name).has_state() &&
+        overlays.at(name).state().has_status() ) {
+      OverlayState::Status status = overlays.at(name).state().status();
+
+      if ((status == OverlayState::STATUS_OK) ||
+          (status == OverlayState::STATUS_CONFIGURING)) {
+        LOG(INFO) << "Skipping configuration for overlay network '"
+                  << name << "' as it "
+                  << ((status == OverlayState::STATUS_OK) ?
+                      "has been " : "is being ")
+                  << "configured.";
+
+        if (status == OverlayState::STATUS_OK) {
+          // We still set a `Future` for this overlay, so as to inform
+          // the Master about the state of this overlay network.
+          futures.push_back(Nothing());
         }
+
+        continue;
       }
-
-      CHECK(!overlay.has_state());
-
-      overlays[name] = overlay;
-
-      futures.push_back(configure(name));
     }
 
-    // If we don't have any `Futures` setup that means this was a
-    // duplicate update corresponding to one already in progress. We
-    // should therefore not setup a response for acknowledging this
-    // registration.
-    if (futures.empty()) {
-      LOG(INFO) << "Looks like we received a duplicate config update from "
-                << from << " dropping this message.";
-      return;
-    }
+    CHECK(!overlay.has_state());
 
-    // Wait for all the networks to be configured.
-    await(futures)
-      .onAny(defer(self(),
-                   &ManagerProcess::_updateAgentOverlays,
-                   lambda::_1));
+    overlays[name] = overlay;
+
+    futures.push_back(configure(name));
   }
 
-  void _updateAgentOverlays(
-      const Future<list<Future<Nothing>>>& results)
-  {
-    if (!results.isReady()) {
-      LOG(ERROR) << "Unable to configure any overlay: "
-                 << (results.isDiscarded() ? "discarded" : results.failure());
+  // If we don't have any `Futures` setup that means this was a
+  // duplicate update corresponding to one already in progress. We
+  // should therefore not setup a response for acknowledging this
+  // registration.
+  if (futures.empty()) {
+    LOG(INFO) << "Looks like we received a duplicate config update from "
+              << from << " dropping this message.";
+    return;
+  }
 
-      return;
-    }
+  // Wait for all the networks to be configured.
+  await(futures)
+    .onAny(defer(self(),
+          &ManagerProcess::_updateAgentOverlays,
+          lambda::_1));
+}
 
-    vector<string> messages;
-    // Check if there were any failures while configuring the
-    // overlays.
-    foreach(const Future<Nothing>& result, results.get()) {
-      if (!result.isReady()) {
-        messages.push_back(
-            (result.isDiscarded() ? "discarded" : result.failure()));
-      }
-    }
 
-    if (!messages.empty()){
-      LOG(ERROR) << "Unable to configure some of the overlays on this Agent: "
-                 << strings::join("\n", messages);
-    }
-
-    if (state != REGISTERING) {
-      LOG(WARNING) << "Ignored sending registered message because "
-                   << "agent is not in REGISTERING state";
-      return;
-    }
-
-    CHECK_SOME(overlayMaster);
-
-    AgentRegisteredMessage message;
-
-    foreachvalue (const AgentOverlayInfo& overlay, overlays) {
-      // Every overlay network should have a status, and it should be
-      // either in `STATUS_OK` or `STATUS_FAILED`.
-      CHECK(overlay.has_state());
-      CHECK(overlay.state().has_status());
-      CHECK(overlay.state().status() != OverlayState::STATUS_CONFIGURING);
-      CHECK(overlay.state().status() != OverlayState::STATUS_INVALID);
-
-      message.add_overlays()->CopyFrom(overlay);
-    }
-
-    LOG(INFO) << "Sending agent registered message to " << overlayMaster.get();
-
-    // NOTE: If this message does not reach the master, the master
-    // will keep sending 'UpdateAgentOverlaysMessage', which will
-    // essentially cause a retry of sending this message.
-    send(overlayMaster.get(), message);
+void ManagerProcess::_updateAgentOverlays(
+    const Future<list<Future<Nothing>>>& results)
+{
+  if (!results.isReady()) {
+    LOG(ERROR) << "Unable to configure any overlay: "
+               << (results.isDiscarded() ? "discarded" : results.failure());
 
     return;
   }
 
-  void agentRegisteredAcknowledgement(const UPID& from)
-  {
-    LOG(INFO) << "Received agent registered acknowledgment from " << from;
-
-    configAttempts++;
-
-    if (configAttempts > maxConfigAttempts) {
-      EXIT(EXIT_FAILURE)
-        << "Could not configure some overlay networks after "
-        << configAttempts << " attempts hence bailing ... ";
+  vector<string> messages;
+  // Check if there were any failures while configuring the
+  // overlays.
+  foreach(const Future<Nothing>& result, results.get()) {
+    if (!result.isReady()) {
+      messages.push_back(
+          (result.isDiscarded() ? "discarded" : result.failure()));
     }
-
-    // We move into `REGISTERED` state only if all overlays have been
-    // configured correctly. Dropping the register acknowledgment
-    // will force the agent to re-register, trying to re-configure the
-    // network again.
-    foreachvalue (const AgentOverlayInfo& overlay, overlays) {
-      if (!overlay.has_state() ||
-          !overlay.state().has_status() ||
-          overlay.state().status() != OverlayState::STATUS_OK) {
-        LOG(ERROR) << "Overlay " << overlay.info().name() << " has not been "
-                   << "configured hence dropping register "
-                   << "acknowledgment from master.";
-        return;
-      }
-    }
-
-    state = REGISTERED;
-
-    connected.set(Nothing());
   }
 
-  void detected(const Future<Option<MasterInfo>>& mesosMaster)
-  {
-    if (mesosMaster.isFailed()) {
-      EXIT(EXIT_FAILURE)
-        << "Failed to detect Mesos master: "
-        << mesosMaster.failure();
-    }
-
-    state = REGISTERING;
-
-    Option<MasterInfo> latestMesosMaster = None();
-
-    if (mesosMaster.isDiscarded()) {
-      LOG(INFO) << "Re-detecting Mesos master";
-      overlayMaster = None();
-    } else if (mesosMaster.get().isNone()) {
-      LOG(INFO) << "Lost leading Mesos master";
-      overlayMaster = None();
-    } else {
-      latestMesosMaster = mesosMaster.get();
-
-      overlayMaster = UPID(mesosMaster.get()->pid());
-      overlayMaster->id = MASTER_MANAGER_PROCESS_ID;
-
-      link(overlayMaster.get());
-
-      LOG(INFO) << "Detected new overlay master at " << overlayMaster.get();
-
-      doReliableRegistration(INITIAL_BACKOFF_PERIOD);
-    }
-
-    // Keep detecting new Mesos masters.
-    detector->detect(latestMesosMaster)
-      .onAny(defer(self(), &ManagerProcess::detected, lambda::_1));
+  if (!messages.empty()){
+    LOG(ERROR) << "Unable to configure some of the overlays on this Agent: "
+               << strings::join("\n", messages);
   }
 
-  void doReliableRegistration(Duration maxBackoff)
-  {
-    if (state == REGISTERED) {
-      LOG(INFO) << "Overlay agent is already in REGISTERED state";
+  if (state != REGISTERING) {
+    LOG(WARNING) << "Ignored sending registered message because "
+                 << "agent is not in REGISTERING state";
+    return;
+  }
+
+  CHECK_SOME(overlayMaster);
+
+  AgentRegisteredMessage message;
+
+  foreachvalue (const AgentOverlayInfo& overlay, overlays) {
+    // Every overlay network should have a status, and it should be
+    // either in `STATUS_OK` or `STATUS_FAILED`.
+    CHECK(overlay.has_state());
+    CHECK(overlay.state().has_status());
+    CHECK(overlay.state().status() != OverlayState::STATUS_CONFIGURING);
+    CHECK(overlay.state().status() != OverlayState::STATUS_INVALID);
+
+    message.add_overlays()->CopyFrom(overlay);
+  }
+
+  LOG(INFO) << "Sending agent registered message to " << overlayMaster.get();
+
+  // NOTE: If this message does not reach the master, the master
+  // will keep sending 'UpdateAgentOverlaysMessage', which will
+  // essentially cause a retry of sending this message.
+  send(overlayMaster.get(), message);
+
+  return;
+}
+
+
+void ManagerProcess::agentRegisteredAcknowledgement(const UPID& from)
+{
+  LOG(INFO) << "Received agent registered acknowledgment from " << from;
+
+  configAttempts++;
+
+  if (configAttempts > maxConfigAttempts) {
+    EXIT(EXIT_FAILURE)
+      << "Could not configure some overlay networks after "
+      << configAttempts << " attempts hence bailing ... ";
+  }
+
+  // We move into `REGISTERED` state only if all overlays have been
+  // configured correctly. Dropping the register acknowledgment
+  // will force the agent to re-register, trying to re-configure the
+  // network again.
+  foreachvalue (const AgentOverlayInfo& overlay, overlays) {
+    if (!overlay.has_state() ||
+        !overlay.state().has_status() ||
+        overlay.state().status() != OverlayState::STATUS_OK) {
+      LOG(ERROR) << "Overlay " << overlay.info().name() << " has not been "
+                 << "configured hence dropping register "
+                 << "acknowledgment from master.";
       return;
     }
-
-    if (overlayMaster.isNone()) {
-      LOG(INFO) << "Overlay master is unknown, ignored registration";
-      return;
-    }
-
-    RegisterAgentMessage registerMessage;
-    registerMessage.mutable_network_config()->CopyFrom(networkConfig);
-
-    // Send registration to the overlay master.
-    send(overlayMaster.get(), registerMessage);
-
-    // Bound the maximum backoff by 'REGISTRATION_RETRY_INTERVAL_MAX'.
-    maxBackoff = std::min(maxBackoff, REGISTRATION_RETRY_INTERVAL_MAX);
-
-    // Determine the delay for next attempt by picking a random
-    // duration between 0 and 'maxBackoff'.
-    Duration backoff = maxBackoff * ((double) ::random() / RAND_MAX);
-
-    VLOG(1) << "Will retry registration in " << backoff << " if necessary";
-
-    delay(backoff,
-          self(),
-          &ManagerProcess::doReliableRegistration,
-          maxBackoff * 2);
   }
 
-  Future<http::Response> overlay(const http::Request& request)
-  {
-    AgentInfo agent;
-    agent.set_ip(stringify(self().address.ip));
+  state = REGISTERED;
 
-    foreachvalue (const AgentOverlayInfo& overlay, overlays) {
-      agent.add_overlays()->CopyFrom(overlay);
-    }
+  connected.set(Nothing());
+}
 
-    if (request.acceptsMediaType(APPLICATION_JSON)) {
-      return http::OK(
-          JSON::protobuf(agent),
-          request.url.query.get("jsonp"));
-    } else if (request.acceptsMediaType(APPLICATION_PROTOBUF)){
-      ContentType responseContentType = ContentType::PROTOBUF;
 
-      http::OK ok(agent.SerializeAsString());
-      ok.headers["Content-Type"] = stringify(responseContentType);
-
-      return ok;
-    } else {
-      return http::UnsupportedMediaType(
-          string("Client needs to support either ") +
-          APPLICATION_JSON + " or " + APPLICATION_PROTOBUF);
-    }
+void ManagerProcess::detected(const Future<Option<MasterInfo>>& mesosMaster)
+{
+  if (mesosMaster.isFailed()) {
+    EXIT(EXIT_FAILURE)
+      << "Failed to detect Mesos master: "
+      << mesosMaster.failure();
   }
 
-  Future<Nothing> configure(const string& name)
-  {
+  state = REGISTERING;
+
+  Option<MasterInfo> latestMesosMaster = None();
+
+  if (mesosMaster.isDiscarded()) {
+    LOG(INFO) << "Re-detecting Mesos master";
+    overlayMaster = None();
+  } else if (mesosMaster.get().isNone()) {
+    LOG(INFO) << "Lost leading Mesos master";
+    overlayMaster = None();
+  } else {
+    latestMesosMaster = mesosMaster.get();
+
+    overlayMaster = UPID(mesosMaster.get()->pid());
+    overlayMaster->id = MASTER_MANAGER_PROCESS_ID;
+
+    link(overlayMaster.get());
+
+    LOG(INFO) << "Detected new overlay master at " << overlayMaster.get();
+
+    doReliableRegistration(INITIAL_BACKOFF_PERIOD);
+  }
+
+  // Keep detecting new Mesos masters.
+  detector->detect(latestMesosMaster)
+    .onAny(defer(self(), &ManagerProcess::detected, lambda::_1));
+}
+
+
+void ManagerProcess::doReliableRegistration(Duration maxBackoff)
+{
+  if (state == REGISTERED) {
+    LOG(INFO) << "Overlay agent is already in REGISTERED state";
+    return;
+  }
+
+  if (overlayMaster.isNone()) {
+    LOG(INFO) << "Overlay master is unknown, ignored registration";
+    return;
+  }
+
+  RegisterAgentMessage registerMessage;
+  registerMessage.mutable_network_config()->CopyFrom(networkConfig);
+
+  // Send registration to the overlay master.
+  send(overlayMaster.get(), registerMessage);
+
+  // Bound the maximum backoff by 'REGISTRATION_RETRY_INTERVAL_MAX'.
+  maxBackoff = std::min(maxBackoff, REGISTRATION_RETRY_INTERVAL_MAX);
+
+  // Determine the delay for next attempt by picking a random
+  // duration between 0 and 'maxBackoff'.
+  Duration backoff = maxBackoff * ((double) ::random() / RAND_MAX);
+
+  VLOG(1) << "Will retry registration in " << backoff << " if necessary";
+
+  delay(backoff,
+      self(),
+      &ManagerProcess::doReliableRegistration,
+      maxBackoff * 2);
+}
+
+
+Future<http::Response> ManagerProcess::overlay(const http::Request& request)
+{
+  AgentInfo agent;
+  agent.set_ip(stringify(self().address.ip));
+
+  foreachvalue (const AgentOverlayInfo& overlay, overlays) {
+    agent.add_overlays()->CopyFrom(overlay);
+  }
+
+  if (request.acceptsMediaType(APPLICATION_JSON)) {
+    return http::OK(
+        JSON::protobuf(agent),
+        request.url.query.get("jsonp"));
+  } else if (request.acceptsMediaType(APPLICATION_PROTOBUF)){
+    ContentType responseContentType = ContentType::PROTOBUF;
+
+    http::OK ok(agent.SerializeAsString());
+    ok.headers["Content-Type"] = stringify(responseContentType);
+
+    return ok;
+  } else {
+    return http::UnsupportedMediaType(
+        string("Client needs to support either ") +
+        APPLICATION_JSON + " or " + APPLICATION_PROTOBUF);
+  }
+}
+
+
+Future<Nothing> ManagerProcess::configure(const string& name)
+{
+  CHECK(overlays.contains(name));
+
+  overlays[name].mutable_state()->set_status(
+      OverlayState::STATUS_CONFIGURING);
+
+  return await(configureMesosNetwork(name),
+      configureDockerNetwork(name))
+    .then(defer(self(),
+          &Self::_configure,
+          name,
+          lambda::_1));
+}
+
+
+Future<Nothing> ManagerProcess::_configure(
+    const string& name,
+    const tuple<Future<Nothing>, Future<Nothing>>& t)
+{
+  CHECK(overlays.contains(name));
+
+  Future<Nothing> mesos = std::get<0>(t);
+  Future<Nothing> docker = std::get<1>(t);
+
+  vector<string> errors;
+
+  if (!mesos.isReady()) {
+    errors.push_back((mesos.isFailed() ? mesos.failure() : "discarded"));
+  }
+
+  if (!docker.isReady()) {
+    errors.push_back((docker.isFailed() ? docker.failure() : "discarded"));
+  }
+
+  auto overlaySuccess = [=](const Future<string>& result) -> Future<Nothing> {
+    CHECK(overlays.contains(name));
+    overlays[name].mutable_state()->set_status(OverlayState::STATUS_OK);
+
+    return Nothing();
+  };
+
+  auto overlayFailure = [=](const string& error) {
     CHECK(overlays.contains(name));
 
-    overlays[name].mutable_state()->set_status(
-        OverlayState::STATUS_CONFIGURING);
+    OverlayState* state = overlays[name].mutable_state();
+    state->set_status(OverlayState::STATUS_FAILED);
+    state->set_error(error);
+  };
 
-    return await(configureMesosNetwork(name),
-                 configureDockerNetwork(name))
-      .then(defer(self(),
-                  &Self::_configure,
-                  name,
-                  lambda::_1));
+  if (!errors.empty()) {
+    overlayFailure(strings::join(";", errors));
+
+    return Failure(strings::join(";", errors));
   }
 
-  Future<Nothing> _configure(
-      const string& name,
-      const tuple<Future<Nothing>, Future<Nothing>>& t)
-  {
-    CHECK(overlays.contains(name));
+  // The Mesos and Docker Networks have been configured. Setup the
+  // ipset rule in `IPSET_OVERLAY`. If the ipset rule succeeds
+  // proceed to check the iptables rule exists for masquerading
+  // traffic from the overlay subnet. If the iptables rule does not
+  // exist insert one in the POSTROUTING chain of the NAT table.
+  // The below command is a script consisting of three commands:
+  // <set ipset> && <check iptables rule exists> ||
+  // <insert iptables rule>
+  if (!networkConfig.mesos_bridge() &&
+      !networkConfig.docker_bridge()) {
+    return overlaySuccess("");
+  } else {
+    const string overlaySubnet = overlays[name].info().subnet();
 
-    Future<Nothing> mesos = std::get<0>(t);
-    Future<Nothing> docker = std::get<1>(t);
+    Try<string> command = strings::format(
+        "ipset add -exist %s %s" " nomatch &&"
+        " iptables -t nat -C POSTROUTING -s %s -m set"
+        " --match-set %s dst -j MASQUERADE ||"
+        " iptables -t nat -A POSTROUTING -s %s -m"
+        " set --match-set %s dst -j MASQUERADE",
+        IPSET_OVERLAY,
+        overlaySubnet,
+        overlaySubnet,
+        IPSET_OVERLAY,
+        overlaySubnet,
+        IPSET_OVERLAY);
 
-    vector<string> errors;
+    if (command.isError()) {
+      overlayFailure(command.error());
 
-    if (!mesos.isReady()) {
-      errors.push_back((mesos.isFailed() ? mesos.failure() : "discarded"));
+      return Failure(
+          "Unable to create iptables rule for overlay " +
+          name + ": " + command.error());
     }
 
-    if (!docker.isReady()) {
-      errors.push_back((docker.isFailed() ? docker.failure() : "discarded"));
+    LOG(INFO) << "Insert following iptables rule for overlay " << name
+              << ": " << command.get();
+
+    // We have to explicitly chain the `onFailed` and `onDiscarded`
+    // events since we need to update the `State` of the overlay
+    // network on failure to execute the iptables script.
+    //
+    // NOTE: If we use `onAny` instead of `onFailed` and
+    // `onDiscarded`, and handle all conditions (success as well as
+    // failure) in the `onAny` callback, it causes a race with the
+    // callback setup in the `await` which listens to this future
+    // (checkout `updateAgentOverlays` method). Reason being that
+    // when a future is READY, all the READY callbacks are invoked
+    // before the `onAny` callbacks are invoked. This can result in
+    // the callback setup by `await` being invoked before the
+    // `onAny` call we seutp in this `Future`. This can cause
+    // problems since we check the overlay `State` in
+    // `_updateAgentOverlays`, which might not be set if this race
+    // were to occur, even though the overlay configuration went
+    // through fine.
+    return runScriptCommand(command.get())
+      .then(defer(self(), overlaySuccess))
+      .onFailed(defer(self(), overlayFailure))
+      .onDiscarded(defer(self(),lambda::bind(overlayFailure, "discarded"))) ;
+  }
+}
+
+
+Future<Nothing> ManagerProcess::configureMesosNetwork(const string& name)
+{
+  CHECK(overlays.contains(name));
+
+  const AgentOverlayInfo& overlay = overlays[name];
+
+  if (!networkConfig.mesos_bridge()) {
+    LOG(INFO) << "Not configuring Mesos network for '" << name
+              << "' since operator has disallowed `mesos_bridge`.";
+
+    if (overlay.has_mesos_bridge()) {
+      LOG(WARNING) << " We are ignoring request from Master to configure "
+                   << "`mesos_bridge` for " << name
+                   << " since operator has not configured agent to configure "
+                   << "`mesos_bridge`.";
     }
-
-    auto overlaySuccess = [=](const Future<string>& result) -> Future<Nothing> {
-      CHECK(overlays.contains(name));
-      overlays[name].mutable_state()->set_status(OverlayState::STATUS_OK);
-
-      return Nothing();
-    };
-
-    auto overlayFailure = [=](const string& error) {
-      CHECK(overlays.contains(name));
-
-      OverlayState* state = overlays[name].mutable_state();
-      state->set_status(OverlayState::STATUS_FAILED);
-      state->set_error(error);
-    };
-
-    if (!errors.empty()) {
-      overlayFailure(strings::join(";", errors));
-
-      return Failure(strings::join(";", errors));
-    }
-
-    // The Mesos and Docker Networks have been configured. Setup the
-    // ipset rule in `IPSET_OVERLAY`. If the ipset rule succeeds
-    // proceed to check the iptables rule exists for masquerading
-    // traffic from the overlay subnet. If the iptables rule does not
-    // exist insert one in the POSTROUTING chain of the NAT table.
-    // The below command is a script consisting of three commands:
-    // <set ipset> && <check iptables rule exists> ||
-    // <insert iptables rule>
-    if (!networkConfig.mesos_bridge() &&
-        !networkConfig.docker_bridge()) {
-      return overlaySuccess("");
-    } else {
-      const string overlaySubnet = overlays[name].info().subnet();
-
-      Try<string> command = strings::format(
-          "ipset add -exist %s %s" " nomatch &&"
-          " iptables -t nat -C POSTROUTING -s %s -m set"
-          " --match-set %s dst -j MASQUERADE ||"
-          " iptables -t nat -A POSTROUTING -s %s -m"
-          " set --match-set %s dst -j MASQUERADE",
-          IPSET_OVERLAY,
-          overlaySubnet,
-          overlaySubnet,
-          IPSET_OVERLAY,
-          overlaySubnet,
-          IPSET_OVERLAY);
-
-      if (command.isError()) {
-        overlayFailure(command.error());
-
-        return Failure(
-            "Unable to create iptables rule for overlay " +
-            name + ": " + command.error());
-      }
-
-      LOG(INFO) << "Insert following iptables rule for overlay " << name
-                << ": " << command.get();
-
-      // We have to explicitly chain the `onFailed` and `onDiscarded`
-      // events since we need to update the `State` of the overlay
-      // network on failure to execute the iptables script.
-      //
-      // NOTE: If we use `onAny` instead of `onFailed` and
-      // `onDiscarded`, and handle all conditions (success as well as
-      // failure) in the `onAny` callback, it causes a race with the
-      // callback setup in the `await` which listens to this future
-      // (checkout `updateAgentOverlays` method). Reason being that
-      // when a future is READY, all the READY callbacks are invoked
-      // before the `onAny` callbacks are invoked. This can result in
-      // the callback setup by `await` being invoked before the
-      // `onAny` call we seutp in this `Future`. This can cause
-      // problems since we check the overlay `State` in
-      // `_updateAgentOverlays`, which might not be set if this race
-      // were to occur, even though the overlay configuration went
-      // through fine.
-      return runScriptCommand(command.get())
-        .then(defer(self(), overlaySuccess))
-        .onFailed(defer(self(), overlayFailure))
-        .onDiscarded(defer(self(),lambda::bind(overlayFailure, "discarded"))) ;
-    }
+    return Nothing();
   }
 
+  Try<IPNetwork> subnet = IPNetwork::parse(
+      overlay.mesos_bridge().ip(),
+      AF_INET);
 
-  Future<Nothing> configureMesosNetwork(const string& name)
-  {
-    CHECK(overlays.contains(name));
+  if (subnet.isError()) {
+    return Failure("Failed to parse bridge ip: " + subnet.error());
+  }
 
-    const AgentOverlayInfo& overlay = overlays[name];
+  AgentNetworkConfig _networkConfig;
+  _networkConfig.CopyFrom(networkConfig);
 
-    if (!networkConfig.mesos_bridge()) {
-      LOG(INFO) << "Not configuring Mesos network for '" << name
-                << "' since operator has disallowed `mesos_bridge`.";
-      if (overlay.has_mesos_bridge()) {
-        LOG(WARNING) << " We are ignoring request from Master to configure "
-                     << "`mesos_bridge` for " << name
-                     << " since operator has not configured agent to configure "
-                     << "`mesos_bridge`.";
-      }
-      return Nothing();
-    }
+  auto config = [name, subnet, overlay, _networkConfig](JSON::ObjectWriter* writer) {
+    writer->field("name", name);
+    writer->field("type", "bridge");
+    writer->field("bridge", overlay.mesos_bridge().name());
+    writer->field("isGateway", true);
+    writer->field("ipMasq", false);
+    writer->field("mtu", _networkConfig.overlay_mtu());
 
-    Try<IPNetwork> subnet = IPNetwork::parse(
-        overlay.mesos_bridge().ip(),
-        AF_INET);
-
-    if (subnet.isError()) {
-      return Failure("Failed to parse bridge ip: " + subnet.error());
-    }
-
-    AgentNetworkConfig _networkConfig;
-    _networkConfig.CopyFrom(networkConfig);
-
-    auto config = [name, subnet, overlay, _networkConfig](JSON::ObjectWriter* writer) {
-      writer->field("name", name);
-      writer->field("type", "bridge");
-      writer->field("bridge", overlay.mesos_bridge().name());
-      writer->field("isGateway", true);
-      writer->field("ipMasq", false);
-      writer->field("mtu", _networkConfig.overlay_mtu());
-
-      writer->field("ipam", [subnet](JSON::ObjectWriter* writer) {
+    writer->field("ipam", [subnet](JSON::ObjectWriter* writer) {
         writer->field("type", "host-local");
         writer->field("subnet", stringify(subnet.get()));
 
         writer->field("routes", [](JSON::ArrayWriter* writer) {
           writer->element([](JSON::ObjectWriter* writer) {
             writer->field("dst", "0.0.0.0/0");
+            });
           });
         });
-      });
-    };
+  };
 
-    Try<Nothing> write = os::write(
-        path::join(cniDir, name + ".cni"),
-        jsonify(config));
+  Try<Nothing> write = os::write(
+      path::join(cniDir, name + ".cni"),
+      jsonify(config));
 
-    if (write.isError()) {
-      return Failure("Failed to write CNI config: " + write.error());
+  if (write.isError()) {
+    return Failure("Failed to write CNI config: " + write.error());
+  }
+
+  return Nothing();
+}
+
+
+Future<Nothing> ManagerProcess::configureDockerNetwork(const string& name)
+{
+  CHECK(overlays.contains(name));
+
+  if (!networkConfig.docker_bridge()) {
+    LOG(INFO) << "Not configuring Docker network for '" << name
+              << "' since operator has disallowed `docker_bridge`.";
+
+    if (overlays[name].has_docker_bridge()) {
+      LOG(WARNING) << " We are ignoring request from Master to configure "
+                   << "`docker_bridge` for " << name
+                   << " since operator has not configured agent to configure "
+                   << "`docker_bridge`.";
     }
-
     return Nothing();
   }
 
-  Future<Nothing> configureDockerNetwork(const string& name)
-  {
-    CHECK(overlays.contains(name));
+  return checkDockerNetwork(name)
+    .then(defer(self(),
+          &Self::_configureDockerNetwork,
+          name,
+          lambda::_1));
+}
 
-    if (!networkConfig.docker_bridge()) {
-      LOG(INFO) << "Not configuring Docker network for '" << name
-                << "' since operator has disallowed `docker_bridge`.";
 
-      if (overlays[name].has_docker_bridge()) {
-        LOG(WARNING) << " We are ignoring request from Master to configure "
-                     << "`docker_bridge` for " << name
-                     << " since operator has not configured agent to configure "
-                     << "`docker_bridge`.";
-      }
-      return Nothing();
-    }
+Future<bool> ManagerProcess::checkDockerNetwork(const string& name)
+{
+  vector<string> argv = {
+    "docker",
+    "network",
+    "inspect",
+    name
+  };
 
-    return checkDockerNetwork(name)
-      .then(defer(self(),
-                  &Self::_configureDockerNetwork,
-                  name,
-                  lambda::_1));
+  Try<Subprocess> s = subprocess(
+      "docker",
+      argv,
+      Subprocess::PATH("/dev/null"),
+      Subprocess::PATH("/dev/null"),
+      Subprocess::PATH("/dev/null"));
+
+  if (s.isError()) {
+    return Failure("Unable to execute docker network inspect: " + s.error());
   }
 
-  Future<bool> checkDockerNetwork(const string& name)
-  {
-    vector<string> argv = {
-      "docker",
-      "network",
-      "inspect",
-      name
-    };
-
-    Try<Subprocess> s = subprocess(
-        "docker",
-        argv,
-        Subprocess::PATH("/dev/null"),
-        Subprocess::PATH("/dev/null"),
-        Subprocess::PATH("/dev/null"));
-
-    if (s.isError()) {
-      return Failure("Unable to execute docker network inspect: " + s.error());
-    }
-
-    return s->status()
-      .then([](const Option<int>& status) -> Future<bool> {
+  return s->status()
+    .then([](const Option<int>& status) -> Future<bool> {
         if (status.isNone()) {
-          return Failure("Failed to reap the subprocess");
+        return Failure("Failed to reap the subprocess");
         }
 
         if (status.get() != 0) {
-          return false;
+        return false;
         }
 
         return true;
-      });
-  }
-
-  Future<Nothing> _configureDockerNetwork(
-      const string& name,
-      bool exists)
-  {
-    if (exists) {
-      LOG(INFO) << "Docker network '" << name << "' already exists";
-      return Nothing();
-    }
-
-    CHECK(overlays.contains(name));
-    const AgentOverlayInfo& overlay = overlays[name];
-
-    if (!overlay.has_docker_bridge()) {
-      return Failure("Missing Docker bridge info");
-    }
-
-    Try<IPNetwork> subnet = IPNetwork::parse(
-        overlay.docker_bridge().ip(),
-        AF_INET);
-
-    if (subnet.isError()) {
-      return Failure("Failed to parse bridge ip: " + subnet.error());
-    }
-
-    Try<string> dockerCommand = strings::format(
-        "docker network create --driver=bridge --subnet=%s "
-        "--opt=com.docker.network.bridge.name=%s "
-        "--opt=com.docker.network.bridge.enable_ip_masquerade=false "
-        "--opt=com.docker.network.driver.mtu=%s %s",
-        stringify(subnet.get()),
-        overlay.docker_bridge().name(),
-        stringify(networkConfig.overlay_mtu()),
-        name);
-    if (dockerCommand.isError()) {
-      return Failure(
-          "Failed to create docker network command: " +
-          dockerCommand.error());
-    }
-
-    return runScriptCommand(dockerCommand.get())
-      .then(defer(self(),
-                  &Self::__configureDockerNetwork,
-                  name,
-                  lambda::_1));
-  }
-
-  Future<Nothing> __configureDockerNetwork(
-      const string& name,
-      const Future<string> &result)
-  {
-    CHECK(overlays.contains(name));
-
-    if (!result.isReady()) {
-      return Failure(
-          "Unable to configure docker network: " +
-          (result.isDiscarded() ? "discarded" : result.failure()));
-    }
-
-    // We want all overlay instances to talk to each other.
-    // However, Docker disallows this. So we will install a de-funct
-    // rule in the DOCKER-ISOLATION chain to bypass any isolation
-    // docker might be trying to enforce.
-    const string iptablesCommand = "iptables -D DOCKER-ISOLATION -j RETURN; "
-        "iptables -I DOCKER-ISOLATION 1 -j RETURN";
-
-    return runScriptCommand(iptablesCommand)
-      .then([]() -> Future<Nothing> {
-        return Nothing();
-      });
-  }
-
-private:
-  enum State
-  {
-    REGISTERING = 0,
-    REGISTERED = 1,
-  };
-
-  ManagerProcess(
-      const string& _cniDir,
-      const AgentNetworkConfig _networkConfig,
-      const uint32_t _maxConfigAttempts,
-      Owned<MasterDetector> _detector)
-    : ProcessBase(AGENT_MANAGER_PROCESS_ID),
-      cniDir(_cniDir),
-      networkConfig(_networkConfig),
-      maxConfigAttempts(_maxConfigAttempts),
-      detector(_detector)
-  {
-    configAttempts = 0;
-
-    // Make the Manager wait only if we have to configure mesos
-    // networks.
-    if (networkConfig.mesos_bridge() == false) {
-      connected.set(Nothing());
-    }
-  }
-
-  const string cniDir;
-  const AgentNetworkConfig networkConfig;
-
-  State state;
-  Promise<Nothing> connected;
-
-  Option<UPID> overlayMaster;
-
-  hashmap<string, AgentOverlayInfo> overlays;
-
-  const uint32_t maxConfigAttempts;
-
-  uint32_t configAttempts;
-
-  Owned<MasterDetector> detector;
-
-};
+        });
+}
 
 
-class Manager : public Anonymous
+Future<Nothing> ManagerProcess::_configureDockerNetwork(
+    const string& name,
+    bool exists)
 {
-public:
-  static Try<Manager*> createManager(
-      const AgentConfig& agentConfig,
-      Owned<MasterDetector> detector)
-  {
-    Try<Owned<ManagerProcess>> process =
-      ManagerProcess::createManagerProcess(
-          agentConfig.cni_dir(),
-          agentConfig.has_network_config() ?
-          agentConfig.network_config() : AgentNetworkConfig(),
-          agentConfig.max_configuration_attempts(),
-          detector);
-
-    if (process.isError()) {
-      return Error(
-          "Unable to create `ManagerProcess`:" +
-          process.error());
-    }
-
-    return new Manager(process.get());
+  if (exists) {
+    LOG(INFO) << "Docker network '" << name << "' already exists";
+    return Nothing();
   }
 
-  virtual ~Manager()
-  {
-    terminate(process.get());
-    wait(process.get());
+  CHECK(overlays.contains(name));
+  const AgentOverlayInfo& overlay = overlays[name];
+
+  if (!overlay.has_docker_bridge()) {
+    return Failure("Missing Docker bridge info");
   }
 
-private:
-  Manager(Owned<ManagerProcess>& _process)
-    :process(_process)
-  {
-    spawn(process.get());
+  Try<IPNetwork> subnet = IPNetwork::parse(
+      overlay.docker_bridge().ip(),
+      AF_INET);
 
-    // Wait for the overlay-manager to be ready before
-    // allowing the Agent to proceed.
-    Future<Nothing> ready = process->ready();
-    ready.await();
-
-    LOG(INFO) << "Overlay agent is ready";
+  if (subnet.isError()) {
+    return Failure("Failed to parse bridge ip: " + subnet.error());
   }
 
-  Owned<ManagerProcess> process;
-};
+  Try<string> dockerCommand = strings::format(
+      "docker network create --driver=bridge --subnet=%s "
+      "--opt=com.docker.network.bridge.name=%s "
+      "--opt=com.docker.network.bridge.enable_ip_masquerade=false "
+      "--opt=com.docker.network.driver.mtu=%s %s",
+      stringify(subnet.get()),
+      overlay.docker_bridge().name(),
+      stringify(networkConfig.overlay_mtu()),
+      name);
+  if (dockerCommand.isError()) {
+    return Failure(
+        "Failed to create docker network command: " +
+        dockerCommand.error());
+  }
+
+  return runScriptCommand(dockerCommand.get())
+    .then(defer(self(),
+          &Self::__configureDockerNetwork,
+          name,
+          lambda::_1));
+}
+
+
+Future<Nothing> ManagerProcess::__configureDockerNetwork(
+    const string& name,
+    const Future<string> &result)
+{
+  CHECK(overlays.contains(name));
+
+  if (!result.isReady()) {
+    return Failure(
+        "Unable to configure docker network: " +
+        (result.isDiscarded() ? "discarded" : result.failure()));
+  }
+
+  // We want all overlay instances to talk to each other.
+  // However, Docker disallows this. So we will install a de-funct
+  // rule in the DOCKER-ISOLATION chain to bypass any isolation
+  // docker might be trying to enforce.
+  const string iptablesCommand = "iptables -D DOCKER-ISOLATION -j RETURN; "
+    "iptables -I DOCKER-ISOLATION 1 -j RETURN";
+
+  return runScriptCommand(iptablesCommand)
+    .then([]() -> Future<Nothing> {
+        return Nothing();
+        });
+}
+
+ManagerProcess::ManagerProcess(
+    const string& _cniDir,
+    const AgentNetworkConfig _networkConfig,
+    const uint32_t _maxConfigAttempts,
+    Owned<MasterDetector> _detector)
+: ProcessBase(AGENT_MANAGER_PROCESS_ID),
+  cniDir(_cniDir),
+  networkConfig(_networkConfig),
+  maxConfigAttempts(_maxConfigAttempts),
+  detector(_detector)
+{
+  configAttempts = 0;
+
+  // Make the Manager wait only if we have to configure mesos
+  // networks.
+  if (networkConfig.mesos_bridge() == false) {
+    connected.set(Nothing());
+  }
+}
+
+
+Try<Manager*> Manager::create(const AgentConfig& agentConfig)
+{
+  Try<Owned<ManagerProcess>> process = ManagerProcess::create(agentConfig);
+  if (process.isError()) {
+    return Error(
+        "Unable to create `ManagerProcess`:" +
+        process.error());
+  }
+
+  return new Manager(process.get());
+}
+
+
+Manager::~Manager()
+{
+  terminate(process.get());
+  wait(process.get());
+}
+
+
+Manager::Manager(const Owned<ManagerProcess>& _process)
+  :process(_process)
+{
+  spawn(process.get());
+
+  // Wait for the overlay-manager to be ready before
+  // allowing the Agent to proceed.
+  Future<Nothing> ready = process->ready();
+  ready.await();
+
+  LOG(INFO) << "Overlay agent is ready";
+}
 
 } // namespace agent {
 } // namespace overlay{
@@ -933,51 +940,7 @@ Anonymous* createOverlayAgentManager(const Parameters& parameters)
     return nullptr;
   }
 
-  Option<string> master = None();
-  if (master.isNone() && agentConfig->has_master()) {
-    master = agentConfig->master();
-  } else {
-    master = os::getenv(MESOS_MASTER);
-
-    // If the agent is running as part of the master it will need to
-    // get the ZK URL from 'MESOS_ZK'.
-    if (master.isNone()) {
-      master = os::getenv(MESOS_ZK);
-    }
-  }
-
-  // We should have learned about the master either from the JSON
-  // config of the module, or from the 'MESOS_MASTER' environment
-  // variable.
-  if (master.isNone()) {
-    LOG(ERROR)
-      << "Master unspecified, hence cannot create a "
-      << "`MasterDetector`. Please specify master either through "
-      << "the JSON config, or 'MESOS_MASTER' environment variable";
-
-    return nullptr;
-  }
-
-  Try<MasterDetector*> detector = MasterDetector::create(master.get());
-  if (detector.isError()) {
-    LOG(ERROR) << "Unable to create master detector: "
-               << detector.error();
-
-    return nullptr;
-  }
-
-  Try<Nothing> mkdir = os::mkdir(agentConfig->cni_dir());
-  if (mkdir.isError()) {
-    LOG(ERROR)
-      << "Failed to create CNI config directory: " << mkdir.error();
-
-    return nullptr;
-  }
-
-  Try<Manager*> manager = Manager::createManager(
-      agentConfig.get(),
-      Owned<MasterDetector>(detector.get()));
-
+  Try<Manager*> manager = Manager::create(agentConfig.get());
   if (manager.isError()) {
     LOG(ERROR)
       << "Unable to create Agent manager module: "
