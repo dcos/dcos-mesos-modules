@@ -527,8 +527,8 @@ protected:
     // The below command is a script consisting of three commands:
     // <set ipset> && <check iptables rule exists> ||
     // <insert iptables rule>
-    if (!overlays[name].has_mesos_bridge() &&
-        !overlays[name].has_docker_bridge()) {
+    if (!networkConfig.mesos_bridge() &&
+        !networkConfig.docker_bridge()) {
       return overlaySuccess("");
     } else {
       const string overlaySubnet = overlays[name].info().subnet();
@@ -588,9 +588,15 @@ protected:
 
     const AgentOverlayInfo& overlay = overlays[name];
 
-    if (!overlay.has_mesos_bridge()) {
+    if (!networkConfig.mesos_bridge()) {
       LOG(INFO) << "Not configuring Mesos network for '" << name
-                << "' since no `mesos_bridge` specified.";
+                << "' since operator has disallowed `mesos_bridge`.";
+      if (overlay.has_mesos_bridge()) {
+        LOG(WARNING) << " We are ignoring request from Master to configure "
+                     << "`mesos_bridge` for " << name
+                     << " since operator has not configured agent to configure "
+                     << "`mesos_bridge`.";
+      }
       return Nothing();
     }
 
@@ -640,11 +646,16 @@ protected:
   {
     CHECK(overlays.contains(name));
 
-    const AgentOverlayInfo& overlay = overlays[name];
-
-    if (!overlay.has_docker_bridge()) {
+    if (!networkConfig.docker_bridge()) {
       LOG(INFO) << "Not configuring Docker network for '" << name
-                << "' since no `docker_bridge` specified.";
+                << "' since operator has disallowed `docker_bridge`.";
+
+      if (overlays[name].has_docker_bridge()) {
+        LOG(WARNING) << " We are ignoring request from Master to configure "
+                     << "`docker_bridge` for " << name
+                     << " since operator has not configured agent to configure "
+                     << "`docker_bridge`.";
+      }
       return Nothing();
     }
 
