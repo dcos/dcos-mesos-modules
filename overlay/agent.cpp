@@ -260,6 +260,26 @@ protected:
 
       overlays[name] = overlay;
 
+      // Older overlay Master's (pre 1.9) were not honoring the
+      // agent's `network_config` setting if they would find an
+      // overlay configuration for this agent in their replicated log
+      // with a `network_config` setting that was different than what
+      // the agent has. So we need to enforce the agent's setting to
+      // make the agent work during upgrades.
+      if (!networkConfig.allocate_subnet()) {
+        overlays[name].clear_subnet();
+        overlays[name].clear_mesos_bridge();
+        overlays[name].clear_docker_bridge();
+      } else {
+        if (!networkConfig.mesos_bridge()) {
+          overlays[name].clear_mesos_bridge();
+        }
+
+        if (!networkConfig.docker_bridge()) {
+          overlays[name].clear_docker_bridge();
+        }
+      }
+      
       futures.push_back(configure(name));
     }
 
