@@ -879,6 +879,211 @@ TEST_F(OverlayTest, ROOT_checkAgentRecovery)
 }
 
 
+// Tests if the overlay allows the agents `network_config` to be
+// changed across agent restarts.
+TEST_F(OverlayTest, ROOT_checkAgentNetworkConfigChange)
+{
+  Try<Owned<cluster::Master>> master = StartMaster();
+  ASSERT_SOME(master);
+
+  LOG(INFO) << "Master PID: " << master.get()->pid;
+
+  // Ask overlay Master to use the replicated log by setting
+  // `replicated_log_dir`. We are not specifying `zk` configuration so
+  // the `quorum` will default to "1".
+  MasterConfig masterOverlayConfig;
+  masterOverlayConfig
+    .set_replicated_log_dir("overlay_replicated_log");
+
+  Try<Owned<Anonymous>> masterModule = startOverlayMaster(masterOverlayConfig);
+  ASSERT_SOME(masterModule);
+
+  // Master `Anonymous` module created successfully. Lets see if we
+  // can hit the `state` endpoint of the Master.
+  UPID overlayMaster = UPID(master.get()->pid);
+  overlayMaster.id = MASTER_MANAGER_PROCESS_ID;
+
+  AgentConfig agentOverlayConfig;
+  agentOverlayConfig.set_master(stringify(overlayMaster.address));
+  // Enable Mesos network.
+  agentOverlayConfig.mutable_network_config()->set_mesos_bridge(true);
+  // Enable Docker network.
+  agentOverlayConfig.mutable_network_config()->set_docker_bridge(true);
+
+  // Setup a future to notify the test that Agent overlay module has
+  // registered.
+  Future<AgentRegisteredAcknowledgement> agentRegisteredAcknowledgement =
+    FUTURE_PROTOBUF(AgentRegisteredAcknowledgement(), _, _);
+
+  Try<Owned<Anonymous>> agentModule = startOverlayAgent(agentOverlayConfig);
+  ASSERT_SOME(agentModule);
+
+  AWAIT_READY(agentRegisteredAcknowledgement);
+
+  // Agent manager has been created. Hit the `overlay` endpoint to
+  // check that module is up and responding.
+  UPID overlayAgent = UPID(master.get()->pid);
+  overlayAgent.id = AGENT_MANAGER_PROCESS_ID;
+
+  Future<Response> agentResponse = process::http::get(
+      overlayAgent,
+      "overlay");
+
+  AWAIT_EXPECT_RESPONSE_STATUS_EQ(OK().status, agentResponse);
+  AWAIT_EXPECT_RESPONSE_HEADER_EQ(
+      APPLICATION_JSON,
+      "Content-Type",
+      agentResponse);
+
+  // The `overlay` end-point is backed by the
+  // mesos::modules::overlay::AgentInfo protobuf, so need to parse the
+  // JSON and verify that the correct configuration is being
+  // reflected.
+  Try<AgentInfo> info = parseAgentOverlay(agentResponse->body);
+  ASSERT_SOME(info);
+
+  // There should be only 1 overlay.
+  ASSERT_EQ(1, info->overlays_size());
+  EXPECT_EQ(OVERLAY_NAME, info->overlays(0).info().name());
+
+  Try<net::IPNetwork> agentNetwork = net::IPNetwork::parse(
+      info->overlays(0).subnet(), AF_INET);
+  ASSERT_SOME(agentNetwork);
+  EXPECT_EQ(24, agentNetwork->prefix());
+
+  Try<net::IPNetwork> allocatedSubnet = net::IPNetwork::parse(
+      "192.168.0.0/24", AF_INET);
+
+  ASSERT_SOME(allocatedSubnet);
+  EXPECT_EQ(allocatedSubnet.get(), agentNetwork.get());
+
+  // Hit the master end-point again.
+  Future<Response> masterResponse = process::http::get(
+      overlayMaster,
+      "state");
+
+  AWAIT_EXPECT_RESPONSE_STATUS_EQ(OK().status, masterResponse);
+  AWAIT_EXPECT_RESPONSE_HEADER_EQ(
+      APPLICATION_JSON,
+      "Content-Type",
+      masterResponse);
+
+  Try<State> state = parseMasterState(masterResponse->body);
+  ASSERT_SOME(state);
+  ASSERT_EQ(1, state->agents_size());
+
+  // The agent should have a single overlay configured.
+  ASSERT_EQ(1, state->agents(0).overlays_size());
+  EXPECT_EQ(OVERLAY_NAME, state->agents(0).overlays(0).info().name());
+  // Make sure mesos and docker networks are enabled.
+  EXPECT_TRUE(state->agents(0).overlays(0).has_mesos_bridge());
+  EXPECT_TRUE(state->agents(0).overlays(0).has_docker_bridge());
+
+
+  // Re-start the agent and wait for the agent to re-register.
+  Future<AgentRegisteredAcknowledgement> agentReRegisteredAcknowledgement =
+    FUTURE_PROTOBUF(AgentRegisteredAcknowledgement(), _, _);
+
+  // Kill the agent.
+  agentModule->reset();
+
+  // Disable docker.
+  agentOverlayConfig.mutable_network_config()->set_docker_bridge(false);
+
+  // re-start the agent.
+  agentModule = startOverlayAgent(agentOverlayConfig);
+  ASSERT_SOME(agentModule);
+
+  AWAIT_READY(agentReRegisteredAcknowledgement);
+  // Hit the agent end-point again.
+  agentResponse = process::http::get(
+      overlayAgent,
+      "overlay");
+
+  AWAIT_EXPECT_RESPONSE_STATUS_EQ(OK().status, agentResponse);
+  AWAIT_EXPECT_RESPONSE_HEADER_EQ(
+      APPLICATION_JSON,
+      "Content-Type",
+      agentResponse);
+
+  Try<AgentInfo> reRegisterInfo = parseAgentOverlay(agentResponse->body);
+  ASSERT_SOME(reRegisterInfo);
+
+  agentNetwork = net::IPNetwork::parse(
+      reRegisterInfo->overlays(0).subnet(), AF_INET);
+
+  ASSERT_SOME(agentNetwork);
+  EXPECT_EQ(24, agentNetwork->prefix());
+  EXPECT_EQ(allocatedSubnet.get(), agentNetwork.get());
+
+  // There should be only 1 overlay.
+  ASSERT_EQ(1, reRegisterInfo->overlays_size());
+  EXPECT_EQ(OVERLAY_NAME, reRegisterInfo->overlays(0).info().name());
+
+  EXPECT_TRUE(reRegisterInfo->overlays(0).has_mesos_bridge());
+  // The docker network should be disabled.
+  EXPECT_FALSE(reRegisterInfo->overlays(0).has_docker_bridge());
+
+  // Check the state of the overlay on the Master.
+  masterResponse = process::http::get(
+      overlayMaster,
+      "state");
+
+  AWAIT_EXPECT_RESPONSE_STATUS_EQ(OK().status, masterResponse);
+  AWAIT_EXPECT_RESPONSE_HEADER_EQ(
+      APPLICATION_JSON,
+      "Content-Type",
+      masterResponse);
+
+  state = parseMasterState(masterResponse->body);
+  ASSERT_SOME(state);
+  ASSERT_EQ(1, state->agents_size());
+
+  // The agent should have a single overlay configured.
+  ASSERT_EQ(1, state->agents(0).overlays_size());
+  EXPECT_EQ(OVERLAY_NAME, state->agents(0).overlays(0).info().name());
+  // Make sure mesos and docker networks are enabled.
+  EXPECT_TRUE(state->agents(0).overlays(0).has_mesos_bridge());
+  EXPECT_FALSE(state->agents(0).overlays(0).has_docker_bridge());
+
+  // Restart the Master and verify that the Master is seeing the new
+  // config.
+  //
+  // Kill the master.
+  masterModule->reset();
+
+  masterModule = startOverlayMaster(masterOverlayConfig);
+  ASSERT_SOME(masterModule);
+
+  // Re-start the master and wait for the Agent to re-register.
+  agentRegisteredAcknowledgement = FUTURE_PROTOBUF(
+      AgentRegisteredAcknowledgement(), _, _);
+  AWAIT_READY(agentRegisteredAcknowledgement);
+
+  // Hit the master end-point again.
+  masterResponse = process::http::get(
+      overlayMaster,
+      "state");
+
+  AWAIT_EXPECT_RESPONSE_STATUS_EQ(OK().status, masterResponse);
+  AWAIT_EXPECT_RESPONSE_HEADER_EQ(
+      APPLICATION_JSON,
+      "Content-Type",
+      masterResponse);
+
+  state = parseMasterState(masterResponse->body);
+  ASSERT_SOME(state);
+  ASSERT_EQ(1, state->agents_size());
+
+  // The agent should have a single overlay configured.
+  ASSERT_EQ(1, state->agents(0).overlays_size());
+  EXPECT_EQ(OVERLAY_NAME, state->agents(0).overlays(0).info().name());
+  // Make sure mesos and docker networks are enabled.
+  EXPECT_TRUE(state->agents(0).overlays(0).has_mesos_bridge());
+  EXPECT_FALSE(state->agents(0).overlays(0).has_docker_bridge());
+}
+
+
 // Tests if reserved network names are correctly rejected by the
 // master overlay module.
 TEST_F(OverlayTest, checkReservedNetworks)
