@@ -472,37 +472,70 @@ private:
 // Add an `AgentInfo` to a `State` object.
 class AddAgent : public Operation {
 public:
-  explicit AddAgent(const AgentInfo& _agentInfo)
-  {
-    agentInfo.CopyFrom(_agentInfo);
-  }
+  explicit AddAgent(const net::IP& _ip)
+    : ip(_ip) {}
 
   const std::string description() const
   {
-    return "Add operation for agent: " + agentInfo.ip();
+    return "Add operation for agent: " + stringify(ip);
   }
 
 protected:
   Try<bool> perform(State* networkState, hashmap<net::IP, Agent>* agents)
   {
     // Make sure the Agent we are going to add is already present in `agents`.
-    Try<net::IP> ip = net::IP::parse(agentInfo.ip(), AF_INET);
-    if (ip.isError()) {
-      return Error("Unable to parse the Agent IP: " + ip.error());
-    }
-
-    if (!agents->contains(ip.get())) {
+    if (!agents->contains(ip)) {
       return Error(
-          "Could not find the Agent (" + stringify(ip.get()) +
-          ") that needed to be added to `State`.");
+          "Could not find the Agent (" + stringify(ip) +
+          ") in `agents` database, that needed to be updated in `State`.");
     }
 
-    networkState->add_agents()->CopyFrom(agentInfo);
+    networkState->add_agents()->CopyFrom(agents->at(ip).getAgentInfo());
     return true;
   }
 
 private:
-  AgentInfo agentInfo;
+  net::IP ip;
+};
+
+// Add an `AgentInfo` to a `State` object.
+class UpdateAgent : public Operation {
+public:
+  explicit UpdateAgent(const net::IP& _ip)
+    : ip(_ip) {}
+
+  const std::string description() const
+  {
+    return "Update operation for agent: " + stringify(ip);
+  }
+
+protected:
+  Try<bool> perform(State* networkState, hashmap<net::IP, Agent>* agents)
+  {
+    // Make sure the Agent we are going to add is already present in `agents`.
+    if (!agents->contains(ip)) {
+      return Error(
+          "Could not find the Agent (" + stringify(ip) +
+          ") in `agents` database, that needed to be updated in `State`.");
+    }
+
+    const string agentIP = stringify(ip);
+    for (int i = 0; i < networkState->agents_size(); i++) {
+      if (agentIP == networkState->agents(i).ip()) {
+        networkState->mutable_agents(i)->CopyFrom(
+            agents->at(ip).getAgentInfo());
+
+        return true;
+      }
+    }
+
+    return Error(
+        "Could not find the Agent (" + stringify(ip) +
+        ") in `State` that needs to be updated");
+  }
+
+private:
+  net::IP ip;
 };
 
 
@@ -778,6 +811,120 @@ protected:
     install<AgentRegisteredMessage>(&ManagerProcess::agentRegistered);
   }
 
+  void reRegisterAgent(
+      const UPID& pid,
+      const RegisterAgentMessage& registerMessage)
+  {
+    LOG(INFO) << "Agent " << pid << " re-registering.";
+
+    // Get the overlays for each agent. Make sure that the subnet
+    // allocation, mesos network and docker network configured for
+    // the overlay, on the agent, matches the network configuration
+    // of the agent. If it does not, that means the agents network
+    // configuration has changed and we need update the mesos and
+    // docker networks and allocated subnets for the overlay
+    // on this agent.
+    list<AgentOverlayInfo> agentOverlays = agents.at(pid.address.ip).getOverlays();
+
+    bool agentMutated = false;
+
+    foreach (AgentOverlayInfo& overlay, agentOverlays) {
+      bool overlayMutated = false;
+
+      if (overlay.has_subnet() !=
+          registerMessage.network_config().allocate_subnet()) {
+        overlayMutated = true;
+        overlay.clear_mesos_bridge();
+        overlay.clear_docker_bridge();
+
+        // Free the subnet.
+        if (overlay.has_subnet()) {
+          Try<IPNetwork> subnet = IPNetwork::parse(overlay.subnet(), AF_INET);
+          if (subnet.isError()) {
+            LOG(ERROR) << "Unable to parse subnet: " << overlay.subnet()
+              << " allocated to overlay network "
+              << overlay.info().name() << " on agent "
+              << stringify(pid);
+            return;
+          }
+
+          overlays[overlay.info().name()]->free(subnet.get());
+        }
+
+        overlay.clear_subnet();
+      } else {
+        if (overlay.has_mesos_bridge() !=
+            registerMessage.network_config().mesos_bridge()) {
+          overlayMutated = true;
+          overlay.clear_mesos_bridge();
+        } 
+
+        if (overlay.has_docker_bridge() !=
+            registerMessage.network_config().docker_bridge()) {
+          overlayMutated = true;
+          overlay.clear_docker_bridge();
+        }
+      }
+
+      // If the overlay has changed. We need to re-allocate it for
+      // this agent.
+      if (overlayMutated) {
+        agentMutated = true;
+        allocateAgentOverlay(&overlay, pid, registerMessage);
+      }
+    }
+
+    if (agentMutated) {
+      // Remove the agent from the `agents` database and re-add it
+      // with the updated overlays.
+      agents.erase(pid.address.ip);
+      agents.emplace(pid.address.ip, Agent(pid.address.ip));
+
+      Agent* agent = &(agents.at(pid.address.ip));
+
+      foreach (const AgentOverlayInfo& overlay, agentOverlays) {
+        agent->addOverlay(overlay);
+      }
+    }
+
+    // Ensure that the agent is added to the replicated log.
+    const string agentIP = stringify(pid.address.ip);
+    for (int i = 0; i < networkState.agents_size(); i++) {
+      if (agentIP == networkState.agents(i).ip()) {
+        if (agentMutated) {
+          // The overlay configuration for the agent has changed.
+          // If the agent is already present in the replicated log
+          // update the `networkState in the replicated log before
+          // sending the overlay configuration to the Agent.
+          update(Owned<Operation>(
+                new UpdateAgent(pid.address.ip)))
+            .onAny(defer(self(),
+                  &ManagerProcess::_registerAgent,
+                  pid,
+                  lambda::_1));
+        } else {
+          // The overlay configuration for the agent is what is
+          // already present in the `networkState. Given that
+          // `networkState` already has this Agent, the information
+          // is already stored in replicated log and hence we can
+          // just send an "ACK" to the agent with the configuration
+          // info.
+          _registerAgent(pid, true);
+        }
+        return;
+      }
+    }
+
+    // The fact that we have reached here implies that the Agent
+    // exists in the `agents` database, but its information has not
+    // been updated in the replicated log. Simply drop this message
+    // since the Agent will re-register.
+    LOG(INFO) << "Agent " << pid
+      << " info has not been updated in the replicated log."
+      << " Hence dropping this registration request.";
+    return;
+  }
+
   void registerAgent(
       const UPID& pid,
       const RegisterAgentMessage& registerMessage)
@@ -802,32 +949,10 @@ protected:
       } // else -> `storedState.isSome` , we have recovered.
     }
 
-    if (agents.contains(pid.address.ip)) {
-      LOG(INFO) << "Agent " << pid << " re-registering.";
-
-      // Ensure that the agent is added to the replicated log.
-      const string agentIP = stringify(pid.address.ip);
-      for (int i = 0; i < networkState.agents_size(); i++) {
-        if (agentIP == networkState.agents(i).ip()) {
-          // Given that `networkState` already has this Agent, the
-          // information is already stored in replicated log and hence
-          // we can just send an "ACK" to the agent with the
-          // configuration info
-          _registerAgent(pid, true);
-          return;
-        }
-      }
-
-      // The fact that we have reached here implies that the Agent
-      // exists in the `agents` database, but its information has not
-      // been updated in the replicated log. Simply drop this message
-      // since the Agent will re-register.
-      LOG(INFO) << "Agent " << pid
-                << " info has not been updated in the replicated log."
-                << " Hence dropping this registration request.";
+    if (agents.contains(pid.address.ip)) { // Re-registration.
+      reRegisterAgent(pid, registerMessage);
       return;
-    } else {
-      // New Agent.
+    } else { // New Agent.
       LOG(INFO) << "New registration from pid: " << pid;
       agents.emplace(pid.address.ip, Agent(pid.address.ip));
 
@@ -863,32 +988,7 @@ protected:
         _overlay.mutable_info()->set_subnet(stringify(overlay->network));
         _overlay.mutable_info()->set_prefix(overlay->prefix);
 
-        if (registerMessage.network_config().allocate_subnet()) {
-          Try<net::IPNetwork> _agentSubnet = overlay->allocate();
-          if (_agentSubnet.isError()) {
-            LOG(ERROR) << "Cannot allocate subnet from overlay "
-                       << name << " to Agent " << pid << ":"
-                       << _agentSubnet.error();
-            continue;
-          }
-
-          agentSubnet = _agentSubnet.get();
-          _overlay.set_subnet(stringify(agentSubnet.get()));
-
-          // Allocate bridges for Mesos and Docker.
-          Try<Nothing> bridges = allocateBridges(
-              &_overlay,
-              registerMessage.network_config());
-
-          if (bridges.isError()) {
-            LOG(ERROR) << "Unable to allocate bridge for network "
-                       << name << ": " << bridges.error();
-            if ( agentSubnet.isSome()) {
-              overlay->free(agentSubnet.get());
-            }
-            continue;
-          }
-        }
+        allocateAgentOverlay(&_overlay, pid, registerMessage);
 
         VxLANInfo vxlan;
         vxlan.set_vni(1024);
@@ -907,7 +1007,7 @@ protected:
       // Update the `networkState in the replicated log before
       // sending the overlay configuration to the Agent.
       update(Owned<Operation>(
-            new AddAgent(agents.at(pid.address.ip).getAgentInfo())))
+            new AddAgent(pid.address.ip)))
         .onAny(defer(self(),
               &ManagerProcess::_registerAgent,
               pid,
@@ -1158,6 +1258,41 @@ private:
   {
     networkState.mutable_network()->CopyFrom(_networkConfig);
   };
+
+  void allocateAgentOverlay(
+      AgentOverlayInfo* overlay,
+      const UPID& pid,
+      const RegisterAgentMessage& registerMessage)
+  {
+    if (registerMessage.network_config().allocate_subnet() &&
+        !overlay->has_subnet()) {
+      Try<net::IPNetwork> agentSubnet =
+        overlays[overlay->info().name()]->allocate();
+
+      if (agentSubnet.isError()) {
+        LOG(ERROR) << "Cannot allocate subnet from overlay "
+                   << overlay->info().name() << " to Agent " << pid << ":"
+                   << agentSubnet.error();
+        return;
+      }
+
+      overlay->set_subnet(stringify(agentSubnet.get()));
+
+      // Allocate bridges for Mesos and Docker.
+      Try<Nothing> bridges = allocateBridges(
+          overlay,
+          registerMessage.network_config());
+
+      if (bridges.isError()) {
+        LOG(ERROR) << "Unable to allocate bridge for network "
+                   << overlay->info().name() << ": " << bridges.error();
+
+        if ( agentSubnet.isSome()) {
+          overlays[overlay->info().name()]->free(agentSubnet.get());
+        }
+      }
+    }
+  }
 
   Try<Nothing> allocateBridges(
       AgentOverlayInfo* _overlay,
