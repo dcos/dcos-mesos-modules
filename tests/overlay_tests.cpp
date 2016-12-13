@@ -90,6 +90,7 @@ using namespace mesos::internal::tests;
 
 using std::cout;
 using std::endl;
+using std::string;
 
 using process::Future;
 using process::Owned;

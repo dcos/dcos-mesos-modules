@@ -1,5 +1,6 @@
 #include <map>
 #include <string>
+#include <vector>
 
 #include <mesos/mesos.hpp>
 
@@ -29,6 +30,9 @@
 
 using namespace mesos;
 using namespace process;
+
+using std::string;
+using std::vector;
 
 using mesos::slave::ContainerLogger;
 

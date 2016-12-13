@@ -34,6 +34,8 @@
 
 using namespace mesos::internal::tests;
 
+using std::string;
+
 using process::Owned;
 
 using mesos::Parameter;
