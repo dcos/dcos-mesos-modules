@@ -12,6 +12,7 @@
 #include <stout/jsonify.hpp>
 #include <stout/os.hpp>
 #include <stout/os/exists.hpp>
+#include <stout/os/rename.hpp>
 #include <stout/os/write.hpp>
 #include <stout/protobuf.hpp>
 #include <stout/try.hpp>
@@ -93,6 +94,8 @@ namespace modules {
 namespace overlay {
 namespace agent {
 
+constexpr char CNI_TMP_DIR[] = "/tmp/mesos-overlay/cni";
+constexpr Duration DOCKER_TIMEOUT = Minutes(1);
 constexpr Duration REGISTRATION_RETRY_INTERVAL_MAX = Minutes(10);
 constexpr Duration INITIAL_BACKOFF_PERIOD = Seconds(5);
 
@@ -107,6 +110,15 @@ static string OVERLAY_HELP()
 }
 
 
+template<typename T>
+static Future<T> failDockerNetwork(
+    Future<T> future,
+    const string& error)
+{
+  future.discard();
+  return Failure(error);
+}
+
 class ManagerProcess : public ProtobufProcess<ManagerProcess>
 {
 public:
@@ -116,6 +128,25 @@ public:
       const uint32_t maxConfigAttempts,
       Owned<MasterDetector>& detector)
   {
+    // Create a temp directory to store the CNI configs during overlay
+    // configuration.
+    Try<Nothing> dir = os::mkdir(CNI_TMP_DIR);
+    if (dir.isError()) {
+        return Error(
+            "Unable to create temp base directory "
+            + stringify(CNI_TMP_DIR)
+            + " for CNI: " + dir.error());
+    }
+
+    Try<string> cniTempDir = os::mkdtemp(path::join(CNI_TMP_DIR,"XXXXXX"));
+    if (cniTempDir.isError()) {
+      return Error(
+          "Unable to create temp directory for CNI: " + cniTempDir.error());
+          
+    }
+
+    const string ipset = networkConfig.ipset();
+
     // It is imperative that MASQUERADE rules are not enforced on
     // overlay traffic. To ensure that overlay traffic is not NATed,
     // the Agent module disables masquerade on Docker and Mesos
@@ -136,13 +167,17 @@ public:
     // `docker_bridge` have been enabled in the `AgentNetworkConfig`.
     if (networkConfig.mesos_bridge() || networkConfig.docker_bridge()) {
       Try<string> ipsetCommand = strings::format(
-          "ipset create -exist %s hash:net counters && "
-          "ipset add -exist %s 0.0.0.0/1 && "
-          "ipset add -exist %s 128.0.0.0/1 && "
-          "ipset add -exist %s 127.0.0.0/1",
+          "%s create -exist %s hash:net counters && "
+          "%s add -exist %s 0.0.0.0/1 && "
+          "%s add -exist %s 128.0.0.0/1 && "
+          "%s add -exist %s 127.0.0.0/1",
+          ipset,
           IPSET_OVERLAY,
+          ipset,
           IPSET_OVERLAY,
+          ipset,
           IPSET_OVERLAY,
+          ipset,
           IPSET_OVERLAY);
 
       if (ipsetCommand.isError()) {
@@ -150,20 +185,21 @@ public:
             "Unable to create `ipset` command: " + ipsetCommand.error());
       }
 
-      Future<string> ipset = runScriptCommand(ipsetCommand.get());
+      Future<string> ipsetScript = runScriptCommand(ipsetCommand.get());
 
-      ipset.await();
+      ipsetScript.await();
 
-      if (!ipset.isReady()) {
+      if (!ipsetScript.isReady()) {
         return Error(
             "Unable to create ipset:" +
-            (ipset.isFailed() ? ipset.failure() : "discarded"));
+            (ipsetScript.isFailed() ? ipsetScript.failure() : "discarded"));
       }
     }
 
     return Owned<ManagerProcess>(
         new ManagerProcess(
           cniDir,
+          cniTempDir.get(),
           networkConfig,
           maxConfigAttempts,
           detector));
@@ -343,27 +379,68 @@ protected:
     configAttempts++;
 
     if (configAttempts > maxConfigAttempts) {
-      EXIT(EXIT_FAILURE)
-        << "Could not configure some overlay networks after "
-        << configAttempts << " attempts hence bailing ... ";
-    }
-
-    // We move into `REGISTERED` state only if all overlays have been
-    // configured correctly. Dropping the register acknowledgment
-    // will force the agent to re-register, trying to re-configure the
-    // network again.
-    foreachvalue (const AgentOverlayInfo& overlay, overlays) {
-      if (!overlay.has_state() ||
-          !overlay.state().has_status() ||
-          overlay.state().status() != OverlayState::STATUS_OK) {
-        LOG(ERROR) << "Overlay " << overlay.info().name() << " has not been "
-                   << "configured hence dropping register "
-                   << "acknowledgment from master.";
-        return;
+      // We move into `REGISTERED` state only if all overlays have been
+      // configured correctly. Dropping the register acknowledgment
+      // will force the agent to re-register, trying to re-configure the
+      // network again.
+      foreachvalue (const AgentOverlayInfo& overlay, overlays) {
+        if (!overlay.has_state() ||
+            !overlay.state().has_status() ||
+            overlay.state().status() != OverlayState::STATUS_OK) {
+          LOG(ERROR) << "Overlay " << overlay.info().name() << " has not been "
+            << "configured hence dropping register "
+            << "acknowledgment from master.";
+          return;
+        }
       }
+    } else {
+      LOG(ERROR) << "Could not configure some overlay networks after "
+                 << configAttempts
+                 << " attempts, hence continuing with registration"
+                 << " with partially configured overlay."
+                 << " Please fix the reported errors and restart"
+                 << " the agent to re-try overlay configuration";
     }
 
     state = REGISTERED;
+
+    // Copy over the CNI configuration files for overlay networks that
+    // are healthy.
+    foreachvalue (const AgentOverlayInfo& overlay, overlays) {
+      if (overlay.has_state() && 
+          overlay.state().has_status() &&
+          overlay.state().status() == OverlayState::STATUS_OK &&
+          overlay.has_mesos_bridge()) {
+        string tmpCni = path::join(cniTempDir, overlay.info().name() + ".cni");
+        string cni = path::join(cniDir, overlay.info().name() + ".cni");
+
+        // This might be a re-registration attempt with the Master, in
+        // which case the CNI config would already have been
+        // configured.
+        if (os::exists(cni)) {
+          continue;
+        }
+
+        // Given that a CNI config does not exist, and the Mesos
+        // network configuration has gone through we should be seeing
+        // a CNI configuration in the temp directory.
+        CHECK(os::exists(tmpCni)); 
+
+        Try<Nothing> rename = os::rename(tmpCni, cni);
+        CHECK(!rename.isError())
+          << "Could not move CNI config for overlay network "
+          << overlay.info().name()
+          << " to CNI config directory '" << cniDir << "'";
+      }
+    }
+
+    if (os::exists(cniTempDir)) {
+      Try<Nothing> result = os::rmdir(cniTempDir);
+      if (result.isError()) {
+        LOG(ERROR) << "Unable to remove temp dir "
+                   << cniTempDir << " : " << result.error();
+      }
+    }
 
     connected.set(Nothing());
   }
@@ -534,15 +611,18 @@ protected:
       const string overlaySubnet = overlays[name].info().subnet();
 
       Try<string> command = strings::format(
-          "ipset add -exist %s %s" " nomatch &&"
-          " iptables -t nat -C POSTROUTING -s %s -m set"
+          "%s add -exist %s %s" " nomatch &&"
+          " %s -t nat -C POSTROUTING -s %s -m set"
           " --match-set %s dst -j MASQUERADE ||"
-          " iptables -t nat -A POSTROUTING -s %s -m"
+          " %s -t nat -A POSTROUTING -s %s -m"
           " set --match-set %s dst -j MASQUERADE",
+          ipset,
           IPSET_OVERLAY,
           overlaySubnet,
+          iptables,
           overlaySubnet,
           IPSET_OVERLAY,
+          iptables,
           overlaySubnet,
           IPSET_OVERLAY);
 
@@ -569,7 +649,7 @@ protected:
       // when a future is READY, all the READY callbacks are invoked
       // before the `onAny` callbacks are invoked. This can result in
       // the callback setup by `await` being invoked before the
-      // `onAny` call we seutp in this `Future`. This can cause
+      // `onAny` call we setup in this `Future`. This can cause
       // problems since we check the overlay `State` in
       // `_updateAgentOverlays`, which might not be set if this race
       // were to occur, even though the overlay configuration went
@@ -632,7 +712,7 @@ protected:
     };
 
     Try<Nothing> write = os::write(
-        path::join(cniDir, name + ".cni"),
+        path::join(cniTempDir, name + ".cni"),
         jsonify(config));
 
     if (write.isError()) {
@@ -660,6 +740,11 @@ protected:
     }
 
     return checkDockerNetwork(name)
+      .after(DOCKER_TIMEOUT,
+             lambda::bind(&failDockerNetwork<bool>,
+                          lambda::_1,
+                          "Unable to check docker network due to "
+                          "timeout after " + stringify(DOCKER_TIMEOUT)))
       .then(defer(self(),
                   &Self::_configureDockerNetwork,
                   name,
@@ -669,14 +754,14 @@ protected:
   Future<bool> checkDockerNetwork(const string& name)
   {
     vector<string> argv = {
-      "docker",
+      docker,
       "network",
       "inspect",
       name
     };
 
     Try<Subprocess> s = subprocess(
-        "docker",
+        docker,
         argv,
         Subprocess::PATH("/dev/null"),
         Subprocess::PATH("/dev/null"),
@@ -725,10 +810,11 @@ protected:
     }
 
     Try<string> dockerCommand = strings::format(
-        "docker network create --driver=bridge --subnet=%s "
+        "%s network create --driver=bridge --subnet=%s "
         "--opt=com.docker.network.bridge.name=%s "
         "--opt=com.docker.network.bridge.enable_ip_masquerade=false "
         "--opt=com.docker.network.driver.mtu=%s %s",
+        docker,
         stringify(subnet.get()),
         overlay.docker_bridge().name(),
         stringify(networkConfig.overlay_mtu()),
@@ -740,6 +826,12 @@ protected:
     }
 
     return runScriptCommand(dockerCommand.get())
+      .after(DOCKER_TIMEOUT,
+             lambda::bind(&failDockerNetwork<string>,
+                          lambda::_1,
+                          "Did not get a response from docker for " +
+                          stringify(DOCKER_TIMEOUT) +
+                          " hence failing docker network creation"))
       .then(defer(self(),
                   &Self::__configureDockerNetwork,
                   name,
@@ -762,8 +854,8 @@ protected:
     // However, Docker disallows this. So we will install a de-funct
     // rule in the DOCKER-ISOLATION chain to bypass any isolation
     // docker might be trying to enforce.
-    const string iptablesCommand = "iptables -D DOCKER-ISOLATION -j RETURN; "
-        "iptables -I DOCKER-ISOLATION 1 -j RETURN";
+    const string iptablesCommand = iptables +" -D DOCKER-ISOLATION "
+      "-j RETURN; " + iptables + " -I DOCKER-ISOLATION 1 -j RETURN";
 
     return runScriptCommand(iptablesCommand)
       .then([]() -> Future<Nothing> {
@@ -780,11 +872,16 @@ private:
 
   ManagerProcess(
       const string& _cniDir,
+      const string& _cniTempDir,
       const AgentNetworkConfig _networkConfig,
       const uint32_t _maxConfigAttempts,
       Owned<MasterDetector> _detector)
     : ProcessBase(AGENT_MANAGER_PROCESS_ID),
       cniDir(_cniDir),
+      cniTempDir(_cniTempDir),
+      ipset(_networkConfig.ipset()),
+      iptables(_networkConfig.iptables()),
+      docker(_networkConfig.docker()),
       networkConfig(_networkConfig),
       maxConfigAttempts(_maxConfigAttempts),
       detector(_detector)
@@ -796,9 +893,18 @@ private:
     if (networkConfig.mesos_bridge() == false) {
       connected.set(Nothing());
     }
+
   }
 
   const string cniDir;
+  const string cniTempDir; // A temporary directory used to store the
+                           // CNI config during configuration. It is
+                           // copied over to the CNI configuration
+                           // directory (`cniDir`) once the overlay
+                           // has been configured successfully.
+  const string ipset;
+  const string iptables;
+  const string docker;
   const AgentNetworkConfig networkConfig;
 
   State state;

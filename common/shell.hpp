@@ -3,6 +3,8 @@
 
 #include <vector>
 
+#include <stout/os/kill.hpp>
+
 #include <process/collect.hpp>
 #include <process/io.hpp>
 #include <process/future.hpp>
@@ -28,10 +30,15 @@ inline process::Future<std::string> runScriptCommand(
         "Unable to execute '" + command + "': " + s.error());
   }
 
+  pid_t pid = s->pid();
+
   return await(
       s->status(),
       process::io::read(s->out().get()),
       process::io::read(s->err().get()))
+    .onDiscard([pid](){
+        LOG(WARNING) << "Subprocess discarded. About to kill PID: " << pid;
+        os::kill(pid, SIGKILL);})
     .then([command](
           const std::tuple<process::Future<Option<int>>,
           process::Future<std::string>,
@@ -50,8 +57,8 @@ inline process::Future<std::string> runScriptCommand(
         process::Future<std::string> out = std::get<1>(t);
         if (!out.isReady()) {
           return process::Failure(
-            "Failed to read stderr from the subprocess: " +
-            (out.isFailed() ? out.failure() : "discarded"));
+              "Failed to read stderr from the subprocess: " +
+              (out.isFailed() ? out.failure() : "discarded"));
         }
 
         process::Future<std::string> err = std::get<2>(t);
@@ -84,33 +91,39 @@ inline process::Future<std::string> runCommand(
       process::Subprocess::PIPE());
 
   if (s.isError()) {
-    return process::Failure("Unable to execute '" + command + "': " + s.error());
+    return process::Failure(
+        "Unable to execute '" + command + "': " + s.error());
   }
+
+  pid_t pid = s->pid();
 
   return await(
       s->status(),
       process::io::read(s->out().get()),
       process::io::read(s->err().get()))
+    .onDiscard([pid](){
+        LOG(WARNING) << "Subprocess discarded. About to kill PID: " << pid;
+        os::kill(pid, SIGKILL);})
     .then([command](
           const std::tuple<process::Future<Option<int>>,
           process::Future<std::string>,
           process::Future<std::string>>& t) -> process::Future<std::string> {
         process::Future<Option<int>> status = std::get<0>(t);
         if (!status.isReady()) {
-        return process::Failure(
-          "Failed to get the exit status of '" + command +"': " +
-          (status.isFailed() ? status.failure() : "discarded"));
+          return process::Failure(
+            "Failed to get the exit status of '" + command +"': " +
+            (status.isFailed() ? status.failure() : "discarded"));
         }
 
         if (status->isNone()) {
-        return process::Failure("Failed to reap the subprocess");
+          return process::Failure("Failed to reap the subprocess");
         }
 
         process::Future<std::string> out = std::get<1>(t);
         if (!out.isReady()) {
-        return process::Failure(
-          "Failed to read stderr from the subprocess: " +
-          (out.isFailed() ? out.failure() : "discarded"));
+          return process::Failure(
+              "Failed to read stderr from the subprocess: " +
+              (out.isFailed() ? out.failure() : "discarded"));
         }
 
         process::Future<std::string> err = std::get<2>(t);
