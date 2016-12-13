@@ -1,4 +1,5 @@
 #include <string>
+#include <vector>
 
 #include <gmock/gmock.h>
 
@@ -36,6 +37,9 @@
 
 using namespace process;
 using namespace mesos::internal::tests;
+
+using std::string;
+using std::vector;
 
 using mesos::internal::HookManager;
 
