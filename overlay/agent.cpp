@@ -863,11 +863,6 @@ Manager::Manager(const Owned<ManagerProcess>& _process)
 {
   spawn(process.get());
 
-  // Wait for the overlay-manager to be ready before
-  // allowing the Agent to proceed.
-  Future<Nothing> ready = process->ready();
-  ready.await();
-
   LOG(INFO) << "Overlay agent is ready";
 }
 
