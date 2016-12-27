@@ -379,23 +379,24 @@ void ManagerProcess::agentRegisteredAcknowledgement(const UPID& from)
   configAttempts++;
 
   if (configAttempts > maxConfigAttempts) {
-    EXIT(EXIT_FAILURE)
-      << "Could not configure some overlay networks after "
-      << configAttempts << " attempts hence bailing ... ";
-  }
-
-  // We move into `REGISTERED` state only if all overlays have been
-  // configured correctly. Dropping the register acknowledgment
-  // will force the agent to re-register, trying to re-configure the
-  // network again.
-  foreachvalue (const AgentOverlayInfo& overlay, overlays) {
-    if (!overlay.has_state() ||
-        !overlay.state().has_status() ||
-        overlay.state().status() != OverlayState::STATUS_OK) {
-      LOG(ERROR) << "Overlay " << overlay.info().name() << " has not been "
-                 << "configured hence dropping register "
-                 << "acknowledgment from master.";
-      return;
+    LOG(ERROR) << "Could not configure some overlay networks after "
+               << configAttempts
+               << " attempts hence moving to 'REGISTERED' state with "
+               << "erroneous overlay configuration";
+  } else {
+    // We move into `REGISTERED` state only if all overlays have been
+    // configured correctly. Dropping the register acknowledgment
+    // will force the agent to re-register, trying to re-configure the
+    // network again.
+    foreachvalue (const AgentOverlayInfo& overlay, overlays) {
+      if (!overlay.has_state() ||
+          !overlay.state().has_status() ||
+          overlay.state().status() != OverlayState::STATUS_OK) {
+        LOG(ERROR) << "Overlay " << overlay.info().name() << " has not been "
+          << "configured hence dropping register "
+          << "acknowledgment from master.";
+        return;
+      }
     }
   }
 
@@ -413,6 +414,10 @@ void ManagerProcess::detected(const Future<Option<MasterInfo>>& mesosMaster)
       << mesosMaster.failure();
   }
 
+  // Need to reset the `configAttempts`, so that we can try
+  // configuring overlay networks, learned from the new Master, on
+  // this agent.
+  configAttempts = 0;
   state = REGISTERING;
 
   Option<MasterInfo> latestMesosMaster = None();
