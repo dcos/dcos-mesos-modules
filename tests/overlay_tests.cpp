@@ -481,11 +481,13 @@ TEST_F(OverlayTest, checkMasterAgentComm)
 
   Try<net::IPNetwork> agentNetwork = net::IPNetwork::parse(
       info->overlays(0).subnet(), AF_INET);
+
   ASSERT_SOME(agentNetwork);
   EXPECT_EQ(24, agentNetwork->prefix());
 
   Try<net::IPNetwork> allocatedSubnet = net::IPNetwork::parse(
       "192.168.0.0/24", AF_INET);
+
   ASSERT_SOME(allocatedSubnet);
   EXPECT_EQ(allocatedSubnet.get(), agentNetwork.get());
 
@@ -500,6 +502,7 @@ TEST_F(OverlayTest, checkMasterAgentComm)
       APPLICATION_JSON,
       "Content-Type",
       masterResponse);
+
   state = parseMasterState(masterResponse->body);
   ASSERT_SOME(state);
   ASSERT_EQ(1, state->agents_size());
@@ -572,6 +575,7 @@ TEST_F(OverlayTest, ROOT_checkMesosNetwork)
   // Verify the CNI configuration has been installed correctly.
   Try<string> cniConfig = os::read(
       path::join("cni", stringify(OVERLAY_NAME) + ".cni"));
+
   ASSERT_SOME(cniConfig);
 
   Try<JSON::Object> json = JSON::parse<JSON::Object>(cniConfig.get());
@@ -641,6 +645,7 @@ TEST_F(OverlayTest, ROOT_checkDockerNetwork)
       {"ipset",
       "list",
       IPSET_OVERLAY});
+
   AWAIT_READY(ipset);
 
   // Verify that the `IPMASQ` rules have been installed.
@@ -653,6 +658,7 @@ TEST_F(OverlayTest, ROOT_checkDockerNetwork)
       "--match-set", stringify(IPSET_OVERLAY), "dst",
       "-j", "MASQUERADE",
       });
+
   AWAIT_READY(iptables);
 
   // Verify the docker network has been installed correctly.
@@ -661,6 +667,7 @@ TEST_F(OverlayTest, ROOT_checkDockerNetwork)
       "network",
       "inspect",
       OVERLAY_NAME});
+
   AWAIT_READY(docker);
 
   Try<JSON::Array> json = JSON::parse<JSON::Array>(docker.get());
@@ -742,11 +749,13 @@ TEST_F(OverlayTest, ROOT_checkMasterRecovery)
 
   Try<net::IPNetwork> agentNetwork = net::IPNetwork::parse(
       info->overlays(0).subnet(), AF_INET);
+
   ASSERT_SOME(agentNetwork);
   EXPECT_EQ(24, agentNetwork->prefix());
 
   Try<net::IPNetwork> allocatedSubnet = net::IPNetwork::parse(
       "192.168.0.0/24", AF_INET);
+
   ASSERT_SOME(allocatedSubnet);
   EXPECT_EQ(allocatedSubnet.get(), agentNetwork.get());
 
@@ -772,7 +781,7 @@ TEST_F(OverlayTest, ROOT_checkMasterRecovery)
       info.get().SerializeAsString(),
       masterAgentInfo.SerializeAsString())
       << "Agent response: " << agentResponse->body
-      << " Master response: " << masterResponse->body;
+      << ", Master response: " << masterResponse->body;
 
   // Kill the master.
   masterModule->reset();
@@ -783,6 +792,7 @@ TEST_F(OverlayTest, ROOT_checkMasterRecovery)
   // Re-start the master and wait for the Agent to re-register.
   agentRegisteredAcknowledgement = FUTURE_PROTOBUF(
       AgentRegisteredAcknowledgement(), _, _);
+
   AWAIT_READY(agentRegisteredAcknowledgement);
 
   // Hit the master end-point again.
@@ -882,17 +892,20 @@ TEST_F(OverlayTest, ROOT_checkAgentRecovery)
 
   Try<net::IPNetwork> agentNetwork = net::IPNetwork::parse(
       info->overlays(0).subnet(), AF_INET);
+
   ASSERT_SOME(agentNetwork);
   EXPECT_EQ(24, agentNetwork->prefix());
 
   Try<net::IPNetwork> allocatedSubnet = net::IPNetwork::parse(
       "192.168.0.0/24", AF_INET);
+
   ASSERT_SOME(allocatedSubnet);
   EXPECT_EQ(allocatedSubnet.get(), agentNetwork.get());
 
   // Re-start the agent and wait for the agent to re-register.
   Future<AgentRegisteredAcknowledgement> agentReRegisteredAcknowledgement =
     FUTURE_PROTOBUF(AgentRegisteredAcknowledgement(), _, _);
+
   // Kill the agent.
   Try<Nothing> stop = stopOverlayAgent();
   ASSERT_SOME(stop);
@@ -998,11 +1011,13 @@ TEST_F(OverlayTest, ROOT_checkAgentNetworkConfigChange)
 
   Try<net::IPNetwork> agentNetwork = net::IPNetwork::parse(
       info->overlays(0).subnet(), AF_INET);
+
   ASSERT_SOME(agentNetwork);
   EXPECT_EQ(24, agentNetwork->prefix());
 
   Try<net::IPNetwork> allocatedSubnet = net::IPNetwork::parse(
       "192.168.0.0/24", AF_INET);
+
   ASSERT_SOME(allocatedSubnet);
   EXPECT_EQ(allocatedSubnet.get(), agentNetwork.get());
 
@@ -1020,6 +1035,7 @@ TEST_F(OverlayTest, ROOT_checkAgentNetworkConfigChange)
       "--match-set", stringify(IPSET_OVERLAY), "dst",
       "-j", "MASQUERADE",
       });
+
   AWAIT_READY(iptables);
 
   // Delete the IPMASQ rules.
@@ -1032,6 +1048,7 @@ TEST_F(OverlayTest, ROOT_checkAgentNetworkConfigChange)
       "--match-set", stringify(IPSET_OVERLAY), "dst",
       "-j", "MASQUERADE",
       });
+
   AWAIT_READY(iptables);
 
   // Re-start the agent and wait for the agent to re-register.
@@ -1063,6 +1080,7 @@ TEST_F(OverlayTest, ROOT_checkAgentNetworkConfigChange)
       "--match-set", stringify(IPSET_OVERLAY), "dst",
       "-j", "MASQUERADE",
       });
+
   AWAIT_FAILED(iptables);
 
   // Hit the agent end-point again.
