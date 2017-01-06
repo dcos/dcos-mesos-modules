@@ -93,6 +93,49 @@ public:
     environment["LIBPROCESS_NUM_WORKER_THREADS"] =
       stringify(flags.libprocess_num_worker_threads);
 
+    // Copy the global rotation flags.
+    // These will act as the defaults in case the executor environment
+    // overrides a subset of them.
+    LoggerFlags overridenFlags;
+    overridenFlags.destination_type = flags.destination_type;
+    overridenFlags.max_stdout_size = flags.max_stdout_size;
+    overridenFlags.logrotate_stdout_options = flags.logrotate_stdout_options;
+    overridenFlags.max_stderr_size = flags.max_stderr_size;
+    overridenFlags.logrotate_stderr_options = flags.logrotate_stderr_options;
+
+    // Check for overrides of the rotation settings in the
+    // `ExecutorInfo`s environment variables.
+    if (executorInfo.has_command() &&
+        executorInfo.command().has_environment()) {
+      // Search the environment for prefixed environment variables.
+      // We un-prefix those variables before parsing the flag values.
+      std::map<std::string, std::string> executorEnvironment;
+      foreach (const Environment::Variable variable,
+               executorInfo.command().environment().variables()) {
+        if (strings::startsWith(
+              variable.name(), flags.environment_variable_prefix)) {
+          std::string unprefixed = strings::lower(strings::remove(
+              variable.name(),
+              flags.environment_variable_prefix,
+              strings::PREFIX));
+          executorEnvironment[unprefixed] = variable.value();
+        }
+      }
+
+      // We will error out if there are unknown flags with the same prefix.
+      Try<flags::Warnings> load = overridenFlags.load(executorEnvironment);
+
+      if (load.isError()) {
+        return Failure(
+            "Failed to load executor logger settings: " + load.error());
+      }
+
+      // Log any flag warnings.
+      foreach (const flags::Warning& warning, load->warnings) {
+        LOG(WARNING) << warning.message;
+      }
+    }
+
     // Pass in the FrameworkID, ExecutorID, and ContainerID as labels.
     // And include all labels inside the `ExecutorInfo`.
     Label label;
@@ -186,7 +229,15 @@ public:
     labels.add_labels()->CopyFrom(label);
 
     mesos::journald::logger::Flags outFlags;
+    outFlags.destination_type = overridenFlags.destination_type;
+
     outFlags.labels = stringify(JSON::protobuf(labels));
+
+    outFlags.max_size = overridenFlags.max_stdout_size;
+    outFlags.logrotate_options = overridenFlags.logrotate_stdout_options;
+    outFlags.log_filename = path::join(sandboxDirectory, "stdout");
+    outFlags.logrotate_path = flags.logrotate_path;
+    outFlags.user = user;
 
     // If we are on systemd, then extend the life of the process as we
     // do with the executor. Any grandchildren's lives will also be
@@ -244,7 +295,15 @@ public:
     labels.add_labels()->CopyFrom(label);
 
     mesos::journald::logger::Flags errFlags;
+    errFlags.destination_type = overridenFlags.destination_type;
+
     errFlags.labels = stringify(JSON::protobuf(labels));
+
+    errFlags.max_size = overridenFlags.max_stderr_size;
+    errFlags.logrotate_options = overridenFlags.logrotate_stderr_options;
+    errFlags.log_filename = path::join(sandboxDirectory, "stderr");
+    errFlags.logrotate_path = flags.logrotate_path;
+    errFlags.user = user;
 
     // Spawn a process to handle stderr.
     Try<Subprocess> errProcess = subprocess(
