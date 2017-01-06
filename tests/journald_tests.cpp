@@ -258,6 +258,27 @@ TEST_F(JournaldLoggerTest, ROOT_LogToJournald)
 
   AWAIT_READY(executorQuery);
   ASSERT_TRUE(strings::contains(executorQuery.get(), specialString));
+
+  // Check that the sandbox was written to as well.
+  string sandboxDirectory = path::join(
+      flags.work_dir,
+      "slaves",
+      offers.get()[0].slave_id().value(),
+      "frameworks",
+      frameworkId.get().value(),
+      "executors",
+      statusRunning->executor_id().value(),
+      "runs",
+      "latest");
+
+  ASSERT_TRUE(os::exists(sandboxDirectory));
+
+  string stdoutPath = path::join(sandboxDirectory, "stdout");
+  ASSERT_TRUE(os::exists(stdoutPath));
+
+  Result<string> stdout = os::read(stdoutPath);
+  ASSERT_SOME(stdout);
+  EXPECT_TRUE(strings::contains(stdout.get(), specialString));
 }
 
 
