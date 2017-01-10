@@ -14,7 +14,7 @@
               "value": "2"
             }, {
               "key": "destination_type",
-              "value": "both"
+              "value": "journald+logrotate"
             }
           ]
         }

@@ -85,7 +85,7 @@ public:
     }
 
     if (flags.destination_type == "logrotate" ||
-        flags.destination_type == "both") {
+        flags.destination_type == "journald+logrotate") {
       // Populate the `logrotate` configuration file.
       // See `Flags::logrotate_options` for the format.
       //
@@ -133,8 +133,8 @@ public:
           return Nothing();
         }
 
-        if (flags.destination_type == "sandbox" ||
-            flags.destination_type == "both") {
+        if (flags.destination_type == "logrotate" ||
+            flags.destination_type == "journald+logrotate") {
           // Write the bytes to journald.
           Try<Nothing> result = write_journald(readSize);
           if (result.isError()) {
@@ -144,7 +144,7 @@ public:
         }
 
         if (flags.destination_type == "journald" ||
-            flags.destination_type == "both") {
+            flags.destination_type == "journald+logrotate") {
           // Write the bytes to sandbox, with log rotation.
           Try<Nothing> result = write_logrotate(readSize);
           if (result.isError()) {
