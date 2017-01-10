@@ -40,10 +40,13 @@ struct Flags : public virtual flags::FlagsBase
     add(&Flags::destination_type,
         "destination_type",
         "Determines where logs should be piped.\n"
-        "Valid destinations include: 'journald', 'logrotate', or 'both'.",
+        "Valid destinations include: 'journald', 'logrotate',\n"
+        "or 'journald+logrotate'.",
         "journald",
         [](const std::string& value) -> Option<Error> {
-          if (value != "journald" && value != "logrotate" && value != "both") {
+          if (value != "journald" &&
+              value != "logrotate" &&
+              value != "journald+logrotate") {
             return Error("Invalid destination type: " + value);
           }
 
