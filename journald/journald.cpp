@@ -64,7 +64,8 @@ public:
     }
   }
 
-  // Prepares and starts the loop which reads from stdin and writes to journald.
+  // Prepares and starts the loop which reads from stdin and writes to
+  // journald or the sandbox, depending on the input flags.
   Future<Nothing> run()
   {
     // Pre-populate the `iovec` with the constant labels.
@@ -83,24 +84,27 @@ public:
       std::strcpy((char*) entries[i].iov_base, entry.c_str());
     }
 
-    if (flags.destination_type != "journald") {
+    if (flags.destination_type == "logrotate" ||
+        flags.destination_type == "both") {
       // Populate the `logrotate` configuration file.
       // See `Flags::logrotate_options` for the format.
       //
-      // NOTE: We specify a size of `--max_size - length` because `logrotate`
-      // has slightly different size semantics.  `logrotate` will rotate when the
-      // max size is *exceeded*.  We rotate to keep files *under* the max size.
+      // NOTE: We specify a size of `--logrotate_max_size - length`
+      // because `logrotate` has slightly different size semantics.
+      // `logrotate` will rotate when the max size is *exceeded*.
+      // We rotate to keep files *under* the max size.
       const std::string config =
-        "\"" + flags.log_filename.get() + "\" {\n" +
+        "\"" + flags.logrotate_filename.get() + "\" {\n" +
         flags.logrotate_options.getOrElse("") + "\n" +
-        "size " + stringify(flags.max_size.bytes() - length) + "\n" +
+        "size " + stringify(flags.logrotate_max_size.bytes() - length) + "\n" +
         "}";
 
       Try<Nothing> result = os::write(
-          flags.log_filename.get() + CONF_SUFFIX, config);
+          flags.logrotate_filename.get() + LOGROTATE_CONF_SUFFIX, config);
 
       if (result.isError()) {
-        return Failure("Failed to write configuration file: " + result.error());
+        return Failure(
+            "Failed to write logrotate configuration file: " + result.error());
       }
     }
 
@@ -129,7 +133,8 @@ public:
           return Nothing();
         }
 
-        if (flags.destination_type != "sandbox") {
+        if (flags.destination_type == "sandbox" ||
+            flags.destination_type == "both") {
           // Write the bytes to journald.
           Try<Nothing> result = write_journald(readSize);
           if (result.isError()) {
@@ -138,7 +143,8 @@ public:
           }
         }
 
-        if (flags.destination_type != "journald") {
+        if (flags.destination_type == "journald" ||
+            flags.destination_type == "both") {
           // Write the bytes to sandbox, with log rotation.
           Try<Nothing> result = write_logrotate(readSize);
           if (result.isError()) {
@@ -155,7 +161,7 @@ public:
   }
 
   // Writes the buffer from stdin to the journald.
-  // Any `flags.labels` will be prepended to each line.
+  // Any `flags.journald_labels` will be prepended to each line.
   Try<Nothing> write_journald(size_t readSize)
   {
     // We may be reading more than one log line at once,
@@ -182,13 +188,13 @@ public:
 
 
   // Writes the buffer from stdin to the leading log file.
-  // When the number of written bytes exceeds `--max_size`, the leading
-  // log file is rotated.  When the number of log files exceed `--max_files`,
-  // the oldest log file is deleted.
+  // When the number of written bytes exceeds `--logrotate_max_size`,
+  // the leading log file is rotated.  When the number of log files
+  // exceed `--max_files`, the oldest log file is deleted.
   Try<Nothing> write_logrotate(size_t readSize)
   {
-    // Rotate the log file if it will grow beyond the `--max_size`.
-    if (bytesWritten + readSize > flags.max_size.bytes()) {
+    // Rotate the log file if it will grow beyond the `--logrotate_max_size`.
+    if (bytesWritten + readSize > flags.logrotate_max_size.bytes()) {
       rotate();
     }
 
@@ -196,13 +202,13 @@ public:
     // NOTE: We open the file in append-mode as `logrotate` may sometimes fail.
     if (leading.isNone()) {
       Try<int> open = os::open(
-          flags.log_filename.get(),
+          flags.logrotate_filename.get(),
           O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC,
           S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
 
       if (open.isError()) {
         return Error(
-            "Failed to open '" + flags.log_filename.get() +
+            "Failed to open '" + flags.logrotate_filename.get() +
             "': " + open.error());
       }
 
@@ -240,8 +246,8 @@ public:
     // leading log file.
     os::shell(
         flags.logrotate_path +
-        " --state \"" + flags.log_filename.get() + STATE_SUFFIX + "\" \"" +
-        flags.log_filename.get() + CONF_SUFFIX + "\"");
+        " --state \"" + flags.logrotate_filename.get() + LOGROTATE_STATE_SUFFIX +
+        "\" \"" + flags.logrotate_filename.get() + LOGROTATE_CONF_SUFFIX + "\"");
 
     // Reset the number of bytes written.
     bytesWritten = 0;

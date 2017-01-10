@@ -22,8 +22,8 @@ namespace journald {
 namespace logger {
 
 const std::string NAME = "mesos-journald-logger";
-const std::string CONF_SUFFIX = ".logrotate.conf";
-const std::string STATE_SUFFIX = ".logrotate.state";
+const std::string LOGROTATE_CONF_SUFFIX = ".logrotate.conf";
+const std::string LOGROTATE_STATE_SUFFIX = ".logrotate.state";
 
 struct Flags : public virtual flags::FlagsBase
 {
@@ -40,18 +40,18 @@ struct Flags : public virtual flags::FlagsBase
     add(&Flags::destination_type,
         "destination_type",
         "Determines where logs should be piped.\n"
-        "Valid destinations include: 'journald', 'sandbox', or 'both'.",
+        "Valid destinations include: 'journald', 'logrotate', or 'both'.",
         "journald",
         [](const std::string& value) -> Option<Error> {
-          if (value != "journald" && value != "sandbox" && value != "both") {
+          if (value != "journald" && value != "logrotate" && value != "both") {
             return Error("Invalid destination type: " + value);
           }
 
           return None();
         });
 
-    add(&Flags::labels,
-        "labels",
+    add(&Flags::journald_labels,
+        "journald_labels",
         "Labels to append to each line of logs written to journald.\n"
         "This field should be the jsonified 'Labels' protobuf. i.e.:\n"
         "{\n"
@@ -71,28 +71,30 @@ struct Flags : public virtual flags::FlagsBase
 
           Try<JSON::Object> json = JSON::parse<JSON::Object>(value.get());
           if (json.isError()) {
-            return Error("Failed to parse --labels as JSON: " + json.error());
+            return Error(
+                "Failed to parse --journald_labels as JSON: " + json.error());
           }
 
           Try<Labels> _labels = ::protobuf::parse<Labels>(json.get());
           if (_labels.isError()) {
             return Error(
-                "Failed to parse --labels as protobuf: " + _labels.error());
+                "Failed to parse --journald_labels as protobuf: " +
+                _labels.error());
           }
 
           parsed_labels = _labels.get();
           return None();
         });
 
-    add(&Flags::max_size,
-        "max_size",
+    add(&Flags::logrotate_max_size,
+        "logrotate_max_size",
         "Maximum size, in bytes, of a single log file.\n"
         "Defaults to 10 MB.  Must be at least 1 (memory) page.",
         Megabytes(10),
         [](const Bytes& value) -> Option<Error> {
           if (value.bytes() < os::pagesize()) {
             return Error(
-                "Expected --max_size of at least " +
+                "Expected --logrotate_max_size of at least " +
                 stringify(os::pagesize()) + " bytes");
           }
           return None();
@@ -105,23 +107,25 @@ struct Flags : public virtual flags::FlagsBase
         "i.e.\n"
         "  /path/to/<log_filename> {\n"
         "    <logrotate_options>\n"
-        "    size <max_size>\n"
+        "    size <logrotate_max_size>\n"
         "  }\n"
-        "NOTE: The 'size' option will be overriden by this command.");
+        "NOTE: The 'size' option will be overridden by this command.");
 
-    add(&Flags::log_filename,
-        "log_filename",
+    add(&Flags::logrotate_filename,
+        "logrotate_filename",
         "Absolute path to the leading log file.\n"
         "NOTE: This command will also create two files by appending\n"
-        "'" + CONF_SUFFIX + "' and '" + STATE_SUFFIX + "' to the end of\n"
-        "'--log_filename'.  These files are used by 'logrotate'.",
+        "'" + LOGROTATE_CONF_SUFFIX + "' and '" +
+        LOGROTATE_STATE_SUFFIX + "' to the end of\n"
+        "'--logrotate_filename'.  These files are used by 'logrotate'.",
         [](const Option<std::string>& value) -> Option<Error> {
           if (value.isNone()) {
-            return Error("Missing required option --log_filename");
+            return Error("Missing required option --logrotate_filename");
           }
 
           if (!path::absolute(value.get())) {
-            return Error("Expected --log_filename to be an absolute path");
+            return Error(
+                "Expected --logrotate_filename to be an absolute path");
           }
 
           return None();
@@ -153,14 +157,14 @@ struct Flags : public virtual flags::FlagsBase
 
   std::string destination_type;
 
-  Option<std::string> labels;
+  Option<std::string> journald_labels;
 
   // Values populated during validation.
   Labels parsed_labels;
 
-  Bytes max_size;
+  Bytes logrotate_max_size;
   Option<std::string> logrotate_options;
-  Option<std::string> log_filename;
+  Option<std::string> logrotate_filename;
   std::string logrotate_path;
   Option<std::string> user;
 };
