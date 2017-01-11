@@ -133,7 +133,7 @@ public:
           return Nothing();
         }
 
-        if (flags.destination_type == "logrotate" ||
+        if (flags.destination_type == "journald" ||
             flags.destination_type == "journald+logrotate") {
           // Write the bytes to journald.
           Try<Nothing> result = write_journald(readSize);
@@ -143,7 +143,7 @@ public:
           }
         }
 
-        if (flags.destination_type == "journald" ||
+        if (flags.destination_type == "logrotate" ||
             flags.destination_type == "journald+logrotate") {
           // Write the bytes to sandbox, with log rotation.
           Try<Nothing> result = write_logrotate(readSize);
