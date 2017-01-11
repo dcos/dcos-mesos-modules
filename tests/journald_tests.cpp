@@ -42,7 +42,6 @@ using namespace process;
 
 using namespace mesos::internal::tests;
 
-using std::string;
 using std::vector;
 
 using mesos::internal::master::Master;
@@ -57,6 +56,8 @@ using mesos::master::detector::MasterDetector;
 using mesos::modules::ModuleManager;
 
 using mesos::modules::common::runCommand;
+
+using testing::WithParamInterface;
 
 namespace systemd {
 
@@ -102,8 +103,10 @@ namespace tests {
 const char JOURNALD_LOGGER_NAME[] = "com_mesosphere_mesos_JournaldLogger";
 
 
-class JournaldLoggerTest : public MesosTest {
-protected:
+class JournaldLoggerTest : public MesosTest,
+                           public WithParamInterface<std::string>
+{
+public:
   static void SetUpTestCase()
   {
     // NOTE: This code is normally run in `src/slave/main.cpp`.
@@ -162,9 +165,18 @@ private:
 };
 
 
+INSTANTIATE_TEST_CASE_P(
+    LoggingMode,
+    JournaldLoggerTest,
+    ::testing::Values(
+        std::string("journald"),
+        std::string("logrotate"),
+        std::string("journald+logrotate")));
+
+
 // Loads the journald ContainerLogger module and runs a task.
 // Then queries journald for the associated logs.
-TEST_F(JournaldLoggerTest, ROOT_LogToJournald)
+TEST_P(JournaldLoggerTest, ROOT_LogToJournald)
 {
   // Create a master, agent, and framework.
   Try<Owned<cluster::Master>> master = StartMaster();
@@ -215,6 +227,12 @@ TEST_F(JournaldLoggerTest, ROOT_LogToJournald)
 
   TaskInfo task = createTask(offers.get()[0], "echo " + specialString);
 
+  // Change the destination of the logs based on the parameterized test.
+  Environment::Variable* variable =
+    task.mutable_command()->mutable_environment()->add_variables();
+  variable->set_name("CONTAINER_LOGGER_DESTINATION_TYPE");
+  variable->set_value(GetParam());
+
   Future<TaskStatus> statusRunning;
   Future<TaskStatus> statusFinished;
   EXPECT_CALL(sched, statusUpdate(&driver, _))
@@ -233,34 +251,36 @@ TEST_F(JournaldLoggerTest, ROOT_LogToJournald)
   driver.stop();
   driver.join();
 
-  // Query journald via the FrameworkID, AgentID, and ExecutorID
-  // and check for the special string.
-  Future<string> frameworkQuery = runCommand(
-      "journalctl",
-      {"journalctl",
-       "FRAMEWORK_ID=" + frameworkId.get().value()});
+  if (GetParam() == "journald" ||
+      GetParam() == "journald+logrotate") {
+    // Query journald via the FrameworkID, AgentID, and ExecutorID
+    // and check for the special string.
+    Future<std::string> frameworkQuery = runCommand(
+        "journalctl",
+        {"journalctl",
+         "FRAMEWORK_ID=" + frameworkId.get().value()});
 
-  Future<string> agentQuery = runCommand(
-      "journalctl",
-      {"journalctl",
-       "AGENT_ID=" + offers.get()[0].slave_id().value()});
+    Future<std::string> agentQuery = runCommand(
+        "journalctl",
+        {"journalctl",
+         "AGENT_ID=" + offers.get()[0].slave_id().value()});
 
-  Future<string> executorQuery = runCommand(
-      "journalctl",
-      {"journalctl",
-       "EXECUTOR_ID=" + statusRunning->executor_id().value()});
+    Future<std::string> executorQuery = runCommand(
+        "journalctl",
+        {"journalctl",
+         "EXECUTOR_ID=" + statusRunning->executor_id().value()});
 
-  AWAIT_READY(frameworkQuery);
-  ASSERT_TRUE(strings::contains(frameworkQuery.get(), specialString));
+    AWAIT_READY(frameworkQuery);
+    ASSERT_TRUE(strings::contains(frameworkQuery.get(), specialString));
 
-  AWAIT_READY(agentQuery);
-  ASSERT_TRUE(strings::contains(agentQuery.get(), specialString));
+    AWAIT_READY(agentQuery);
+    ASSERT_TRUE(strings::contains(agentQuery.get(), specialString));
 
-  AWAIT_READY(executorQuery);
-  ASSERT_TRUE(strings::contains(executorQuery.get(), specialString));
+    AWAIT_READY(executorQuery);
+    ASSERT_TRUE(strings::contains(executorQuery.get(), specialString));
+  }
 
-  // Check that the sandbox was written to as well.
-  string sandboxDirectory = path::join(
+  std::string sandboxDirectory = path::join(
       flags.work_dir,
       "slaves",
       offers.get()[0].slave_id().value(),
@@ -270,15 +290,30 @@ TEST_F(JournaldLoggerTest, ROOT_LogToJournald)
       statusRunning->executor_id().value(),
       "runs",
       "latest");
-
   ASSERT_TRUE(os::exists(sandboxDirectory));
 
-  string stdoutPath = path::join(sandboxDirectory, "stdout");
-  ASSERT_TRUE(os::exists(stdoutPath));
+  std::string stdoutPath = path::join(sandboxDirectory, "stdout");
 
-  Result<string> stdout = os::read(stdoutPath);
-  ASSERT_SOME(stdout);
-  EXPECT_TRUE(strings::contains(stdout.get(), specialString));
+  if (GetParam() == "journald") {
+    // Check that the sandbox was *not* written to.
+    // TODO(josephw): This file exists as other parts of the agent will
+    // create it.  We should invert this assertion when we fix this in Mesos.
+    ASSERT_TRUE(os::exists(stdoutPath));
+
+    Result<std::string> stdout = os::read(stdoutPath);
+    ASSERT_SOME(stdout);
+    EXPECT_FALSE(strings::contains(stdout.get(), specialString));
+  }
+
+  if (GetParam() == "logrotate" ||
+      GetParam() == "journald+logrotate") {
+    // Check that the sandbox was written to as well.
+    ASSERT_TRUE(os::exists(stdoutPath));
+
+    Result<std::string> stdout = os::read(stdoutPath);
+    ASSERT_SOME(stdout);
+    EXPECT_TRUE(strings::contains(stdout.get(), specialString));
+  }
 }
 
 
@@ -363,17 +398,17 @@ TEST_F(JournaldLoggerTest, ROOT_DOCKER_LogToJournald)
 
   // Query journald via the FrameworkID, AgentID, and ExecutorID
   // and check for the special string.
-  Future<string> frameworkQuery = runCommand(
+  Future<std::string> frameworkQuery = runCommand(
       "journalctl",
       {"journalctl",
        "FRAMEWORK_ID=" + frameworkId.get().value()});
 
-  Future<string> agentQuery = runCommand(
+  Future<std::string> agentQuery = runCommand(
       "journalctl",
       {"journalctl",
        "AGENT_ID=" + offers.get()[0].slave_id().value()});
 
-  Future<string> executorQuery = runCommand(
+  Future<std::string> executorQuery = runCommand(
       "journalctl",
       {"journalctl",
        "EXECUTOR_ID=" + statusRunning->executor_id().value()});
