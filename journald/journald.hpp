@@ -13,12 +13,17 @@
 #include <stout/option.hpp>
 #include <stout/protobuf.hpp>
 
+#include <stout/os/pagesize.hpp>
+#include <stout/os/shell.hpp>
+
 
 namespace mesos {
 namespace journald {
 namespace logger {
 
 const std::string NAME = "mesos-journald-logger";
+const std::string LOGROTATE_CONF_SUFFIX = ".logrotate.conf";
+const std::string LOGROTATE_STATE_SUFFIX = ".logrotate.state";
 
 struct Flags : public virtual flags::FlagsBase
 {
@@ -32,8 +37,24 @@ struct Flags : public virtual flags::FlagsBase
       "before it is written to journald.  See '--labels'."
       "\n");
 
-    add(&Flags::labels,
-        "labels",
+    add(&Flags::destination_type,
+        "destination_type",
+        "Determines where logs should be piped.\n"
+        "Valid destinations include: 'journald', 'logrotate',\n"
+        "or 'journald+logrotate'.",
+        "journald",
+        [](const std::string& value) -> Option<Error> {
+          if (value != "journald" &&
+              value != "logrotate" &&
+              value != "journald+logrotate") {
+            return Error("Invalid destination type: " + value);
+          }
+
+          return None();
+        });
+
+    add(&Flags::journald_labels,
+        "journald_labels",
         "Labels to append to each line of logs written to journald.\n"
         "This field should be the jsonified 'Labels' protobuf. i.e.:\n"
         "{\n"
@@ -53,24 +74,102 @@ struct Flags : public virtual flags::FlagsBase
 
           Try<JSON::Object> json = JSON::parse<JSON::Object>(value.get());
           if (json.isError()) {
-            return Error("Failed to parse --labels as JSON: " + json.error());
+            return Error(
+                "Failed to parse --journald_labels as JSON: " + json.error());
           }
 
           Try<Labels> _labels = ::protobuf::parse<Labels>(json.get());
           if (_labels.isError()) {
             return Error(
-                "Failed to parse --labels as protobuf: " + _labels.error());
+                "Failed to parse --journald_labels as protobuf: " +
+                _labels.error());
           }
 
           parsed_labels = _labels.get();
           return None();
         });
+
+    add(&Flags::logrotate_max_size,
+        "logrotate_max_size",
+        "Maximum size, in bytes, of a single log file.\n"
+        "Defaults to 10 MB.  Must be at least 1 (memory) page.",
+        Megabytes(10),
+        [](const Bytes& value) -> Option<Error> {
+          if (value.bytes() < os::pagesize()) {
+            return Error(
+                "Expected --logrotate_max_size of at least " +
+                stringify(os::pagesize()) + " bytes");
+          }
+          return None();
+        });
+
+    add(&Flags::logrotate_options,
+        "logrotate_options",
+        "Additional config options to pass into 'logrotate'.\n"
+        "This string will be inserted into a 'logrotate' configuration file.\n"
+        "i.e.\n"
+        "  /path/to/<log_filename> {\n"
+        "    <logrotate_options>\n"
+        "    size <logrotate_max_size>\n"
+        "  }\n"
+        "NOTE: The 'size' option will be overridden by this command.");
+
+    add(&Flags::logrotate_filename,
+        "logrotate_filename",
+        "Absolute path to the leading log file.\n"
+        "NOTE: This command will also create two files by appending\n"
+        "'" + LOGROTATE_CONF_SUFFIX + "' and '" +
+        LOGROTATE_STATE_SUFFIX + "' to the end of\n"
+        "'--logrotate_filename'.  These files are used by 'logrotate'.",
+        [](const Option<std::string>& value) -> Option<Error> {
+          if (value.isNone()) {
+            return Error("Missing required option --logrotate_filename");
+          }
+
+          if (!path::absolute(value.get())) {
+            return Error(
+                "Expected --logrotate_filename to be an absolute path");
+          }
+
+          return None();
+        });
+
+    add(&Flags::logrotate_path,
+        "logrotate_path",
+        "If specified, this command will use the specified\n"
+        "'logrotate' instead of the system's 'logrotate'.",
+        "logrotate",
+        [](const std::string& value) -> Option<Error> {
+          // Check if `logrotate` exists via the help command.
+          // TODO(josephw): Consider a more comprehensive check.
+          Try<std::string> helpCommand =
+            os::shell(value + " --help > /dev/null");
+
+          if (helpCommand.isError()) {
+            return Error(
+                "Failed to check logrotate: " + helpCommand.error());
+          }
+
+          return None();
+        });
+
+    add(&Flags::user,
+        "user",
+        "The user this command should run as.");
   }
 
-  Option<std::string> labels;
+  std::string destination_type;
+
+  Option<std::string> journald_labels;
 
   // Values populated during validation.
   Labels parsed_labels;
+
+  Bytes logrotate_max_size;
+  Option<std::string> logrotate_options;
+  Option<std::string> logrotate_filename;
+  std::string logrotate_path;
+  Option<std::string> user;
 };
 
 } // namespace logger {
