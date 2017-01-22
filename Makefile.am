@@ -51,33 +51,6 @@ libremovedockercfg_la_LDFLAGS =				\
   -shared $(MESOS_LDFLAGS)
 
 ###############################################################################
-# Journald ContainerLogger Module.
-###############################################################################
-
-# Library with the ContainerLogger module.
-pkglib_LTLIBRARIES += libjournaldlogger.la
-libjournaldlogger_la_SOURCES =				\
-  journald/journald.hpp					\
-  journald/lib_journald.hpp				\
-  journald/lib_journald.cpp
-
-libjournaldlogger_la_LDFLAGS =				\
-  -release $(PACKAGE_VERSION)				\
-  -shared $(MESOS_LDFLAGS)
-
-# Companion binary for the ContainerLogger module.
-bin_PROGRAMS += mesos-journald-logger
-mesos_journald_logger_SOURCES =				\
-  journald/journald.hpp					\
-  journald/journald.cpp
-
-SYSTEMD_JOURNALD = `pkg-config --cflags --libs libsystemd`
-
-mesos_journald_logger_LDFLAGS =				\
-  $(MESOS_LDFLAGS)					\
-  $(SYSTEMD_JOURNALD)
-
-###############################################################################
 # Overlay Modules.
 ###############################################################################
 
@@ -164,21 +137,6 @@ test_dockercfg_LDADD =					\
   libmesos_tests.la					\
   libremovedockercfg.la
 
-# Test (make check) binary for the journald module.
-check_PROGRAMS += test-journald
-
-test_journald_SOURCES =					\
-  tests/journald_tests.cpp
-
-test_journald_CPPFLAGS =				\
-  $(libmesos_tests_la_CPPFLAGS)
-
-test_journald_LDADD =					\
-  $(MESOS_LDFLAGS)					\
-  $(MESOS_BUILD_DIR)/$(BUNDLE_SUBDIR)/.libs/libgmock.la	\
-  $(MESOS_BUILD_DIR)/src/.libs/libmesos.la		\
-  libmesos_tests.la					\
-  libjournaldlogger.la
 
 # Test (make check) binary for the overlay modules.
 check_PROGRAMS += test-overlay
@@ -195,9 +153,9 @@ test_overlay_LDADD =					\
   $(MESOS_BUILD_DIR)/src/.libs/libmesos.la		\
   libmesos_tests.la					\
   libmesos_network_overlay.la
-endif
+endif # SOURCE_PROVIDED
 
 check-local: $(check_PROGRAMS)
 	./test-dockercfg
-	./test-journald --verbose
+	./test-overlay --verbose
 	LIBPROCESS_IP=127.0.0.1 LIBPROCESS_PORT=5050 ./test-overlay --verbose
