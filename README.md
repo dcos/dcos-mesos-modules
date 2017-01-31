@@ -42,14 +42,6 @@ One way is to do the following:
     make install
 ```
 
-### Systemd journald headers
-
-Some of these modules also require systemd development headers and libraries.
-For example on CentOS 7:
-```
-sudo yum install systemd-devel
-```
-
 ## Build Instructions
 
 To start, generate the required build files and create a build directory:
