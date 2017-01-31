@@ -1,4 +1,4 @@
-AC_INIT([dcos-mesos-modules],[0.2])
+AC_INIT([dcos-mesos-modules],[1.8.8])
 AC_PREREQ([2.69])
 
 AC_CANONICAL_HOST
