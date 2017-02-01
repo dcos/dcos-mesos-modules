@@ -413,6 +413,8 @@ void ManagerProcess::detected(const Future<Option<MasterInfo>>& mesosMaster)
       << mesosMaster.failure();
   }
 
+  configAttempts = 0;
+
   state = REGISTERING;
 
   Option<MasterInfo> latestMesosMaster = None();
