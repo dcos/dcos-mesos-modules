@@ -7,6 +7,7 @@
 #include <mesos/module/container_logger.hpp>
 
 #include <mesos/slave/container_logger.hpp>
+#include <mesos/slave/containerizer.hpp>
 
 #include <process/dispatch.hpp>
 #include <process/future.hpp>
@@ -35,6 +36,7 @@ using std::string;
 using std::vector;
 
 using mesos::slave::ContainerLogger;
+using mesos::slave::ContainerIO;
 
 // Forward declare some functions located in `src/linux/systemd.cpp`.
 // This is not exposed in the Mesos public headers, but is necessary to
@@ -53,9 +55,6 @@ bool enabled();
 namespace mesos {
 namespace journald {
 
-using SubprocessInfo = ContainerLogger::SubprocessInfo;
-
-
 class JournaldContainerLoggerProcess :
   public Process<JournaldContainerLoggerProcess>
 {
@@ -64,7 +63,7 @@ public:
 
   // Spawns two subprocesses that read from their stdin and write to
   // journald along with labels to disambiguate the logs from other containers.
-  Future<SubprocessInfo> prepare(
+  Future<ContainerIO> prepare(
       const ExecutorInfo& executorInfo,
       const std::string& sandboxDirectory,
       const Option<std::string>& user)
@@ -326,10 +325,10 @@ public:
     }
 
     // NOTE: The ownership of these FDs is given to the caller of this function.
-    ContainerLogger::SubprocessInfo info;
-    info.out = SubprocessInfo::IO::FD(outfds.write.get());
-    info.err = SubprocessInfo::IO::FD(errfds.write.get());
-    return info;
+    ContainerIO io;
+    io.out = ContainerIO::IO::FD(outfds.write.get());
+    io.err = ContainerIO::IO::FD(errfds.write.get());
+    return io;
   }
 
 protected:
@@ -358,7 +357,7 @@ Try<Nothing> JournaldContainerLogger::initialize()
   return Nothing();
 }
 
-Future<SubprocessInfo> JournaldContainerLogger::prepare(
+Future<ContainerIO> JournaldContainerLogger::prepare(
     const ExecutorInfo& executorInfo,
     const std::string& sandboxDirectory,
     const Option<std::string>& user)
