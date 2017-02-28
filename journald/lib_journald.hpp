@@ -4,6 +4,7 @@
 #include <stdio.h>
 
 #include <mesos/slave/container_logger.hpp>
+#include <mesos/slave/containerizer.hpp>
 
 #include <stout/flags.hpp>
 #include <stout/option.hpp>
@@ -207,7 +208,7 @@ public:
   // This is a noop.  The journald container logger has nothing to initialize.
   virtual Try<Nothing> initialize();
 
-  virtual process::Future<mesos::slave::ContainerLogger::SubprocessInfo>
+  virtual process::Future<mesos::slave::ContainerIO>
   prepare(
       const ExecutorInfo& executorInfo,
       const std::string& sandboxDirectory,
