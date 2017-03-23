@@ -40,7 +40,7 @@ FileSink::FileSink(const Flags& _flags) : flags(_flags)
   Try<int> open = os::open(
       flags.output_file,
       O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC,
-      S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+      S_IRUSR | S_IWUSR | S_IRGRP);
   CHECK_SOME(open);
 
   logFd = open.get();
