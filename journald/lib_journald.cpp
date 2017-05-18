@@ -160,6 +160,11 @@ public:
     // * The AgentID always occurs after the `slaves` directory.
     // * The ContainerID deals with nested containers by concatenating the
     //   top-level and sub-container IDs with a `.` separator.
+    //
+    // NOTE: This parsing logic will fail to find the AgentID/ContainerID
+    // when it is given the sandbox symlink from this Docker workaround:
+    // https://issues.apache.org/jira/browse/MESOS-1833
+    // When this happens, we simply skip these labels.
     vector<string> sandboxTokens = strings::tokenize(sandboxDirectory, "/");
     Option<string> agentId = None();
     Option<string> containerId = None();
@@ -176,17 +181,19 @@ public:
     // NOTE: AgentID is generally unknown/irrelevant to the containerizer.
     // However, because we expect some degree of log aggregation,
     // we derive the AgentID based on the `sandboxDirectory`.
-    CHECK(agentId.isSome());
-    label.set_key("AGENT_ID");
-    label.set_value(agentId.get());
-    labels.add_labels()->CopyFrom(label);
+    if (agentId.isSome()) {
+      label.set_key("AGENT_ID");
+      label.set_value(agentId.get());
+      labels.add_labels()->CopyFrom(label);
+    }
 
     // NOTE: ContainerID isn't passed into the container logger as part of
     // ExecutorInfo.  It can be retrieved from the `sandboxDirectory`.
-    CHECK(containerId.isSome());
-    label.set_key("CONTAINER_ID");
-    label.set_value(containerId.get());
-    labels.add_labels()->CopyFrom(label);
+    if (containerId.isSome()) {
+      label.set_key("CONTAINER_ID");
+      label.set_value(containerId.get());
+      labels.add_labels()->CopyFrom(label);
+    }
 
     // If the executor is named, use that name to present the logs.
     // Otherwise, default to the ExecutorID.
