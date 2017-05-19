@@ -317,9 +317,23 @@ TEST_P(JournaldLoggerTest, ROOT_LogToJournald)
 }
 
 
+class JournaldLoggerDockerTest : public JournaldLoggerTest {};
+
+
+// Parameterized based on the suffix of the TaskID.
+// This test is needed due to the workaround introduced in:
+// https://issues.apache.org/jira/browse/MESOS-1833
+INSTANTIATE_TEST_CASE_P(
+    TaskIDSuffix,
+    JournaldLoggerDockerTest,
+    ::testing::Values(
+        std::string(""),
+        std::string(":something")));
+
+
 // Loads the journald ContainerLogger module and runs a docker task.
 // Then queries journald for the associated logs.
-TEST_F(JournaldLoggerTest, ROOT_DOCKER_LogToJournald)
+TEST_P(JournaldLoggerDockerTest, ROOT_DOCKER_LogToJournald)
 {
   // Create a master, agent, and framework.
   Try<Owned<cluster::Master>> master = StartMaster();
@@ -369,6 +383,9 @@ TEST_F(JournaldLoggerTest, ROOT_DOCKER_LogToJournald)
 
   TaskInfo task = createTask(offers.get()[0], "echo " + specialString);
 
+  // Add a parameterized suffix to the TaskID.
+  task.mutable_task_id()->set_value(task.task_id().value() + GetParam());
+
   ContainerInfo containerInfo;
   containerInfo.set_type(ContainerInfo::DOCKER);
 
@@ -416,8 +433,13 @@ TEST_F(JournaldLoggerTest, ROOT_DOCKER_LogToJournald)
   AWAIT_READY(frameworkQuery);
   ASSERT_TRUE(strings::contains(frameworkQuery.get(), specialString));
 
+  // When the TaskID is not suffixed with a colon, the journald query should
+  // return some result. When the suffix is present, the query should return
+  // an empty result.
   AWAIT_READY(agentQuery);
-  ASSERT_TRUE(strings::contains(agentQuery.get(), specialString));
+  ASSERT_EQ(
+      GetParam().empty(),
+      strings::contains(agentQuery.get(), specialString));
 
   AWAIT_READY(executorQuery);
   ASSERT_TRUE(strings::contains(executorQuery.get(), specialString));
