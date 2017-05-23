@@ -5,9 +5,10 @@ if SOURCE_PROVIDED
 # Render path to Mesos bundled gmock.
 BUNDLE_SUBDIR = 3rdparty
 
+GOOGLETEST = $(MESOS_BUILD_DIR)/$(BUNDLE_SUBDIR)/googletest-release-$(GOOGLETEST_VERSION)
 include $(MESOS_ROOT)/$(BUNDLE_SUBDIR)/versions.am
-GMOCK = $(MESOS_BUILD_DIR)/$(BUNDLE_SUBDIR)/gmock-$(GMOCK_VERSION)
-GTEST = $(GMOCK)/gtest
+GMOCK = $(GOOGLETEST)/googlemock
+GTEST = $(GOOGLETEST)/googletest
 ZOOKEEPER = $(MESOS_BUILD_DIR)/$(BUNDLE_SUBDIR)/zookeeper-$(ZOOKEEPER_VERSION)/src/c
 endif
 
