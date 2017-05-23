@@ -6,8 +6,8 @@ if SOURCE_PROVIDED
 BUNDLE_SUBDIR = 3rdparty
 
 include $(MESOS_ROOT)/$(BUNDLE_SUBDIR)/versions.am
-GMOCK = $(MESOS_BUILD_DIR)/$(BUNDLE_SUBDIR)/gmock-$(GMOCK_VERSION)
-GTEST = $(GMOCK)/gtest
+GMOCK = $(MESOS_BUILD_DIR)/$(BUNDLE_SUBDIR)/googletest-release-$(GOOGLETEST_VERSION)/googlemock
+GTEST = $(MESOS_BUILD_DIR)/$(BUNDLE_SUBDIR)/googletest-release-$(GOOGLETEST_VERSION)/googletest
 ZOOKEEPER = $(MESOS_BUILD_DIR)/$(BUNDLE_SUBDIR)/zookeeper-$(ZOOKEEPER_VERSION)/src/c
 endif
 
