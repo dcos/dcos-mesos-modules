@@ -8,6 +8,9 @@ message BridgeInfo {
   // IP in CIDR format allocated to this bridge. The bridge will act
   // as a gateway for all containers associated with it.
   required string ip = 2;
+
+  // IPv6 in CIDR format
+  required string ip6 = 3;
 }
 
 
@@ -16,6 +19,7 @@ message VxLANInfo {
   required string vtep_name = 2;
   required string vtep_ip = 3;
   required string vtep_mac = 4;
+  required string vtep_ip6 = 5;
 }
 
 
@@ -38,6 +42,12 @@ message OverlayInfo {
   // The prefix length used to carve out subnets for Agents, from the
   // subnet assigned to this overlay.
   required uint32 prefix = 3;
+
+  // The IPv6 subnet associated with this overlay network.
+  required string subnet6 = 4;
+
+  // The prefix length used to carve out IPv6 subnets for Agents
+  required uint32 prefix6 = 5;
 }
 
 
@@ -72,6 +82,9 @@ message AgentOverlayInfo {
   }
 
   optional State state = 6;
+
+  //IPv6 subnet
+  optional string subnet6 = 7;
 }
 
 
@@ -109,4 +122,7 @@ message NetworkConfig {
   // The overlay networks that need to be configured on the DC/OS
   // cluster.
   repeated OverlayInfo overlays = 3;
+
+  // IPv6 subnet for vtep
+  required string vtep_subnet6 = 4;
 }
