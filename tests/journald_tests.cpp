@@ -188,7 +188,7 @@ TEST_P(JournaldLoggerTest, ROOT_LogToJournald)
   // Use the journald container logger.
   flags.container_logger = JOURNALD_LOGGER_NAME;
 
-  Fetcher fetcher;
+  Fetcher fetcher(flags);
 
   // We use an actual containerizer + executor since we want something to run.
   Try<MesosContainerizer*> _containerizer =
@@ -345,7 +345,7 @@ TEST_P(JournaldLoggerDockerTest, ROOT_DOCKER_LogToJournald)
   // Use the journald container logger.
   flags.container_logger = JOURNALD_LOGGER_NAME;
 
-  Fetcher fetcher;
+  Fetcher fetcher(flags);
 
   Try<DockerContainerizer*> _containerizer =
     DockerContainerizer::create(flags, &fetcher);
