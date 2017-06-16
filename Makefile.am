@@ -22,7 +22,7 @@ BUILT_SOURCES =
 CLEANFILES =
 
 # Add compiler and linker flags for pthreads.
-AM_CXXFLAGS = $(PTHREAD_CFLAGS)
+AM_CXXFLAGS = $(PTHREAD_CFLAGS) $(MESOS_CXXFLAGS)
 AM_LIBS = $(PTHREAD_LIBS)
 
 # Add top-level include dir to our include path.
