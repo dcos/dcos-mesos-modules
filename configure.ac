@@ -139,7 +139,7 @@ else
     MESOS_CPPFLAGS+=" -I${mesos_root}/3rdparty/libprocess/include"
 
     # Add stout to include path.
-    MESOS_CPPFLAGS="${MESOS_CPPFLAGS} -I${mesos_root}/3rdparty/stout/include"
+    MESOS_CPPFLAGS="${MESOS_CPPFLAGS} -isystem ${mesos_root}/3rdparty/stout/include"
   else
     AC_MSG_ERROR([Invalid mesos path; use --with-mesos-root=<DIR>
                   <DIR> is the top-level directory of the Mesos distribution.])

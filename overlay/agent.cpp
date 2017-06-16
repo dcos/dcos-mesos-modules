@@ -808,12 +808,22 @@ Future<Nothing> ManagerProcess::_configureDockerNetwork(
     return Failure("Failed to parse bridge ip: " + subnet.error());
   }
 
+  Try<IPNetwork> subnet6 = IPNetwork::parse(
+      overlay.docker_bridge().ip6(),
+      AF_INET6);
+
+  if (subnet6.isError()) {
+    return Failure("Failed to parse bridge ipv6: " + subnet6.error());
+  }
+
   Try<string> dockerCommand = strings::format(
       "docker network create --driver=bridge --subnet=%s "
+      "--ipv6 --subnet=%s "
       "--opt=com.docker.network.bridge.name=%s "
       "--opt=com.docker.network.bridge.enable_ip_masquerade=false "
       "--opt=com.docker.network.driver.mtu=%s %s",
       stringify(subnet.get()),
+      stringify(subnet6.get()),
       overlay.docker_bridge().name(),
       stringify(networkConfig.overlay_mtu()),
       name);

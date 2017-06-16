@@ -33,6 +33,7 @@
 
 #include "messages.hpp"
 #include "overlay.hpp"
+#include "network.hpp"
 
 namespace http = process::http;
 
@@ -40,6 +41,7 @@ using std::list;
 using std::ostream;
 using std::queue;
 using std::set;
+using std::hex;
 using std::string;
 using std::vector;
 
@@ -123,25 +125,51 @@ static Try<net::MAC> createMAC(const string& _mac, const bool& oui)
 
 struct Vtep
 {
-  Vtep(const net::IP::Network& _network, const MAC _oui)
-    : network(_network), oui(_oui)
+  Vtep(const net::IPNetwork& _network,
+       const net::IPNetwork& _network6,
+       const MAC _oui)
+    : network(_network), 
+      network6(_network6),
+      oui(_oui)
   {
-    // `endIP` = `32 - network.prefix()` number of LSB bits set.
-    //
-    // NOTE: The below shift operation results in `32 - network.prefix()
-    // remaining bits in the LSB of `endIP`.
-    uint32_t endIP = 0xffffffff >> network.prefix();
+    uint32_t addr = ntohl(network.address().in().get().s_addr);
+    uint32_t mask = ntohl(network.netmask().in().get().s_addr);
+    IPWrapper startIP = IPWrapper(addr & mask);
+    IPWrapper endIP = IPWrapper(addr | ~mask);
 
-    freeIP += (Bound<uint32_t>::closed(1), Bound<uint32_t>::closed(endIP - 1));
+    LOG(INFO) << "Vtep IPv4: " << startIP << "-" << endIP;
+
+    freeIP += 
+      (Bound<IPWrapper>::open(startIP), 
+       Bound<IPWrapper>::open(endIP));
+
+    // IPv6
+    in6_addr saddr6, eaddr6;
+    in6_addr addr6 = network6.address().in6().get();
+    in6_addr mask6 = network6.netmask().in6().get();
+    for (int i = 0; i < 16; i++) {
+      saddr6.s6_addr[i] = addr6.s6_addr[i] & mask6.s6_addr[i];
+      eaddr6.s6_addr[i] = addr6.s6_addr[i] | ~mask6.s6_addr[i];
+    }
+
+    IPWrapper startIP6 = IPWrapper(saddr6);
+    IPWrapper endIP6 = IPWrapper(eaddr6);
+
+    LOG(INFO) << "Vtep IPv6: " << startIP6 << "-" << endIP6;
+
+    freeIP6 +=
+      (Bound<IPWrapper>::open(startIP6),
+       Bound<IPWrapper>::open(endIP6));
+    
   }
 
-  Try<net::IP::Network> allocateIP()
+  Try<net::IPNetwork> allocateIP()
   {
     if (freeIP.empty()) {
       return Error("Unable to allocate a VTEP IP due to exhaustion");
     }
 
-    uint32_t ip = freeIP.begin()->lower();
+    IPWrapper ip = freeIP.begin()->lower();
     freeIP -= ip;
 
     uint32_t address = ntohl(network.address().in().get().s_addr);
@@ -150,17 +178,27 @@ struct Vtep
     return net::IP::Network::create(net::IP(address), network.prefix());
   }
 
-  Try<Nothing> reserve(const net::IP::Network& ip)
+  Try<net::IPNetwork> allocateIP6()
   {
-    uint32_t _ip = ntohl(ip.address().in().get().s_addr);
-    uint32_t mask = ntohl(network.netmask().in().get().s_addr);
+    if (freeIP6.empty()) {
+      return Error("Unable to allocate a VTEP IPv6 due to exhaustion");
+    }
 
-    _ip &= ~mask;
+    IPWrapper ip6 = freeIP6.begin()->lower();
+    freeIP6 -= ip6;
+
+    return net::IPNetwork::create(ip6.address(), network6.prefix()) ;
+  } 
+
+  Try<Nothing> reserve(const net::IPNetwork& ip)
+  {
+    uint32_t addr = ntohl(ip.address().in().get().s_addr);
+    IPWrapper _ip = IPWrapper(addr);
 
     if (!freeIP.contains(_ip)) {
       VLOG(1) << "Current free IPs: " << freeIP;
       return Error(
-          "Cannot reserve an unavailable IP: "  + stringify(ip) +
+          "Cannot reserve an unavailable IP: "  + stringify(_ip) +
           "(" + stringify(_ip) + ")");
     }
 
@@ -169,13 +207,30 @@ struct Vtep
     return Nothing();
   }
 
+  Try<Nothing> reserve6(const net::IPNetwork& ip6)
+  {
+    in6_addr addr6 = ip6.address().in6().get();
+    IPWrapper _ip6 = IPWrapper(addr6);
+
+    if (!freeIP6.contains(_ip6)) {
+      VLOG(1) << "Current free IPv6s: " << freeIP6;
+      return Error(
+          "Cannot reserve an unavailable IPv6: "  + stringify(_ip6) +
+          "(" + stringify(_ip6) + ")");
+    }
+
+    freeIP6 -= _ip6;
+
+    return Nothing();
+  }
+    
   // We generate the VTEP MAC from the IP by taking the least 24 bits
   // of the IP and using the 24 bits as the NIC of the MAC.
   //
   // NOTE: There is a caveat to using this technique to generating the
   // MAC, namely if the CIDR prefix of the IP is less than 8 then we
   // the MAC being generated is not guaranteed to be unique.
-  Try<MAC> generateMAC(const net::IP& ip)
+  Try<net::MAC> generateMAC(const net::IP& ip)
   {
     Try<struct in_addr> in = ip.in();
 
@@ -202,38 +257,117 @@ struct Vtep
 
   void reset()
   {
-    uint32_t endIP = 0xffffffff >> network.prefix();
+    freeIP = IntervalSet<IPWrapper>();
+    uint32_t addr = ntohl(network.address().in().get().s_addr);
+    uint32_t mask = ntohl(network.netmask().in().get().s_addr);
+    IPWrapper startIP = IPWrapper(addr & mask);
+    IPWrapper endIP = IPWrapper(addr | ~mask);
 
-    freeIP = IntervalSet<uint32_t>();
-    freeIP += (Bound<uint32_t>::closed(1), Bound<uint32_t>::closed(endIP - 1));
+    LOG(INFO) << "Reset vtep IPv4: " << startIP << "-" << endIP;
+
+    freeIP +=
+      (Bound<IPWrapper>::open(startIP),
+       Bound<IPWrapper>::open(endIP));
+
+    // IPv6
+    freeIP6 = IntervalSet<IPWrapper>();
+    in6_addr saddr6, eaddr6;
+    in6_addr addr6 = network6.address().in6().get();
+    in6_addr mask6 = network6.netmask().in6().get();
+    for (int i = 0; i < 16; i++) {
+      saddr6.s6_addr[i] = addr6.s6_addr[i] & mask6.s6_addr[i];
+      eaddr6.s6_addr[i] = addr6.s6_addr[i] | ~mask6.s6_addr[i];
+    }
+
+    IPWrapper startIP6 = IPWrapper(saddr6);
+    IPWrapper endIP6 = IPWrapper(eaddr6);
+
+    LOG(INFO) << "Reset vtep IPv6: " << startIP6 << "-" << endIP6;
+
+    freeIP6 +=
+      (Bound<IPWrapper>::open(startIP6), 
+       Bound<IPWrapper>::open(endIP6));
   }
 
   // Network allocated to the VTEP.
-  net::IP::Network network;
+  net::IPNetwork network;
 
-  MAC oui;
+  net::IPNetwork network6;
 
-  IntervalSet<uint32_t> freeIP;
+  net::MAC oui;
+
+  IntervalSet<IPWrapper> freeIP;
+
+  IntervalSet<IPWrapper> freeIP6;
 };
 
+// Helper function to convert IPv6 prefix into netmask
+static in6_addr toMask(uint8_t prefix_)
+{
+  in6_addr mask;
+  memset(&mask, 0, sizeof(mask));
+
+  int i = 0;
+  while (prefix_ >= 8) {
+    mask.s6_addr[i++] = 0xff;
+    prefix_ -= 8;
+  }
+
+  if (prefix_ > 0) {
+    uint8_t _mask = 0xff << (8 - prefix_);
+    mask.s6_addr[i] = _mask;
+  }
+  return mask;
+}
 
 struct Overlay
 {
   Overlay(
       const string& _name,
-      const net::IP::Network& _network,
-      const uint8_t _prefix)
+      const net::IPNetwork& _network,
+      const net::IPNetwork& _network6,
+      const uint8_t _prefix,
+      const uint8_t _prefix6)
     : name(_name),
     network(_network),
-    prefix(_prefix)
+    network6(_network6),
+    prefix(_prefix),
+    prefix6(_prefix6)
   {
-    // `network` has already been vetted to be an AF_INET address.
-    uint32_t endSubnet = 0xffffffff; // 255.255.255.255
-    endSubnet = endSubnet >> (network.prefix() + 32 - prefix);
+    uint32_t addr = ntohl(network.address().in().get().s_addr);
+    uint32_t startMask = ntohl(network.netmask().in().get().s_addr);
+    uint32_t endMask = 0xffffffff << (32 - prefix);
+    uint32_t startAddr = addr & startMask;
+    uint32_t endAddr = (addr | ~startMask) & endMask;
+
+    Network startSubnet = Network(IP(startAddr), prefix);
+    Network endSubnet = Network(IP(endAddr), prefix);
+
+   LOG(INFO) << "IPv4: " << startSubnet << " - " << endSubnet;
 
     freeNetworks +=
-      (Bound<uint32_t>::closed(0),
-       Bound<uint32_t>::closed(endSubnet));
+      (Bound<Network>::closed(startSubnet),
+       Bound<Network>::open(endSubnet));
+
+    // IPv6
+    in6_addr startAddr6, endAddr6;
+    in6_addr addr6 = network6.address().in6().get();
+    in6_addr startMask6 = network6.netmask().in6().get();
+    in6_addr endMask6_ = toMask(prefix6);
+    for (int i = 0; i < 16; i++) {
+      startAddr6.s6_addr[i] = addr6.s6_addr[i] & startMask6.s6_addr[i];
+      endAddr6.s6_addr[i] = addr6.s6_addr[i] | ~startMask6.s6_addr[i];
+      endAddr6.s6_addr[i] &= endMask6_.s6_addr[i];
+    }
+    
+    Network startSubnet6 = Network(IP(startAddr6), prefix6);
+    Network endSubnet6 = Network(IP(endAddr6), prefix6);
+
+    LOG(INFO) << "IPv6: " << startSubnet6 << " - " << endSubnet6;
+
+    freeNetworks6 +=
+      (Bound<Network>::closed(startSubnet6),
+       Bound<Network>::open(endSubnet6));
   }
 
   OverlayInfo getOverlayInfo() const
@@ -243,6 +377,8 @@ struct Overlay
     overlay.set_name(name);
     overlay.set_subnet(stringify(network));
     overlay.set_prefix(prefix);
+    overlay.set_subnet6(stringify(network6));
+    overlay.set_prefix6(prefix6);
 
     return overlay;
   }
@@ -253,16 +389,22 @@ struct Overlay
       return Error("No free subnets available in the " + name + "overlay");
     }
 
-    uint32_t subnet = freeNetworks.begin()->lower();
-    freeNetworks -= subnet;
+    Network agentSubnet = freeNetworks.begin()->lower();
+    freeNetworks -= agentSubnet;
 
-    uint32_t agentSubnet = ntohl(network.address().in().get().s_addr);
+    return agentSubnet.network();
+  }
 
-    // Get the suffix of the Agent subnet.
-    subnet = subnet << (32 - prefix);
-    agentSubnet |= subnet;
+  Try<net::IPNetwork> allocate6()
+  {
+    if (freeNetworks6.empty()) {
+      return Error("No free IPv6 subnets available in the " + name + "overlay");
+    }
 
-    return net::IP::Network::create(net::IP(agentSubnet), prefix);
+    Network agentSubnet6 = freeNetworks6.begin()->lower();
+    freeNetworks6 -= agentSubnet6;
+
+    return agentSubnet6.network();
   }
 
   Try<Nothing> free(const net::IP::Network& subnet)
@@ -280,22 +422,36 @@ struct Overlay
           " to the overlay subnet");
     }
 
-    uint32_t address = ntohl(subnet.address().in().get().s_addr);
+    freeNetworks += Network(subnet.address(), prefix);
 
-    freeNetworks += address;
+    return Nothing();
+  }
+
+  Try<Nothing> free6(const net::IPNetwork& subnet6)
+  {
+    if (subnet6.prefix() != prefix6) {
+      return Error(
+          "Cannot free this IPv6 network because prefix " + stringify(subnet6.prefix()) +
+          " does not match Agent prefix " + stringify(prefix6) + " of the overlay");
+    }
+
+    if (subnet6.prefix() < network6.prefix()) {
+      return Error(
+          "Cannot free this IPv6 network since it does not belong "
+          " to the overlay subnet");
+    }
+
+    freeNetworks6 += Network(subnet6.address(), prefix6);
 
     return Nothing();
   }
 
   Try<Nothing> reserve(const net::IP::Network& subnet)
   {
-    uint32_t netmask = ntohl(network.netmask().in().get().s_addr);
-    uint32_t _subnet = ntohl(subnet.address().in().get().s_addr);
-
-    // Retrieve the integer representation of subnet in the
-    // `IntervalSet`.
-    _subnet &= ~netmask;
-    _subnet = _subnet >> (32 - subnet.prefix());
+    uint32_t _mask = ntohl(subnet.netmask().in().get().s_addr);
+    uint32_t _address = ntohl(subnet.address().in().get().s_addr);
+    Network _subnet = Network(IP(_address & _mask), subnet.prefix());
+   
 
     if (!freeNetworks.contains(_subnet)) {
       return Error(
@@ -307,19 +463,71 @@ struct Overlay
 
     return Nothing();
   }
+ 
+  Try<Nothing> reserve6(const net::IPNetwork& subnet6)
+  {
+    in6_addr _maskedAddr6;
+    in6_addr _addr6 = subnet6.address().in6().get();
+    in6_addr _mask6 = subnet6.netmask().in6().get();
+    for (int i = 0; i < 16; i++) {
+      _maskedAddr6.s6_addr[i] = _addr6.s6_addr[i] & _mask6.s6_addr[i];
+    }
+    Network _subnet6 = Network(IP(_maskedAddr6), subnet6.prefix());
+
+
+    if (!freeNetworks6.contains(_subnet6)) {
+      return Error(
+          "Unable to reserve unavailable IPv6 subnet " +
+          stringify(subnet6) + "(" + stringify(_subnet6) + ")");
+    }
+
+    freeNetworks6 -= _subnet6;
+
+    return Nothing();
+  }
 
   void reset()
   {
     // Re-initialize `freeNetworks`.
-    freeNetworks = IntervalSet<uint32_t>();
+    freeNetworks = IntervalSet<Network>();
+ 
+    uint32_t addr = ntohl(network.address().in().get().s_addr);
+    uint32_t startMask = ntohl(network.netmask().in().get().s_addr);
+    uint32_t endMask = 0xffffffff << (32 - prefix);
+    uint32_t startAddr = addr & startMask;
+    uint32_t endAddr = (addr | ~startMask) & endMask;
 
-    uint32_t endSubnet = 0xffffffff; // 255.255.255.255
-    endSubnet = endSubnet >> (network.prefix() + 32 - prefix);
+    Network startSubnet = Network(IP(startAddr), prefix);
+    Network endSubnet = Network(IP(endAddr), prefix);
 
-    freeNetworks +=
-      (Bound<uint32_t>::closed(0),
-       Bound<uint32_t>::closed(endSubnet));
-  }
+   LOG(INFO) << "Reset IPv4: " << startSubnet << " - " << endSubnet;
+
+   freeNetworks +=
+     (Bound<Network>::open(startSubnet),
+      Bound<Network>::open(endSubnet));
+
+   // IPv6
+   freeNetworks6 = IntervalSet<Network>();
+
+   in6_addr startAddr6, endAddr6;
+   in6_addr addr6 = network6.address().in6().get();
+   in6_addr startMask6 = network6.netmask().in6().get();
+   in6_addr endMask6_ = toMask(prefix6);
+   for (int i = 0; i < 16; i++) {
+     startAddr6.s6_addr[i] = addr6.s6_addr[i] & startMask6.s6_addr[i];
+     endAddr6.s6_addr[i] = addr6.s6_addr[i] | ~startMask6.s6_addr[i];
+     endAddr6.s6_addr[i] &= endMask6_.s6_addr[i];
+   }
+
+   Network startSubnet6 = Network(IP(startAddr6), prefix6);
+   Network endSubnet6 = Network(IP(endAddr6), prefix6);
+
+   LOG(INFO) << "Reset IPv6: " << startSubnet6 << " - " << endSubnet6; 
+
+   freeNetworks6 +=
+      (Bound<Network>::open(startSubnet6),
+       Bound<Network>::open(endSubnet6));
+  } 
 
   // Canonical name of the network.
   std::string name;
@@ -327,13 +535,22 @@ struct Overlay
   // Network allocated to this overlay.
   net::IP::Network network;
 
+  // IPv6 Network allocated to this overlay
+  net::IPNetwork network6;
+
   // Prefix length allocated to each agent.
   uint8_t prefix;
+
+  // IPv6 prefix length allocated to each agent
+  uint8_t prefix6;
 
   // Free subnets available in this network. The subnets are
   // calcualted using the prefix length set for the agents in
   // `prefix`.
-  IntervalSet<uint32_t> freeNetworks;
+  IntervalSet<Network> freeNetworks;
+
+  // Free IPv6 subnets
+  IntervalSet<Network> freeNetworks6;
 };
 
 
@@ -409,16 +626,20 @@ public:
     // agent. Queue the message on the Agent. Finally, ask Master to
     // reliably send these messages to the Agent.
     foreachpair (const string& name, const Owned<Overlay>& overlay, _overlays) {
+      // skip if the overlay already configured
       if (overlays.contains(name)) {
         continue;
       }
 
       AgentOverlayInfo _overlay;
-      Option<net::IP::Network> agentSubnet = None();
+      Option<net::IPNetwork> agentSubnet = None();
+      Option<net::IPNetwork> agentSubnet6 = None();
 
       _overlay.mutable_info()->set_name(name);
       _overlay.mutable_info()->set_subnet(stringify(overlay->network));
       _overlay.mutable_info()->set_prefix(overlay->prefix);
+      _overlay.mutable_info()->set_subnet6(stringify(overlay->network6));
+      _overlay.mutable_info()->set_prefix6(overlay->prefix6);
 
       if (networkConfig.allocate_subnet()) {
         Try<net::IP::Network> _agentSubnet = overlay->allocate();
@@ -432,6 +653,18 @@ public:
         agentSubnet = _agentSubnet.get();
         _overlay.set_subnet(stringify(agentSubnet.get()));
 
+        // IPv6
+        Try<net::IPNetwork> _agentSubnet6 = overlay->allocate6();
+        if (_agentSubnet.isError()) {
+          LOG(ERROR) << "Cannot allocate IPv6 subnet from overlay "
+                     << name << " to Agent " << pid << ":"
+                     << _agentSubnet6.error();
+          continue;
+        }
+
+        agentSubnet6 = _agentSubnet6.get();
+        _overlay.set_subnet6(stringify(agentSubnet6.get()));
+
         // Allocate bridges for Mesos and Docker.
         Try<Nothing> bridges = allocateBridges(
             &_overlay,
@@ -443,6 +676,11 @@ public:
 
           if ( agentSubnet.isSome()) {
             overlay->free(agentSubnet.get());
+          }
+
+          // IPv6
+          if (agentSubnet6.isSome()) {
+            overlay->free6(agentSubnet6.get());
           }
           continue;
         }
@@ -527,7 +765,6 @@ private:
     }
 
     Try<struct in_addr> subnet = network->address().in();
-    Try<struct in_addr> subnetMask = network->netmask().in();
 
     if (subnet.isError()) {
       return Error(
@@ -535,47 +772,35 @@ private:
           "the network :"  + subnet.error());
     }
 
-    if (subnetMask.isError()) {
-      return Error(
-          "Unable to get a 'struct in_addr' representation of "
-          "the mask :"  + subnetMask.error());
+    uint32_t address = ntohl(subnet.get().s_addr);
+    Network network_ = Network(IP(address), network->prefix() + 1);
+
+    // IPv6
+    Try<net::IPNetwork> network6 = net::IPNetwork::parse(
+        _overlay->subnet6(),
+        AF_INET6);
+
+    if (network6.isError()) {
+      return Error("Unable to parse the IPv6 subnet of the network '" +
+          name + "' : " + network6.error());
     }
 
-    uint32_t address = ntohl(subnet->s_addr);
-    uint32_t mask = ntohl(subnetMask->s_addr) |
-      (0x1 << (32 - (network->prefix() + 1)));
+    Network network6_ = Network(IP(network6->address()), network6->prefix() + 1);
 
     // Create the Mesos bridge.
     if (networkConfig.mesos_bridge()) {
-      Try<net::IP::Network> mesosSubnet =
-        net::IP::Network::create((IP(address)), (IP(mask)));
-
-      if (mesosSubnet.isError()) {
-        return Error(
-            "Could not create Mesos subnet for network '" +
-            name + "': " + mesosSubnet.error());
-      }
-
       BridgeInfo mesosBridgeInfo;
-      mesosBridgeInfo.set_ip(stringify(mesosSubnet.get()));
+      mesosBridgeInfo.set_ip(stringify(network_));
+      mesosBridgeInfo.set_ip6(stringify(network6_));
       mesosBridgeInfo.set_name(MESOS_BRIDGE_PREFIX + name);
       _overlay->mutable_mesos_bridge()->CopyFrom(mesosBridgeInfo);
     }
 
     // Create the docker bridge.
     if (networkConfig.docker_bridge()) {
-      Try<net::IP::Network> dockerSubnet = net::IP::Network::create(
-          IP(address | (0x1 << (32 - (network->prefix() + 1)))),
-          IP(mask));
-
-      if (dockerSubnet.isError()) {
-        return Error(
-            "Could not create Docker subnet for network '" +
-            name + "': " + dockerSubnet.error());
-      }
-
       BridgeInfo dockerBridgeInfo;
-      dockerBridgeInfo.set_ip(stringify(dockerSubnet.get()));
+      dockerBridgeInfo.set_ip(stringify(++network_));
+      dockerBridgeInfo.set_ip6(stringify(++network6_));
       dockerBridgeInfo.set_name(DOCKER_BRIDGE_PREFIX + name);
       _overlay->mutable_docker_bridge()->CopyFrom(dockerBridgeInfo);
     }
@@ -594,7 +819,6 @@ private:
 
   net::IP ip;
 };
-
 
 // Defines an operation that can be performed on a `State` object for
 // a given `AgentInfo`. Every operation returns a `Future<bool>` that
@@ -761,24 +985,50 @@ public:
           "Unable to parse VTEP MAC OUI: " + vtepMACOUI.error());
     }
 
+    // IPv6
+    Try<net::IPNetwork> vtepSubnet6 =
+      net::IPNetwork::parse(networkConfig.vtep_subnet6(), AF_INET6);
+    if (vtepSubnet.isError()) {
+      return Error(
+          "Unable to parse the VTEP IPv6 Subnet: " + vtepSubnet6.error());
+    }
+
     hashmap<string, Owned<Overlay>> overlays;
-    IntervalSet<uint32_t> addressSpace;
+    IntervalSet<IPWrapper> addressSpace;
 
     // Overlay networks cannot have overlapping IP addresses. This
     // lambda keeps track of the current address space and returns an
     // `Error` if it detects an overlay that is going to use an
     // already configured address space.
     auto updateAddressSpace =
-      [&addressSpace](const net::IP::Network &network) -> Try<Nothing> {
-        uint32_t startIP = ntohl(network.address().in().get().s_addr);
+      [&addressSpace](const net::IPNetwork &network) -> Try<Nothing> {
+        IPWrapper startIP, endIP;
+		net::IP address = network.address();
+        switch(address.family()) {
+          case AF_INET: {
+            uint32_t addr = ntohl(network.address().in().get().s_addr);
+            uint32_t mask = ntohl(network.netmask().in().get().s_addr);
+            startIP  = IPWrapper(addr & mask);
+            endIP = IPWrapper(addr | ~mask);
+            break;
+          }
+          case AF_INET6: {
+            in6_addr saddr6, eaddr6;
+            in6_addr addr6 = network.address().in6().get();
+            in6_addr mask6 = network.netmask().in6().get();
+            for (int i = 0; i < 16; i++) {
+              saddr6.s6_addr[i] = addr6.s6_addr[i] & mask6.s6_addr[i];
+              eaddr6.s6_addr[i] = addr6.s6_addr[i] | ~mask6.s6_addr[i];
+            }
+            startIP = IPWrapper(saddr6);
+            endIP = IPWrapper(eaddr6); 
+            break;
+          }
+        }
 
-        uint32_t mask = ntohl(network.netmask().in().get().s_addr);
-        mask = ~mask;
-
-        uint32_t endIP = startIP | mask;
-
-        Interval<uint32_t> overlaySpace =
-          (Bound<uint32_t>::closed(startIP), Bound<uint32_t> ::closed(endIP));
+        Interval<IPWrapper> overlaySpace =
+          (Bound<IPWrapper>::closed(startIP), 
+           Bound<IPWrapper> ::closed(endIP));
 
         if (addressSpace.intersects(overlaySpace)) {
           return Error("Found overlapping address spaces");
@@ -787,7 +1037,7 @@ public:
         addressSpace += overlaySpace;
 
         return Nothing();
-      };
+    };
 
     for (int i = 0; i < networkConfig.overlays_size(); i++) {
       OverlayInfo overlay = networkConfig.overlays(i);
@@ -812,7 +1062,7 @@ public:
         return Error(
             "Overlay name: " + overlay.name() +
             " too long cannot, exceed " + stringify(MAX_OVERLAY_NAME) +
-            "  characters");
+            "  characters    IntervalSet<uint8_t> ");
       }
 
       LOG(INFO) << "Configuring overlay network:" << overlay.name();
@@ -833,12 +1083,31 @@ public:
             overlay.name() + "': " + valid.error());
       }
 
+      // IPv6
+      Try<net::IPNetwork> address6 = 
+        net::IPNetwork::parse(overlay.subnet6(), AF_INET6);
+      if (address6.isError()) {
+        return Error(
+           "Unable to determine IPv6 subnet for network: " +
+           stringify(address6.get()));
+      }
+
+      Try<Nothing> valid6 = updateAddressSpace(address6.get());
+      
+      if (valid6.isError()) {
+        return Error(
+            "Incorrect IPv6 address space for the overlay network '" +
+            overlay.name() + "': " + valid6.error());
+      }
+
       overlays.emplace(
           overlay.name(),
           Owned<Overlay>(new Overlay(
             overlay.name(),
             address.get(),
-            (uint8_t) overlay.prefix())));
+            address6.get(),
+            (uint8_t) overlay.prefix(),
+            (uint8_t) overlay.prefix6())));
     }
 
     if (overlays.empty()) {
@@ -944,6 +1213,7 @@ public:
     return Owned<ManagerProcess>(new ManagerProcess(
           overlays,
           vtepSubnet.get(),
+          vtepSubnet6.get(),
           vtepMACOUI.get(),
           networkConfig,
           replicatedLog,
@@ -1067,6 +1337,16 @@ protected:
       }
       LOG(INFO) << "Allocated VTEP IP : " << vtepIP.get();
 
+      // IPv6
+      Try<net::IPNetwork> vtepIP6 = vtep.allocateIP6();
+      if (vtepIP6.isError()) {
+        LOG(ERROR)
+          << "Unable to get VTEP IPv6 for Agent: " << vtepIP6.error()
+          << "Cannot fulfill registration for Agent: " << pid;
+        return;
+      }
+      LOG(INFO) << "Allocated VTEP IPv6 : " << vtepIP6.get();
+
       Try<net::MAC> vtepMAC = vtep.generateMAC(vtepIP.get().address());
       if (vtepMAC.isError()) {
         LOG(ERROR)
@@ -1081,6 +1361,7 @@ protected:
       vxlan.set_vtep_name("vtep1024");
       vxlan.set_vtep_ip(stringify(vtepIP.get()));
       vxlan.set_vtep_mac(stringify(vtepMAC.get()));
+      vxlan.set_vtep_ip6(stringify(vtepIP6.get()));
 
       BackendInfo backend;
       backend.mutable_vxlan()->CopyFrom(vxlan);
@@ -1253,13 +1534,32 @@ protected:
 
         // We should already have this particular overlay at bootup.
         CHECK(overlays.contains(overlay.info().name()));
-        Try<Nothing> result =
-          overlays.at(overlay.info().name())->reserve(network.get());
-
+        LOG(INFO) << "reserving IPv4 " << stringify(network.get());
+        Try<Nothing> result = overlays.at(overlay.info().name())->reserve(network.get());
         if (result.isError()) {
           LOG(ERROR) << "Unable to reserve the subnet " << network.get()
                      << ": " << result.error();
 
+          abort();
+        }
+
+        // IPv6
+        Try<net::IPNetwork> network6 = net::IPNetwork::parse(
+            overlay.subnet6(),
+            AF_INET6);
+
+        if (network6.isError()) {
+          LOG(ERROR) << "Unable to parse the retrieved network: "
+            << overlay.subnet6() << ": "
+            << network.error();
+          abort();
+        }
+
+        LOG(INFO) << "reserving IPv6 " << stringify(network6.get());
+        result = overlays.at(overlay.info().name())->reserve6(network6.get());
+        if (result.isError()) {
+          LOG(ERROR) << "Unable to reserve the IPv6 subnet " << network6.get()
+                     << ": " << result.error();
           abort();
         }
 
@@ -1290,6 +1590,24 @@ protected:
             LOG(ERROR) << "Unable to reserve VTEP IP: "
                        << vtepIP.get() << ": " << result.error();
 
+            abort();
+          }
+
+          // IPv6
+          Try<net::IPNetwork> vtepIP6 =
+            net::IPNetwork::parse(overlay.backend().vxlan().vtep_ip6(), AF_INET6);
+          if (vtepIP6.isError()) {
+            LOG(ERROR) << "Unable to parse the retrieved `vtep IPv6`: "
+              << overlay.backend().vxlan().vtep_ip6() << ": "
+              << vtepIP6.error();
+            abort();
+          }
+
+          LOG(INFO) << "Reserving VTEP IPv6: " << vtepIP6.get();
+          result = vtep.reserve6(vtepIP6.get());
+          if (result.isError()) {
+            LOG(ERROR) << "Unable to reserve VTEP IPv6: "
+              << vtepIP6.get() << ": " << result.error();
             abort();
           }
         }
@@ -1341,7 +1659,8 @@ private:
 
   ManagerProcess(
       const hashmap<string, Owned<Overlay>>& _overlays,
-      const net::IP::Network& vtepSubnet,
+      const net::IPNetwork& vtepSubnet,
+      const net::IPNetwork& vtepSubnet6,
       const net::MAC& vtepMACOUI,
       const NetworkConfig& _networkConfig,
       const Owned<mesos::state::protobuf::State> _replicatedLog,
@@ -1355,7 +1674,7 @@ private:
       storedState(None()),
       storage(_storage),
       log(_log),
-      vtep(vtepSubnet, vtepMACOUI)
+      vtep(vtepSubnet, vtepSubnet6, vtepMACOUI)
   {
     networkState.mutable_network()->CopyFrom(_networkConfig);
   };
@@ -1445,6 +1764,7 @@ private:
     VLOG(1) << "Stored the following network state:";
     if (storedNetworkState.has_network()) {
       VLOG(1) << "VTEP: " << storedNetworkState.network().vtep_subnet();
+      VLOG(1) << "VTEP IPv6: " << storedNetworkState.network().vtep_subnet6();
       VLOG(1) << "VTEP OUI: " << storedNetworkState.network().vtep_mac_oui();
       VLOG(1) << "Total overlays: "
               << storedNetworkState.network().overlays_size();
