@@ -1035,8 +1035,7 @@ protected:
     for (int i = 0; i < _networkState.agents_size(); i++) {
       const AgentInfo& agentInfo = _networkState.agents(i);
 
-      // Cleare the `State` of the `AgentInfo`
-
+      // Clear the `State` of the `AgentInfo`
       Try<Agent> agent = Agent::create(agentInfo);
       if (agent.isError()) {
         LOG(ERROR) << "Could not recover Agent: "<< agent.error();
@@ -1058,8 +1057,9 @@ protected:
 
         if (network.isError()) {
           LOG(ERROR) << "Unable to parse the retrieved network: "
-            << overlay.subnet() << ": "
-            << network.error();
+                     << overlay.subnet() << ": "
+                     << network.error();
+
           abort();
         }
 
@@ -1069,6 +1069,7 @@ protected:
         if (result.isError()) {
           LOG(ERROR) << "Unable to reserve the subnet " << network.get()
                      << ": " << result.error();
+
           abort();
         }
 
@@ -1081,8 +1082,9 @@ protected:
             net::IPNetwork::parse(overlay.backend().vxlan().vtep_ip(), AF_INET);
           if (vtepIP.isError()) {
             LOG(ERROR) << "Unable to parse the retrieved `vtepIP`: "
-              << overlay.backend().vxlan().vtep_ip() << ": "
-              << vtepIP.error();
+                       << overlay.backend().vxlan().vtep_ip() << ": "
+                       << vtepIP.error();
+
             abort();
           }
 
@@ -1094,7 +1096,8 @@ protected:
           Try<Nothing> result = vtep.reserve(vtepIP.get());
           if (result.isError()) {
             LOG(ERROR) << "Unable to reserve VTEP IP: "
-              << vtepIP.get() << ": " << result.error();
+                       << vtepIP.get() << ": " << result.error();
+
             abort();
           }
         }
