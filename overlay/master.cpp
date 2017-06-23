@@ -1152,7 +1152,11 @@ protected:
 
     // Recovery done. Copy the recovered state into the `State`
     // object.
-    networkState.CopyFrom(_networkState);
+    //
+    // NOTE: We are doing a `MergeFrom` here so that we can retain any
+    // new overlay networks that might have been added by the operator
+    // during the restart.
+    networkState.MergeFrom(_networkState);
 
     // Update the `storeState` variable so that we know where to
     // update the `State` in the replicated log.
