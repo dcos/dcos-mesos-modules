@@ -506,6 +506,52 @@ private:
 };
 
 
+// Modify an `AgentInfo` to a `State` object.
+class ModifyAgent : public Operation {
+public:
+  explicit ModifyAgent(const AgentInfo& _agentInfo)
+  {
+    agentInfo.CopyFrom(_agentInfo);
+  }
+
+  const std::string description() const
+  {
+    return "Modify operation for agent: " + agentInfo.ip();
+  }
+
+protected:
+  Try<bool> perform(State* networkState, hashmap<net::IP, Agent>* agents)
+  {
+    // Make sure the Agent we are going to add is already present in `agents`.
+    Try<net::IP> ip = net::IP::parse(agentInfo.ip(), AF_INET);
+    if (ip.isError()) {
+      return Error("Unable to parse the Agent IP: " + ip.error());
+    }
+
+    if (!agents->contains(ip.get())) {
+      return Error(
+          "Could not find the Agent (" + stringify(ip.get()) +
+          ") in the `agents` cache, that needed to be added to `State`.");
+    }
+
+    for(int i = 0; i < networkState->agents_size(); i++) {
+      AgentInfo* agentInfo_ = networkState->mutable_agents(i);
+      if (agentInfo_->ip() == agentInfo.ip()) {
+        agentInfo.MergeFrom(agentInfo);
+        return true;
+      }
+    }
+
+    return Error(
+        "Could not find the Agent (" + stringify(ip.get()) +
+        ") in `State`.");
+  }
+
+private:
+  AgentInfo agentInfo;
+};
+
+
 inline ostream& operator<<(ostream& stream, const Operation& operation)
 {
   return stream << operation.description();
