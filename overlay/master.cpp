@@ -699,7 +699,7 @@ protected:
     for(int i = 0; i < networkState->agents_size(); i++) {
       AgentInfo* agentInfo_ = networkState->mutable_agents(i);
       if (agentInfo_->ip() == agentInfo.ip()) {
-        agentInfo.MergeFrom(agentInfo);
+        agentInfo_->CopyFrom(agentInfo);
         return true;
       }
     }
@@ -1010,8 +1010,25 @@ protected:
       } // else -> `storedState.isSome` , we have recovered.
     }
 
+    // Recovery complete.
     if (agents.contains(pid.address.ip)) {
       LOG(INFO) << "Agent " << pid << " re-registering.";
+
+      // Check if any new overlay need to be installed on the
+      // agent.
+      if (agents.at(pid.address.ip).addOverlays(
+            overlays,
+            registerMessage.network_config())) {
+        // We installed a new overlay on this agent.
+        update(Owned<Operation>(
+               new ModifyAgent(agents.at(pid.address.ip).getAgentInfo())))
+          .onAny(defer(self(),
+                 &ManagerProcess::_registerAgent,
+                 pid,
+                 lambda::_1));
+
+        return;
+      }
 
       // Ensure that the agent is added to the replicated log.
       const string agentIP = stringify(pid.address.ip);
@@ -1274,10 +1291,12 @@ protected:
     // Recovery done. Copy the recovered state into the `State`
     // object.
     //
-    // NOTE: We are doing a `MergeFrom` here so that we can retain any
-    // new overlay networks that might have been added by the operator
-    // during the restart.
-    networkState.MergeFrom(_networkState);
+    // NOTE: We are retaining the current configuration so that we can
+    // remember any new overlay networks that might have been added by
+    // the operator during the restart.
+    _networkState.mutable_network()->CopyFrom(networkState.network());
+
+    networkState.CopyFrom(_networkState);
 
     // Update the `storeState` variable so that we know where to
     // update the `State` in the replicated log.
