@@ -116,6 +116,7 @@ using mesos::modules::common::runScriptCommand;
 using mesos::modules::Anonymous;
 using mesos::modules::ModuleManager;
 using mesos::modules::overlay::AgentInfo;
+using mesos::modules::overlay::AgentOverlayInfo;
 using mesos::modules::overlay::AGENT_MANAGER_PROCESS_ID;
 using mesos::modules::overlay::MASTER_MANAGER_PROCESS_ID;
 using mesos::modules::overlay::RESERVED_NETWORKS;
@@ -253,17 +254,21 @@ protected:
       // Delete the 'ipset' and 'iptables' rules inserted by the
       // tests.
       // Tests have passed cleanup.
-      Future<string> iptables = runCommand(
-          "iptables",
-          {"iptables",
-           "-t", "nat",
-           "-D", "POSTROUTING",
-           "-s", OVERLAY_SUBNET,
-           "-m", "set",
-           "--match-set", stringify(IPSET_OVERLAY), "dst",
-           "-j", "MASQUERADE",
-          });
-      AWAIT_READY(iptables);
+      foreach(const OverlayInfo& overlay,
+              masterOverlayConfig.network().overlays()) {
+
+        Future<string> iptables = runCommand(
+            "iptables",
+            {"iptables",
+            "-t", "nat",
+            "-D", "POSTROUTING",
+            "-s", overlay.subnet(),
+            "-m", "set",
+            "--match-set", stringify(IPSET_OVERLAY), "dst",
+            "-j", "MASQUERADE",
+            });
+        AWAIT_READY(iptables);
+      }
 
       Future<string> ipset = runCommand(
           "ipset",
@@ -1135,6 +1140,145 @@ TEST_F(OverlayTest, checkReservedNetworks)
     Try<Owned<Anonymous>> masterModule = startOverlayMaster(masterOverlayConfig);
     ASSERT_ERROR(masterModule);
   }
+}
+
+
+// Tests the ability of the overlay to add virtual networks.
+TEST_F(OverlayTest, ROOT_checkAddVirtualNetworks)
+{
+  Try<Owned<cluster::Master>> master = StartMaster();
+  ASSERT_SOME(master);
+
+  LOG(INFO) << "Master PID: " << master.get()->pid;
+
+  // Ask overlay Master to use the replicated log by setting
+  // `replicated_log_dir`. We are not specifying `zk` configuration so
+  // the `quorum` will default to "1".
+  MasterConfig masterOverlayConfig;
+  masterOverlayConfig
+    .set_replicated_log_dir("overlay_replicated_log");
+
+  Try<Owned<Anonymous>> masterModule = startOverlayMaster(masterOverlayConfig);
+  ASSERT_SOME(masterModule);
+
+  // Master `Anonymous` module created successfully. Lets see if we
+  // can hit the `state` endpoint of the Master.
+  UPID overlayMaster = UPID(master.get()->pid);
+  overlayMaster.id = MASTER_MANAGER_PROCESS_ID;
+
+  AgentConfig agentOverlayConfig;
+  agentOverlayConfig.set_master(stringify(overlayMaster.address));
+  // Enable Mesos network.
+  agentOverlayConfig.mutable_network_config()->set_mesos_bridge(true);
+  // Enable Docker network.
+  agentOverlayConfig.mutable_network_config()->set_docker_bridge(true);
+
+  // Setup a future to notify the test that Agent overlay module has
+  // registered.
+  Future<AgentRegisteredAcknowledgement> agentRegisteredAcknowledgement =
+    FUTURE_PROTOBUF(AgentRegisteredAcknowledgement(), _, _);
+
+  Try<Owned<overlayAgent::ManagerProcess>> agentModule = startOverlayAgent(
+      agentOverlayConfig);
+
+  ASSERT_SOME(agentModule );
+
+  AWAIT_READY(agentRegisteredAcknowledgement);
+
+  // Check the agent is allowed to progress.
+  AWAIT_READY(agentModule.get()->ready());
+
+  // Kill the master.
+  masterModule->reset();
+
+  // Add an overlay network to the master configuration.
+  //
+  // NOTE: Since the `masterOverlayConfig` is "merged" with the stored
+  // `masterOverlayConfig` ensure this is the only overlay network
+  // delcared in the `masterOverlayConfig` object being passed into
+  // `startOverlayMaster`.
+  OverlayInfo overlay;
+  overlay.set_name("mz-test-add");
+  overlay.set_subnet("11.0.0.0/8");
+  overlay.set_prefix(24);
+
+  masterOverlayConfig.mutable_network()->add_overlays()->CopyFrom(overlay);
+
+  masterModule = startOverlayMaster(masterOverlayConfig);
+  ASSERT_SOME(masterModule);
+
+  // Re-start the master and wait for the Agent to re-register.
+  agentRegisteredAcknowledgement = FUTURE_PROTOBUF(
+      AgentRegisteredAcknowledgement(), _, _);
+
+  AWAIT_READY(agentRegisteredAcknowledgement);
+
+  // Hit the master end-point again.
+  Future<Response> masterResponse = process::http::get(
+      overlayMaster,
+      "state");
+
+  AWAIT_EXPECT_RESPONSE_STATUS_EQ(OK().status, masterResponse);
+  AWAIT_EXPECT_RESPONSE_HEADER_EQ(
+      APPLICATION_JSON,
+      "Content-Type",
+      masterResponse);
+
+  Try<State> state = parseMasterState(masterResponse->body);
+  ASSERT_SOME(state);
+  ASSERT_EQ(1, state->agents_size());
+
+  ASSERT_TRUE(state->has_network());
+  ASSERT_EQ(2, state->network().overlays_size());
+
+  Option<OverlayInfo> _overlay;
+  foreach(const OverlayInfo& __overlay, state->network().overlays()) {
+    if (__overlay.name() == "mz-test-add") {
+      _overlay = __overlay;
+      break;
+    }
+  }
+
+  ASSERT_SOME(_overlay);
+  ASSERT_EQ(_overlay->subnet(), "11.0.0.0/8");
+
+  // Hit the `overlay` endpoint of the agent to check that module is
+  // up and responding.
+  UPID overlayAgent = UPID(master.get()->pid);
+  overlayAgent.id = AGENT_MANAGER_PROCESS_ID;
+
+  Future<Response> agentResponse = process::http::get(
+      overlayAgent,
+      "overlay");
+
+  AWAIT_EXPECT_RESPONSE_STATUS_EQ(OK().status, agentResponse);
+  AWAIT_EXPECT_RESPONSE_HEADER_EQ(
+      APPLICATION_JSON,
+      "Content-Type",
+      agentResponse);
+
+  // The `overlay` end-point is backed by the
+  // mesos::modules::overlay::AgentInfo protobuf, so need to parse the
+  // JSON and verify that the correct configuration is being
+  // reflected.
+  Try<AgentInfo> info = parseAgentOverlay(agentResponse->body);
+  ASSERT_SOME(info);
+
+  // There should be 2 overlays.
+  ASSERT_EQ(2, info->overlays_size());
+
+  Option<AgentOverlayInfo> agentOverlay;
+
+  foreach(const AgentOverlayInfo& _agentOverlay, info->overlays()) {
+    if (_agentOverlay.info().name() == "mz-test-add") {
+      agentOverlay = _agentOverlay;
+      break;
+    }
+  }
+
+  ASSERT_SOME(agentOverlay);
+  ASSERT_EQ(agentOverlay->subnet(), "11.0.0.0/24");
+  ASSERT_EQ(agentOverlay->info().subnet(), "11.0.0.0/8");
 }
 
 } // namespace tests {
