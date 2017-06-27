@@ -808,15 +808,28 @@ Future<Nothing> ManagerProcess::_configureDockerNetwork(
     return Failure("Failed to parse bridge ip: " + subnet.error());
   }
 
-  Try<IPNetwork> subnet6 = IPNetwork::parse(
-      overlay.docker_bridge().ip6(),
-      AF_INET6);
-
-  if (subnet6.isError()) {
-    return Failure("Failed to parse bridge ipv6: " + subnet6.error());
-  }
-
   Try<string> dockerCommand = strings::format(
+      "docker network create --driver=bridge --subnet=%s "
+      "--opt=com.docker.network.bridge.name=%s "
+      "--opt=com.docker.network.bridge.enable_ip_masquerade=false "
+      "--opt=com.docker.network.driver.mtu=%s %s",
+      stringify(subnet.get()),
+      overlay.docker_bridge().name(),
+      stringify(networkConfig.overlay_mtu()),
+      name);
+
+  Option<net::IPNetwork> subnet6 = None();
+  if (overlay.docker_bridge().has_ip6()) {
+    Try<net::IPNetwork> _subnet6 = IPNetwork::parse(
+        overlay.docker_bridge().ip6(),
+        AF_INET6);
+
+    if (_subnet6.isError()) {
+      return Failure("Failed to parse bridge ipv6: " + _subnet6.error());
+    }
+    subnet6 = _subnet6.get();
+
+    dockerCommand = strings::format(
       "docker network create --driver=bridge --subnet=%s "
       "--ipv6 --subnet=%s "
       "--opt=com.docker.network.bridge.name=%s "
@@ -827,6 +840,8 @@ Future<Nothing> ManagerProcess::_configureDockerNetwork(
       overlay.docker_bridge().name(),
       stringify(networkConfig.overlay_mtu()),
       name);
+  }
+
   if (dockerCommand.isError()) {
     return Failure(
         "Failed to create docker network command: " +
