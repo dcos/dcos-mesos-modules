@@ -10,7 +10,7 @@ message BridgeInfo {
   required string ip = 2;
 
   // IPv6 in CIDR format
-  required string ip6 = 3;
+  optional string ip6 = 3;
 }
 
 
@@ -19,7 +19,7 @@ message VxLANInfo {
   required string vtep_name = 2;
   required string vtep_ip = 3;
   required string vtep_mac = 4;
-  required string vtep_ip6 = 5;
+  optional string vtep_ip6 = 5;
 }
 
 
@@ -44,10 +44,10 @@ message OverlayInfo {
   required uint32 prefix = 3;
 
   // The IPv6 subnet associated with this overlay network.
-  required string subnet6 = 4;
+  optional string subnet6 = 4;
 
   // The prefix length used to carve out IPv6 subnets for Agents
-  required uint32 prefix6 = 5;
+  optional uint32 prefix6 = 5;
 }
 
 
@@ -124,5 +124,5 @@ message NetworkConfig {
   repeated OverlayInfo overlays = 3;
 
   // IPv6 subnet for vtep
-  required string vtep_subnet6 = 4;
+  optional string vtep_subnet6 = 4;
 }
