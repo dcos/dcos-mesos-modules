@@ -272,9 +272,9 @@ struct Vtep
        Bound<IPWrapper>::open(endIP));
 
     // IPv6
-    freeIP6 = IntervalSet<IPWrapper>();
-
     if (network6.isSome()) {
+      freeIP6 = IntervalSet<IPWrapper>();
+
       in6_addr saddr6, eaddr6;
       in6_addr addr6 = network6.get().address().in6().get();
       in6_addr mask6 = network6.get().netmask().in6().get();
@@ -329,9 +329,9 @@ struct Overlay
 {
   Overlay(
       const string& _name,
-      const net::IPNetwork& _network,
+      const Option<net::IPNetwork>& _network,
       const Option<net::IPNetwork>& _network6,
-      const uint8_t _prefix,
+      const Option<uint8_t> _prefix,
       const Option<uint8_t> _prefix6)
     : name(_name),
     network(_network),
@@ -339,20 +339,23 @@ struct Overlay
     prefix(_prefix),
     prefix6(_prefix6)
   {
-    uint32_t addr = ntohl(network.address().in().get().s_addr);
-    uint32_t startMask = ntohl(network.netmask().in().get().s_addr);
-    uint32_t endMask = 0xffffffff << (32 - prefix);
-    uint32_t startAddr = addr & startMask;
-    uint32_t endAddr = (addr | ~startMask) & endMask;
+    // IPv4
+    if (network.isSome()) {
+      uint32_t addr = ntohl(network.get().address().in().get().s_addr);
+      uint32_t startMask = ntohl(network.get().netmask().in().get().s_addr);
+      uint32_t endMask = 0xffffffff << (32 - prefix.get());
+      uint32_t startAddr = addr & startMask;
+      uint32_t endAddr = (addr | ~startMask) & endMask;
 
-    Network startSubnet = Network(IP(startAddr), prefix);
-    Network endSubnet = Network(IP(endAddr), prefix);
+      Network startSubnet = Network(IP(startAddr), prefix.get());
+      Network endSubnet = Network(IP(endAddr), prefix.get());
 
-    LOG(INFO) << "IPv4: " << startSubnet << " - " << endSubnet;
+      LOG(INFO) << "IPv4: " << startSubnet << " - " << endSubnet;
 
-    freeNetworks +=
-      (Bound<Network>::closed(startSubnet),
-       Bound<Network>::open(endSubnet));
+      freeNetworks +=
+        (Bound<Network>::closed(startSubnet),
+         Bound<Network>::open(endSubnet));
+    }
 
     // IPv6
     if (network6.isSome()) {
@@ -382,8 +385,10 @@ struct Overlay
     OverlayInfo overlay;
 
     overlay.set_name(name);
-    overlay.set_subnet(stringify(network));
-    overlay.set_prefix(prefix);
+    if (network.isSome()) {
+      overlay.set_subnet(stringify(network.get()));
+      overlay.set_prefix(prefix.get());
+    }
     if (network6.isSome()) {
       overlay.set_subnet6(stringify(network6.get()));
       overlay.set_prefix6(prefix6.get());
@@ -418,20 +423,19 @@ struct Overlay
 
   Try<Nothing> free(const net::IP::Network& subnet)
   {
-    if (subnet.prefix() != prefix) {
+    if (subnet.prefix() != prefix.get()) {
       return Error(
-          "Cannot free this network because prefix " +
-          stringify(subnet.prefix()) + " does not match Agent prefix " +
-          stringify(prefix) + " of the overlay");
+          "Cannot free this network because prefix " + stringify(subnet.prefix()) +
+          " does not match Agent prefix " + stringify(prefix.get()) + " of the overlay");
     }
 
-    if (subnet.prefix() < network.prefix()) {
+    if (subnet.prefix() < network.get().prefix()) {
       return Error(
           "Cannot free this network since it does not belong "
           " to the overlay subnet");
     }
 
-    freeNetworks += Network(subnet.address(), prefix);
+    freeNetworks += Network(subnet.address(), prefix.get());
 
     return Nothing();
   }
@@ -498,27 +502,29 @@ struct Overlay
   void reset()
   {
     // Re-initialize `freeNetworks`.
-    freeNetworks = IntervalSet<Network>();
+    if (network.isSome()) {
+      freeNetworks = IntervalSet<Network>();
  
-    uint32_t addr = ntohl(network.address().in().get().s_addr);
-    uint32_t startMask = ntohl(network.netmask().in().get().s_addr);
-    uint32_t endMask = 0xffffffff << (32 - prefix);
-    uint32_t startAddr = addr & startMask;
-    uint32_t endAddr = (addr | ~startMask) & endMask;
+      uint32_t addr = ntohl(network.get().address().in().get().s_addr);
+      uint32_t startMask = ntohl(network.get().netmask().in().get().s_addr);
+      uint32_t endMask = 0xffffffff << (32 - prefix.get());
+      uint32_t startAddr = addr & startMask;
+      uint32_t endAddr = (addr | ~startMask) & endMask;
 
-    Network startSubnet = Network(IP(startAddr), prefix);
-    Network endSubnet = Network(IP(endAddr), prefix);
+      Network startSubnet = Network(IP(startAddr), prefix.get());
+      Network endSubnet = Network(IP(endAddr), prefix.get());
 
-    LOG(INFO) << "Reset IPv4: " << startSubnet << " - " << endSubnet;
+      LOG(INFO) << "Reset IPv4: " << startSubnet << " - " << endSubnet;
 
-    freeNetworks +=
-      (Bound<Network>::open(startSubnet),
-       Bound<Network>::open(endSubnet));
+      freeNetworks +=
+        (Bound<Network>::open(startSubnet),
+         Bound<Network>::open(endSubnet));
+    }
 
     // IPv6
-    freeNetworks6 = IntervalSet<Network>();
-
     if (network6.isSome()) {
+      freeNetworks6 = IntervalSet<Network>();
+
       in6_addr startAddr6, endAddr6;
       in6_addr addr6 = network6.get().address().in6().get();
       in6_addr startMask6 = network6.get().netmask().in6().get();
@@ -544,13 +550,13 @@ struct Overlay
   std::string name;
 
   // Network allocated to this overlay.
-  net::IP::Network network;
+  Option<net::IPNetwork> network;
 
   // IPv6 Network allocated to this overlay
   Option<net::IPNetwork> network6;
 
   // Prefix length allocated to each agent.
-  uint8_t prefix;
+  Option<uint8_t> prefix;
 
   // IPv6 prefix length allocated to each agent
   Option<uint8_t> prefix6;
@@ -647,31 +653,36 @@ public:
       Option<net::IPNetwork> agentSubnet6 = None();
 
       _overlay.mutable_info()->set_name(name);
-      _overlay.mutable_info()->set_subnet(stringify(overlay->network));
-      _overlay.mutable_info()->set_prefix(overlay->prefix);
+      if (overlay->network.isSome()) {
+        _overlay.mutable_info()->set_subnet(stringify(overlay->network.get()));
+        _overlay.mutable_info()->set_prefix(overlay->prefix.get());
+      }
       if (overlay->network6.isSome()) {
-        _overlay.mutable_info()->set_subnet6(stringify(overlay->network6));
-        _overlay.mutable_info()->set_prefix6(overlay->prefix6);
+        _overlay.mutable_info()->set_subnet6(stringify(overlay->network6.get()));
+        _overlay.mutable_info()->set_prefix6(overlay->prefix6.get());
       }
 
       if (networkConfig.allocate_subnet()) {
-        Try<net::IP::Network> _agentSubnet = overlay->allocate();
-        if (_agentSubnet.isError()) {
-          LOG(ERROR) << "Cannot allocate subnet from overlay "
-                     << name << " to Agent " << ip << ":"
-                     << _agentSubnet.error();
-          continue;
-        }
+        // IPv4
+        if (overlay->network.isSome()) {
+          Try<net::IPNetwork> _agentSubnet = overlay->allocate();
+          if (_agentSubnet.isError()) {
+            LOG(ERROR) << "Cannot allocate subnet from overlay "
+                       << name << " to Agent " << ip << ":"
+                       << _agentSubnet.error();
+            continue;
+          }
 
-        agentSubnet = _agentSubnet.get();
-        _overlay.set_subnet(stringify(agentSubnet.get()));
+          agentSubnet = _agentSubnet.get();
+          _overlay.set_subnet(stringify(agentSubnet.get()));
+        }
 
         // IPv6
         if (overlay->network6.isSome()) {
           Try<net::IPNetwork> _agentSubnet6 = overlay->allocate6();
-          if (_agentSubnet.isError()) {
+          if (_agentSubnet6.isError()) {
             LOG(ERROR) << "Cannot allocate IPv6 subnet from overlay "
-                       << name << " to Agent " << pid << ":"
+                       << name << " to Agent " << ip << ":"
                        << _agentSubnet6.error();
             continue;
           }
@@ -769,26 +780,30 @@ private:
     }
     const string name = _overlay->info().name();
 
-    Try<net::IP::Network> network = net::IP::Network::parse(
-        _overlay->subnet(),
-        AF_INET);
+    // IPv4
+    Option<Network> network_ = None();
+    if (_overlay->has_subnet()) {
+      Try<IPNetwork> network = net::IPNetwork::parse(
+          _overlay->subnet(),
+          AF_INET);
 
-    if (network.isError()) {
-      return Error(
-          "Unable to parse the subnet of the network '" +
-          name + "' : " + network.error());
+      if (network.isError()) {
+        return Error(
+            "Unable to parse the subnet of the network '" +
+            name + "' : " + network.error());
+      }
+
+      Try<struct in_addr> subnet = network->address().in();
+
+      if (subnet.isError()) {
+        return Error(
+            "Unable to get a 'struct in_addr' representation of "
+            "the network :"  + subnet.error());
+      }
+
+      uint32_t address = ntohl(subnet.get().s_addr);
+      network_ = Network(IP(address), network->prefix() + 1);
     }
-
-    Try<struct in_addr> subnet = network->address().in();
-
-    if (subnet.isError()) {
-      return Error(
-          "Unable to get a 'struct in_addr' representation of "
-          "the network :"  + subnet.error());
-    }
-
-    uint32_t address = ntohl(subnet.get().s_addr);
-    Network network_ = Network(IP(address), network->prefix() + 1);
 
     // IPv6
     Option<Network> network6_ = None();
@@ -808,9 +823,11 @@ private:
     // Create the Mesos bridge.
     if (networkConfig.mesos_bridge()) {
       BridgeInfo mesosBridgeInfo;
-      mesosBridgeInfo.set_ip(stringify(network_));
+      if (network_.isSome()) {
+        mesosBridgeInfo.set_ip(stringify(network_.get()));
+      }
       if (network6_.isSome()) {
-        mesosBridgeInfo.set_ip6(stringify(network6_));
+        mesosBridgeInfo.set_ip6(stringify(network6_.get()));
       }
       mesosBridgeInfo.set_name(MESOS_BRIDGE_PREFIX + name);
       _overlay->mutable_mesos_bridge()->CopyFrom(mesosBridgeInfo);
@@ -819,9 +836,11 @@ private:
     // Create the docker bridge.
     if (networkConfig.docker_bridge()) {
       BridgeInfo dockerBridgeInfo;
-      dockerBridgeInfo.set_ip(stringify(++network_));
+      if (network_.isSome()) {
+        dockerBridgeInfo.set_ip(stringify(++(network_.get())));
+      }
       if (network6_.isSome()) {
-        dockerBridgeInfo.set_ip6(stringify(++network6_));
+        dockerBridgeInfo.set_ip6(stringify(++(network6_.get())));
       }
       dockerBridgeInfo.set_name(DOCKER_BRIDGE_PREFIX + name);
       _overlay->mutable_docker_bridge()->CopyFrom(dockerBridgeInfo);
@@ -1093,20 +1112,28 @@ public:
 
       LOG(INFO) << "Configuring overlay network:" << overlay.name();
 
-      Try<net::IP::Network> address =
-        net::IP::Network::parse(overlay.subnet(), AF_INET);
-      if (address.isError()) {
-        return Error(
-            "Unable to determine subnet for network: " +
-            stringify(address.get()));
-      }
+      // IPv4
+      Option<uint8_t> prefix = None();
+      Option<net::IPNetwork> address = None();
+      if (overlay.has_subnet()) {
+        Try<net::IPNetwork> _address =
+          net::IPNetwork::parse(overlay.subnet(), AF_INET);
+        if (_address.isError()) {
+          return Error(
+              "Unable to determine subnet for network: " +
+              stringify(_address.get()));
+        }
 
-      Try<Nothing> valid = updateAddressSpace(address.get());
+        Try<Nothing> valid = updateAddressSpace(_address.get());
 
-      if (valid.isError()) {
-        return Error(
-            "Incorrect address space for the overlay network '" +
-            overlay.name() + "': " + valid.error());
+        if (valid.isError()) {
+          return Error(
+              "Incorrect address space for the overlay network '" +
+              overlay.name() + "': " + valid.error());
+        }
+        
+        address = _address.get();
+        prefix = overlay.prefix();
       }
 
       // IPv6
@@ -1137,9 +1164,9 @@ public:
           overlay.name(),
           Owned<Overlay>(new Overlay(
             overlay.name(),
-            address.get(),
+            address,
             address6,
-            (uint8_t) overlay.prefix(),
+            prefix,
             prefix6)));
     }
 
@@ -1560,27 +1587,31 @@ protected:
         // clear the overlay state.
         _networkState.mutable_agents(i)->mutable_overlays(j)->clear_state();
 
-        Try<net::IP::Network> network = net::IP::Network::parse(
-            overlay.subnet(),
-            AF_INET);
+        // IPv4
+        if (overlay.has_subnet()) {
+          Try<net::IPNetwork> network = net::IPNetwork::parse(
+              overlay.subnet(),
+              AF_INET);
 
-        if (network.isError()) {
-          LOG(ERROR) << "Unable to parse the retrieved network: "
-                     << overlay.subnet() << ": "
-                     << network.error();
+          if (network.isError()) {
+            LOG(ERROR) << "Unable to parse the retrieved network: "
+                       << overlay.subnet() << ": "
+                       << network.error();
 
-          abort();
-        }
+            abort();
+          }
 
-        // We should already have this particular overlay at bootup.
-        CHECK(overlays.contains(overlay.info().name()));
-        LOG(INFO) << "reserving IPv4 " << stringify(network.get());
-        Try<Nothing> result = overlays.at(overlay.info().name())->reserve(network.get());
-        if (result.isError()) {
-          LOG(ERROR) << "Unable to reserve the subnet " << network.get()
-                     << ": " << result.error();
+          // We should already have this particular overlay at bootup.
+          CHECK(overlays.contains(overlay.info().name()));
 
-          abort();
+          LOG(INFO) << "reserving IPv4 " << stringify(network.get());
+          Try<Nothing> result = overlays.at(overlay.info().name())->reserve(network.get());
+          if (result.isError()) {
+            LOG(ERROR) << "Unable to reserve the subnet " << network.get()
+                       << ": " << result.error();
+
+            abort();
+          }
         }
 
         // IPv6
@@ -1592,12 +1623,12 @@ protected:
           if (network6.isError()) {
             LOG(ERROR) << "Unable to parse the retrieved network: "
               << overlay.subnet6() << ": "
-              << network.error();
+              << network6.error();
             abort();
           }
 
           LOG(INFO) << "reserving IPv6 " << stringify(network6.get());
-          result = overlays.at(overlay.info().name())->reserve6(network6.get());
+          Try<Nothing> result = overlays.at(overlay.info().name())->reserve6(network6.get());
           if (result.isError()) {
             LOG(ERROR) << "Unable to reserve the IPv6 subnet " << network6.get()
                      << ": " << result.error();
