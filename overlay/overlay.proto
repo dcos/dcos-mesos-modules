@@ -7,7 +7,7 @@ message BridgeInfo {
 
   // IP in CIDR format allocated to this bridge. The bridge will act
   // as a gateway for all containers associated with it.
-  required string ip = 2;
+  optional string ip = 2;
 
   // IPv6 in CIDR format
   optional string ip6 = 3;
@@ -37,11 +37,11 @@ message OverlayInfo {
   required string name = 1;
 
   // The subnet associated with this overlay network.
-  required string subnet = 2;
+  optional string subnet = 2;
 
   // The prefix length used to carve out subnets for Agents, from the
   // subnet assigned to this overlay.
-  required uint32 prefix = 3;
+  optional uint32 prefix = 3;
 
   // The IPv6 subnet associated with this overlay network.
   optional string subnet6 = 4;
