@@ -601,31 +601,35 @@ Future<Nothing> ManagerProcess::_configure(
       !networkConfig.docker_bridge()) {
     return overlaySuccess("");
   } else {
-    const string overlaySubnet = overlays[name].info().subnet();
+    Try<string> command = strings::format("");
 
-    Try<string> command = strings::format(
-        "ipset add -exist %s %s" " nomatch &&"
-        " iptables -t nat -C POSTROUTING -s %s -m set"
-        " --match-set %s dst -j MASQUERADE ||"
-        " iptables -t nat -A POSTROUTING -s %s -m"
-        " set --match-set %s dst -j MASQUERADE",
-        IPSET_OVERLAY,
-        overlaySubnet,
-        overlaySubnet,
-        IPSET_OVERLAY,
-        overlaySubnet,
-        IPSET_OVERLAY);
+    if (overlays[name].info().has_subnet()) {
+      const string overlaySubnet = overlays[name].info().subnet();
 
-    if (command.isError()) {
-      overlayFailure(command.error());
+      Try<string> command = strings::format(
+          "ipset add -exist %s %s" " nomatch &&"
+          " iptables -t nat -C POSTROUTING -s %s -m set"
+          " --match-set %s dst -j MASQUERADE ||"
+          " iptables -t nat -A POSTROUTING -s %s -m"
+          " set --match-set %s dst -j MASQUERADE",
+          IPSET_OVERLAY,
+          overlaySubnet,
+          overlaySubnet,
+          IPSET_OVERLAY,
+          overlaySubnet,
+          IPSET_OVERLAY);
 
-      return Failure(
-          "Unable to create iptables rule for overlay " +
-          name + ": " + command.error());
+      if (command.isError()) {
+        overlayFailure(command.error());
+
+        return Failure(
+            "Unable to create iptables rule for overlay " +
+            name + ": " + command.error());
+      }
+
+      LOG(INFO) << "Insert following iptables rule for overlay " << name
+                << ": " << command.get();
     }
-
-    LOG(INFO) << "Insert following iptables rule for overlay " << name
-              << ": " << command.get();
 
     // We have to explicitly chain the `onFailed` and `onDiscarded`
     // events since we need to update the `State` of the overlay
@@ -649,6 +653,7 @@ Future<Nothing> ManagerProcess::_configure(
       .onFailed(defer(self(), overlayFailure))
       .onDiscarded(defer(self(), lambda::bind(overlayFailure, "discarded")));
   }
+  return Nothing();
 }
 
 
@@ -671,7 +676,14 @@ Future<Nothing> ManagerProcess::configureMesosNetwork(const string& name)
     return Nothing();
   }
 
-  Try<net::IP::Network> subnet = net::IP::Network::parse(
+  if (overlay.has_mesos_bridge()) {
+    if (!overlay.mesos_bridge().has_ip()) {
+      LOG(WARNING) << "IP address is required for mesos bridge";
+    }
+    return Nothing();
+  }
+
+  Try<IPNetwork> subnet = IPNetwork::parse(
       overlay.mesos_bridge().ip(),
       AF_INET);
 
@@ -800,47 +812,45 @@ Future<Nothing> ManagerProcess::_configureDockerNetwork(
     return Failure("Missing Docker bridge info");
   }
 
-  Try<net::IP::Network> subnet = net::IP::Network::parse(
-      overlay.docker_bridge().ip(),
-      AF_INET);
+  Try<string> dockerCommand = strings::format(
+    "docker network create --driver=bridge "
+    "--opt=com.docker.network.bridge.name=%s "
+    "--opt=com.docker.network.bridge.enable_ip_masquerade=false "
+    "--opt=com.docker.network.driver.mtu=%s ",
+    overlay.docker_bridge().name(),
+    stringify(networkConfig.overlay_mtu()));
 
-  if (subnet.isError()) {
-    return Failure("Failed to parse bridge ip: " + subnet.error());
+  if (overlay.docker_bridge().has_ip()) {
+    Try<IPNetwork> subnet = IPNetwork::parse(
+        overlay.docker_bridge().ip(),
+        AF_INET);
+
+    if (subnet.isError()) {
+      return Failure("Failed to parse bridge ip: " + subnet.error());
+    }
+
+    dockerCommand = strings::format(
+      " %s --subnet=%s ", 
+      stringify(dockerCommand.get()),
+      stringify(subnet.get()));
   }
 
-  Try<string> dockerCommand = strings::format(
-      "docker network create --driver=bridge --subnet=%s "
-      "--opt=com.docker.network.bridge.name=%s "
-      "--opt=com.docker.network.bridge.enable_ip_masquerade=false "
-      "--opt=com.docker.network.driver.mtu=%s %s",
-      stringify(subnet.get()),
-      overlay.docker_bridge().name(),
-      stringify(networkConfig.overlay_mtu()),
-      name);
-
-  Option<net::IPNetwork> subnet6 = None();
   if (overlay.docker_bridge().has_ip6()) {
-    Try<net::IPNetwork> _subnet6 = IPNetwork::parse(
+    Try<net::IPNetwork> subnet6 = IPNetwork::parse(
         overlay.docker_bridge().ip6(),
         AF_INET6);
 
-    if (_subnet6.isError()) {
-      return Failure("Failed to parse bridge ipv6: " + _subnet6.error());
+    if (subnet6.isError()) {
+      return Failure("Failed to parse bridge ipv6: " + subnet6.error());
     }
-    subnet6 = _subnet6.get();
 
     dockerCommand = strings::format(
-      "docker network create --driver=bridge --subnet=%s "
-      "--ipv6 --subnet=%s "
-      "--opt=com.docker.network.bridge.name=%s "
-      "--opt=com.docker.network.bridge.enable_ip_masquerade=false "
-      "--opt=com.docker.network.driver.mtu=%s %s",
-      stringify(subnet.get()),
-      stringify(subnet6.get()),
-      overlay.docker_bridge().name(),
-      stringify(networkConfig.overlay_mtu()),
-      name);
+      " %s --ipv6 --subnet=%s ",
+      stringify(dockerCommand.get()),
+      stringify(subnet6.get()));
   }
+
+  dockerCommand = strings::format(" %s %s ", stringify(dockerCommand.get()), name);
 
   if (dockerCommand.isError()) {
     return Failure(
@@ -854,7 +864,6 @@ Future<Nothing> ManagerProcess::_configureDockerNetwork(
           name,
           lambda::_1));
 }
-
 
 Future<Nothing> ManagerProcess::__configureDockerNetwork(
     const string& name,
