@@ -36,7 +36,7 @@ make
 Building these modules requires an installation of `google-protobuf`.
 One way is to do the following:
 ```
-    cd <mesos-source>/build/3rdparty/protobuf-2.6.1
+    cd <mesos-source>/build/3rdparty/protobuf-3.3.0
     make distclean
     ./configure --prefix=$HOME/usr
     make
