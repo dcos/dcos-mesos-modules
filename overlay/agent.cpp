@@ -263,29 +263,40 @@ void ManagerProcess::updateAgentOverlays(
 
     LOG(INFO) << "Configuring overlay network '" << name << "'";
 
-    // TODO(jieyu): Here, we assume that the overlay configuration
-    // never changes. Therefore, if the overlay is in `STATUS_OK` or
-    // if it is in `STATUS_CONFIGURING` state, we will skip the
-    // configuration. This might change soon.
     if (overlays.contains(name) &&
         overlays.at(name).has_state() &&
         overlays.at(name).state().has_status() ) {
       OverlayState::Status status = overlays.at(name).state().status();
 
-      if ((status == OverlayState::STATUS_OK) ||
-          (status == OverlayState::STATUS_CONFIGURING)) {
+      // Even if a single overlay network is in `STATUS_CONFIGURING`
+      // we need to drop processing of this message since a network
+      // configuration is in progress and we can't update the master
+      // till all network configuration has been attempted.
+      if (status == OverlayState::STATUS_CONFIGURING) {
+        LOG(INFO) << "Since overlay network '"
+                  << name << "' is in 'STATUS_CONFIGURING' dropping"
+                  << " this `UpdateAgentOverlaysMessage', since an overlay"
+                  << " network configuration is pending.";
+
+          return;
+      }
+
+      // Here, we assume that the overlay configuration never changes.
+      // Therefore, if the overlay is in `STATUS_OK`, we will skip the
+      // configuration.
+      if (status == OverlayState::STATUS_OK) { 
         LOG(INFO) << "Skipping configuration for overlay network '"
-                  << name << "' as it "
-                  << ((status == OverlayState::STATUS_OK) ?
-                      "has been " : "is being ")
-                  << "configured.";
+                  << name << "' as it has been configured.";
 
-        if (status == OverlayState::STATUS_OK) {
-          // We still set a `Future` for this overlay, so as to inform
-          // the Master about the state of this overlay network.
-          futures.push_back(Nothing());
-        }
-
+        // We still set a `Future` for this overlay, so as to inform
+        // the Master about the state of this overlay network.
+        //
+        // NOTE: This is important for the case of a master restart.
+        // During a master restart the agent would have already had
+        // all the overlays configured but it will still need to
+        // register with the new master by updating the new master with
+        // the state of the configured overlays.
+        futures.push_back(Nothing());
         continue;
       }
     }
