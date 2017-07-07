@@ -165,6 +165,133 @@ private:
 };
 
 
+// Loads the journald ContainerLogger module and runs a task.
+// Then queries journald for the associated logs.
+TEST_F(JournaldLoggerTest, ROOT_LogToJournaldWithBigLabel)
+{
+  // Create a master, agent, and framework.
+  Try<Owned<cluster::Master>> master = StartMaster();
+  ASSERT_SOME(master);
+
+  // We'll need access to these flags later.
+  mesos::internal::slave::Flags flags = CreateSlaveFlags();
+
+  // Use the journald container logger.
+  flags.container_logger = JOURNALD_LOGGER_NAME;
+
+  Fetcher fetcher(flags);
+
+  // We use an actual containerizer + executor since we want something to run.
+  Try<MesosContainerizer*> _containerizer =
+    MesosContainerizer::create(flags, false, &fetcher);
+
+  CHECK_SOME(_containerizer);
+  Owned<MesosContainerizer> containerizer(_containerizer.get());
+
+  Owned<MasterDetector> detector = master.get()->createDetector();
+
+  Try<Owned<cluster::Slave>> slave =
+    StartSlave(detector.get(), containerizer.get(), flags);
+  ASSERT_SOME(slave);
+
+  MockScheduler sched;
+  MesosSchedulerDriver driver(
+      &sched, DEFAULT_FRAMEWORK_INFO, master.get()->pid, DEFAULT_CREDENTIAL);
+
+  Future<FrameworkID> frameworkId;
+  EXPECT_CALL(sched, registered(&driver, _, _))
+    .WillOnce(FutureArg<1>(&frameworkId));
+
+  // Wait for an offer, and start a task.
+  Future<vector<Offer>> offers;
+  EXPECT_CALL(sched, resourceOffers(&driver, _))
+    .WillOnce(FutureArg<1>(&offers))
+    .WillRepeatedly(Return()); // Ignore subsequent offers.
+
+  driver.start();
+  AWAIT_READY(frameworkId);
+
+  AWAIT_READY(offers);
+  EXPECT_NE(0u, offers.get().size());
+
+  const std::string specialString = "some-super-unique-string";
+
+  TaskInfo task = createTask(offers.get()[0], "echo " + specialString);
+
+  // Add a short label.
+  Label* label = task.mutable_labels()->add_labels();
+  label->set_key("TINY");
+  label->set_value("present");
+
+  // Add a huge label.
+  label = task.mutable_labels()->add_labels();
+  label->set_key("HUGE");
+  {
+    std::string fiftyKilobyteString;
+    fiftyKilobyteString.reserve(50000u);
+
+    for (int i = 0; i < 5000; i++) {
+      fiftyKilobyteString += "0123456789";
+    }
+
+    label->set_value(fiftyKilobyteString);
+  }
+
+  // Add another short label.
+  // This tests an implementation detail, where we exclude labels in their
+  // order of occurrence. This means, if you add a huge label at the beginning,
+  // all subsequent labels will also be excluded from the metadata.
+  label = task.mutable_labels()->add_labels();
+  label->set_key("SMALL");
+  label->set_value("excluded");
+
+  // Make sure the destination of the logs is journald.
+  Environment::Variable* variable =
+    task.mutable_command()->mutable_environment()->add_variables();
+  variable->set_name("CONTAINER_LOGGER_DESTINATION_TYPE");
+  variable->set_value("journald");
+
+  Future<TaskStatus> statusRunning;
+  Future<TaskStatus> statusFinished;
+  EXPECT_CALL(sched, statusUpdate(&driver, _))
+    .WillOnce(FutureArg<1>(&statusRunning))
+    .WillOnce(FutureArg<1>(&statusFinished))
+    .WillRepeatedly(Return());       // Ignore subsequent updates.
+
+  driver.launchTasks(offers.get()[0].id(), {task});
+
+  AWAIT_READY(statusRunning);
+  EXPECT_EQ(TASK_RUNNING, statusRunning.get().state());
+
+  AWAIT_READY(statusFinished);
+  EXPECT_EQ(TASK_FINISHED, statusFinished.get().state());
+
+  driver.stop();
+  driver.join();
+
+  // Query journald via the FrameworkID (to disambiguate between test runs)
+  // and the freeform labels. The first freeform label should be present,
+  // but the second one should not.
+  Future<std::string> firstQuery = runCommand(
+      "journalctl",
+      {"journalctl",
+       "FRAMEWORK_ID=" + frameworkId.get().value(),
+       "TINY=present"});
+
+  Future<std::string> secondQuery = runCommand(
+      "journalctl",
+      {"journalctl",
+       "FRAMEWORK_ID=" + frameworkId.get().value(),
+       "SMALL=excluded"});
+
+  AWAIT_READY(firstQuery);
+  ASSERT_TRUE(strings::contains(firstQuery.get(), specialString));
+
+  AWAIT_READY(secondQuery);
+  ASSERT_FALSE(strings::contains(secondQuery.get(), specialString));
+}
+
+
 INSTANTIATE_TEST_CASE_P(
     LoggingMode,
     JournaldLoggerTest,

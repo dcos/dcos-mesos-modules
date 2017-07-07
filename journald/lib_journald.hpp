@@ -6,6 +6,7 @@
 #include <mesos/slave/container_logger.hpp>
 #include <mesos/slave/containerizer.hpp>
 
+#include <stout/bytes.hpp>
 #include <stout/flags.hpp>
 #include <stout/option.hpp>
 
@@ -159,6 +160,20 @@ struct Flags : public virtual LoggerFlags
           return None();
         });
 
+    add(&Flags::max_label_payload_size,
+        "max_label_payload_size",
+        "Maximum size of the label data transferred to the\n"
+        "logger companion binary. Can be at most one megabyte.",
+        Kilobytes(10),
+        [](const Bytes& value) -> Option<Error> {
+          if (value > Megabytes(1)) {
+            return Error(
+                "Maximum --max_label_payload_size is one megabyte");
+          }
+
+          return None();
+        });
+
     add(&Flags::libprocess_num_worker_threads,
         "libprocess_num_worker_threads",
         "Number of Libprocess worker threads.\n"
@@ -178,6 +193,8 @@ struct Flags : public virtual LoggerFlags
 
   std::string companion_dir;
   std::string logrotate_path;
+
+  Bytes max_label_payload_size;
 
   size_t libprocess_num_worker_threads;
 };
