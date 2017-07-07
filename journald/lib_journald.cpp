@@ -14,6 +14,7 @@
 #include <process/process.hpp>
 #include <process/subprocess.hpp>
 
+#include <stout/bytes.hpp>
 #include <stout/jsonify.hpp>
 #include <stout/try.hpp>
 #include <stout/nothing.hpp>
@@ -54,6 +55,11 @@ bool enabled();
 
 namespace mesos {
 namespace journald {
+
+// The number of characters in `{"key":"","value":""},` which is the
+// minimum size of any label when serialized into JSON.
+const Bytes LABEL_PADDING_SIZE =
+  Bytes(string("{\"key\":\"\",\"value\":\"\"},").size());
 
 class JournaldContainerLoggerProcess :
   public Process<JournaldContainerLoggerProcess>
@@ -140,7 +146,19 @@ public:
     Label label;
     Labels labels;
     if (executorInfo.has_labels()) {
-      labels = executorInfo.labels();
+      Bytes totalSize;
+      foreach (const Label executorLabel, executorInfo.labels().labels()) {
+        totalSize += LABEL_PADDING_SIZE +
+          executorLabel.key().size() +
+          executorLabel.value().size();
+
+        // Stop copying arbitrary labels once we hit a size limit.
+        if (totalSize > flags.max_label_payload_size) {
+          break;
+        }
+
+        labels.add_labels()->CopyFrom(executorLabel);
+      }
     }
 
     // NOTE: This field is required by the master/agent, but the protobuf
