@@ -7,7 +7,6 @@
 #include <stout/check.hpp>
 #include <stout/duration.hpp>
 #include <stout/foreach.hpp>
-#include <stout/ip.hpp>
 #include <stout/json.hpp>
 #include <stout/jsonify.hpp>
 #include <stout/os.hpp>
@@ -606,7 +605,7 @@ Future<Nothing> ManagerProcess::_configure(
     if (overlays[name].info().has_subnet()) {
       const string overlaySubnet = overlays[name].info().subnet();
 
-      Try<string> command = strings::format(
+      command = strings::format(
           "ipset add -exist %s %s" " nomatch &&"
           " iptables -t nat -C POSTROUTING -s %s -m set"
           " --match-set %s dst -j MASQUERADE ||"
