@@ -1,4 +1,9 @@
+#ifndef __OVERLAY_NETWORK_HPP__
+#define __OVERLAY_NETWORK_HPP__
+
 #include <stdio.h>
+
+#include <boost/functional/hash.hpp>
 
 #include <stout/check.hpp>
 #include <stout/interval.hpp>
@@ -19,49 +24,55 @@ namespace mesos {
 namespace modules {
 namespace overlay {
 
-class IPWrapper
+class IP : public net::IP
 {
 public:
   //default constructor
-  IPWrapper()
-    : address_(net::IP(0)) {}
+  IP()
+    : net::IP(0) {}
 
   // paramatized constructor
-  IPWrapper(const uint32_t _address) 
-    : address_(net::IP(_address)) {}
+  IP(const uint32_t _address) 
+    : net::IP(_address) {}
 
-  IPWrapper(const struct in6_addr& _storage)
-    : address_(net::IP(_storage)) {}
+  IP(const struct in_addr& _storage)
+    : net::IP(_storage) {}
 
-  bool operator==(const IPWrapper& that) const
+  IP(const struct in6_addr& _storage)
+    : net::IP(_storage) {}
+
+  static Try<IP> convert(const net::IP& ip);
+  static Try<IP> parse(const std::string& value, int family);
+
+  bool operator==(const IP& that) const
   {
-    return address_ == that.address();
+    return net::IP::operator==(that);
   }
 
-  bool operator!=(const IPWrapper& that) const
+  bool operator!=(const IP& that) const
   {
-    return address_ != that.address();
+    return net::IP::operator!=(that);
   }
 
-  bool operator<(const IPWrapper& that) const
+  bool operator<(const IP& that) const
   {
-    return address_ < that.address();
+    return net::IP::operator<(that);
   }
 
-  bool operator>(const IPWrapper& that) const
+  bool operator>(const IP& that) const
   {
-    return address_ > that.address();
+    return net::IP::operator>(that);
   } 
 
-  IPWrapper& operator++() {
-    switch (address_.family()) {
+  IP& operator++() {
+    switch (family_) {
       case AF_INET: {
-       uint32_t address = ntohl(address_.in().get().s_addr);
-       address_ = net::IP(address + 1);
+       uint32_t address = ntohl(storage_.in_.s_addr);
+       storage_.in_.s_addr = htonl(address + 1);
        break;
       }
       case AF_INET6: {
-        in6_addr addr6 = address_.in6().get();
+        in6_addr addr6 = storage_.in6_;
         for (int i = 15; i >= 0; i--) {
           if (addr6.s6_addr[i] != 0xff) {
             addr6.s6_addr[i]++;
@@ -69,7 +80,7 @@ public:
             break;
           }
         } 
-        address_ = net::IP(addr6);
+        storage_.in6_  = addr6;
         break;
       } 
       default: {
@@ -79,20 +90,20 @@ public:
     return *this;
   }
 
-  IPWrapper& operator--() {
-    switch (address_.family()) {
+  IP& operator--() {
+    switch (family_) {
       case AF_INET: {
-        uint32_t address = ntohl(address_.in().get().s_addr);
-        address_ = net::IP(address - 1);
+        uint32_t address = ntohl(storage_.in_.s_addr);
+        storage_.in_.s_addr = htonl(address - 1);
         break;
       }
       case AF_INET6: {
-        in6_addr addr6 = address_.in6().get();
+        in6_addr addr6 = storage_.in6_;
         addr6.s6_addr[index_]--;
         if (!addr6.s6_addr[index_]) {
           index_--;
         }
-        address_ = net::IP(addr6);
+        storage_.in6_ = addr6;
         break;
       }
       default: {
@@ -102,42 +113,78 @@ public:
     return *this;
   } 
 
-  net::IP address() const { return address_; }
-
 private:
-  net::IP address_;
   uint8_t index_;
 };
 
-inline std::ostream& operator<<(std::ostream& stream, const IPWrapper& _ip)
+inline Try<IP> IP::convert(const net::IP& ip)
 {
-  stream << _ip.address();
+  switch(ip.family()) {
+    case AF_INET:
+      return IP(ip.in().get());
+    case AF_INET6:
+      return IP(ip.in6().get());
+    default:
+      UNREACHABLE();
+  }
+}
+
+inline Try<IP> IP::parse(const std::string& value, int family)
+{
+  Try<net::IP> ip = net::IP::parse(value, family);
+  if (ip.isError()) {
+    return Error(ip.error());
+  }
+
+  switch(family) {
+    case AF_INET:
+      return IP(ip.get().in().get());
+    case AF_INET6:
+      return IP(ip.get().in6().get());
+    default:
+      UNREACHABLE();
+  }
+}
+  
+
+// Returns the string representation of the given IP using the
+// canonical form, for example: "10.0.0.1" or "fe80::1".
+inline std::ostream& operator<<(std::ostream& stream, const IP& ip)
+{
+  stream << ip;
   return stream;
 }
 
-class Network
+class Network : public net::IPNetwork
 {
 public:
   // default constructor
   Network() 
-    :network_(net::IPNetwork::create(IP(0), IP(0)).get()),
+    :net::IPNetwork(net::IP(0), net::IP(0)),
      prefix_(0)
   {}  
 
   // paramatized constructor
-  Network(const net::IP& _address, uint8_t _prefix)
-    :network_(net::IPNetwork::create(_address, _prefix).get()),
-     prefix_(_prefix)
+  Network(const net::IP& address, uint8_t prefix)
+    :net::IPNetwork(address, toMask(prefix, address.family())),
+     prefix_(prefix)
   {}
+
+  // Creates an IP network from the given IP address and netmask.
+  // Returns error if the netmask is not valid (e.g., not contiguous).
+  static Try<Network> parse(const std::string& value, int family = AF_UNSPEC);
+
+  // Helper function to convert prefix to netmask
+  static net::IP toMask(uint8_t prefix, int family); 
 
   bool operator==(const Network& that) const
   {
-    return network_ == that.network();
+    return net::IPNetwork::operator==(that);
   }
 
   bool operator!=(const Network& that) const
   {
-    return network_ != that.network();
+    return net::IPNetwork::operator!=(that);
   }
 
   bool operator<(const Network& that) const
@@ -145,7 +192,7 @@ public:
     if (prefix_ != that.prefix()) {
       return prefix_ > that.prefix();
     } else {
-      return network_.address() < that.network().address();
+      return address() < that.address();
     }
   }
 
@@ -154,24 +201,23 @@ public:
     if (prefix_ != that.prefix()) {
       return prefix_ < that.prefix();
     } else {
-      return network_.address() > that.network().address();
+      return address() > that.address();
     }
   }
 
   Network& operator++() {
-    net::IP address = network_.address();
-    switch (address.family()) {
+    switch (address_.family()) {
       case AF_INET: {
-        uint32_t address_ = ntohl(address.in().get().s_addr);
-        address_ = address_ >> (32 - prefix_);
-        address_ = (address_ + 1) << (32 - prefix_);
-        network_ = net::IPNetwork::create(IP(address_), prefix_).get();
+        uint32_t addr = ntohl(address_.in().get().s_addr);
+        addr = addr >> (32 - prefix_);
+        addr = (addr + 1) << (32 - prefix_);
+        address_ = net::IP(addr);
         break;
       }
       case AF_INET6: {
         bool incremented = false;
         uint8_t startInx = prefix_ >> 3;
-        in6_addr addr6 = address.in6().get();
+        in6_addr addr6 = address_.in6().get();
 
         if (prefix_ & 7) {
           uint8_t bitshift = 8 - (prefix_ & 7);
@@ -193,7 +239,7 @@ public:
           }
         }       
 
-        network_ = net::IPNetwork::create(IP(addr6), prefix_).get();  
+        address_ = net::IP(addr6);  
         break;
       }
       default: {
@@ -204,17 +250,16 @@ public:
   }
 
   Network& operator--() {
-    net::IP address = network_.address();
-    switch (address.family()) {
+    switch (address_.family()) {
       case AF_INET: {
-        uint32_t address_ = ntohl(address.in().get().s_addr);
-        address_ = address_ >> (32 - prefix_);
-        address_ = (address_ - 1) << (32 - prefix_);
-        network_ = net::IPNetwork::create(IP(address_), prefix_).get();
+        uint32_t addr = ntohl(address_.in().get().s_addr);
+        addr = addr >> (32 - prefix_);
+        addr = (addr - 1) << (32 - prefix_);
+        address_ = net::IP(addr);
         break;
       }
       case AF_INET6: {
-        in6_addr addr6 = address.in6().get();
+        in6_addr addr6 = address_.in6().get();
         if ((prefix_ & 7) && (index_ == prefix_ >> 3)) {
           uint8_t bitshift = 8 - (prefix_ & 7);
           uint8_t lowerbits = addr6.s6_addr[index_] >> bitshift;
@@ -227,7 +272,7 @@ public:
           index_--;
         }
 
-        network_ = net::IPNetwork::create(IP(addr6), prefix_).get();
+        address_ = net::IP(addr6);
         break;
       }
       default: {
@@ -237,23 +282,92 @@ public:
     return *this;
   }
 
-  net::IPNetwork network() const { return network_; }
   uint8_t prefix() const { return prefix_; }
 
 private:
-  net::IPNetwork network_;
   uint8_t prefix_;
   uint8_t index_;
 };
+
+inline Try<Network> Network::parse(const std::string& value, int family)
+{
+  Try<net::IPNetwork> ipNetwork = net::IPNetwork::parse(value, family);
+  if (ipNetwork.isError()) {
+    return Error(ipNetwork.error());
+  }
+
+  return Network(ipNetwork.get().address(), ipNetwork.get().prefix());
+}
+  
+inline net::IP Network::toMask(uint8_t prefix, int family)
+{
+  switch (family) {
+    case AF_INET: {
+      uint32_t mask = 0xffffff << (32 - prefix);
+      return net::IP(mask); 
+    }
+    case AF_INET6: {
+      in6_addr mask;
+      memset(&mask, 0, sizeof(mask));
+
+      int i = 0;
+      while (prefix >= 8) {
+        mask.s6_addr[i++] = 0xff;
+        prefix -= 8;
+      }
+
+      if (prefix > 0) {
+        uint8_t _mask = 0xff << (8 - prefix);
+        mask.s6_addr[i] = _mask;
+      }
+      return net::IP(mask); 
+    }
+    default: 
+      UNREACHABLE();
+  }
+}
 
 //Returns the string representation of the given IP network using the
 //canonical form with prefix. For example: "10.0.0.1/8".
 inline std::ostream& operator<<(std::ostream& stream, const Network& _network)
 {
-  stream << _network.network().address() << "/" << _network.network().prefix();
+  stream << _network;
   return stream;
 }
 
 } // overlay
 } // modules
 } // mesos 
+
+
+namespace std {
+
+template <>
+struct hash<mesos::modules::overlay::IP>
+{
+  typedef size_t result_type;
+
+  typedef mesos::modules::overlay::IP argument_type;
+
+  result_type operator()(const argument_type& ip) const
+  {
+    size_t seed = 0;
+
+    switch (ip.family()) {
+      case AF_INET:
+        boost::hash_combine(seed, htonl(ip.in().get().s_addr));
+        return seed;
+      case AF_INET6: {
+        in6_addr in6 = ip.in6().get();
+        boost::hash_range(seed, std::begin(in6.s6_addr), std::end(in6.s6_addr));
+        return seed;
+      }
+      default:
+        UNREACHABLE();
+    }
+  }
+};
+
+} // namespace std
+
+#endif // __OVERLAY_NETWORK_HPP__
