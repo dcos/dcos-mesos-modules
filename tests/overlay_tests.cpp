@@ -101,10 +101,14 @@ namespace tests {
 constexpr char AGENT_CNI_DIR[] = "cni/";
 constexpr char AGENT_JSON_CONFIG[] = "agent.json";
 constexpr char OVERLAY_SUBNET[] = "192.168.0.0/16";
+constexpr char OVERLAY_SUBNET6[] = "fd02::/64";
 constexpr char OVERLAY_NAME[] = "mz-overlay";
 constexpr char MASTER_JSON_CONFIG[] = "master.json";
 constexpr char MASTER_OVERLAY_MODULE_NAME[] =
   "com_mesosphere_mesos_OverlayMasterManager";
+
+constexpr uint32_t OVERLAY_PREFIX = 24;
+constexpr uint32_t OVERLAY_PREFIX6 = 96;
 
 class OverlayTest : public MesosTest
 {
@@ -167,13 +171,17 @@ protected:
 
     // Setup Master and Agent config.
     masterOverlayConfig.mutable_network()->set_vtep_subnet("44.128.0.0/16");
+    masterOverlayConfig.mutable_network()->set_vtep_subnet6("fd03::/64");
     masterOverlayConfig.mutable_network()->set_vtep_mac_oui(
         "70:B3:D5:00:00:00");
 
     OverlayInfo overlay;
     overlay.set_name(OVERLAY_NAME);
     overlay.set_subnet(OVERLAY_SUBNET);
-    overlay.set_prefix(24);
+    overlay.set_subnet6(OVERLAY_SUBNET6);
+    overlay.set_prefix(OVERLAY_PREFIX);
+    overlay.set_prefix6(OVERLAY_PREFIX6);
+    
 
     masterOverlayConfig.mutable_network()->add_overlays()->CopyFrom(overlay);
 
@@ -204,6 +212,7 @@ protected:
     Future<string> cleanupResult = runScriptCommand(cleanup.get());
 
     cleanupResult.await();
+
   }
 
   virtual void TearDown()
@@ -408,7 +417,9 @@ TEST_F(OverlayTest, checkMasterAgentComm)
   ASSERT_EQ(1, state->network().overlays_size());
   ASSERT_EQ(OVERLAY_NAME, state->network().overlays(0).name());
   ASSERT_EQ(OVERLAY_SUBNET, state->network().overlays(0).subnet());
-  ASSERT_EQ(24, state->network().overlays(0).prefix());
+  ASSERT_EQ(OVERLAY_SUBNET6, state->network().overlays(0).subnet6());
+  ASSERT_EQ(OVERLAY_PREFIX, state->network().overlays(0).prefix());
+  ASSERT_EQ(OVERLAY_PREFIX6, state->network().overlays(0).prefix6());
 
   // We haven't started the Agent, so make sure there are no Agents
   // reflected at this end-point.
@@ -470,13 +481,26 @@ TEST_F(OverlayTest, checkMasterAgentComm)
       info->overlays(0).subnet(), AF_INET);
 
   ASSERT_SOME(agentNetwork);
-  EXPECT_EQ(24, agentNetwork->prefix());
+  EXPECT_EQ(OVERLAY_PREFIX, agentNetwork->prefix());
 
   Try<net::IP::Network> allocatedSubnet = net::IP::Network::parse(
       "192.168.0.0/24", AF_INET);
 
   ASSERT_SOME(allocatedSubnet);
   EXPECT_EQ(allocatedSubnet.get(), agentNetwork.get());
+
+  // IPv6
+  Try<net::IP::Network> agentNetwork6 = net::IP::Network::parse(
+      info->overlays(0).subnet6(), AF_INET6);
+
+  ASSERT_SOME(agentNetwork6);
+  EXPECT_EQ(OVERLAY_PREFIX6, agentNetwork6->prefix());
+
+  Try<net::IP::Network> allocatedSubnet6 = net::IP::Network::parse(
+      "fd02::/96", AF_INET6);
+
+  ASSERT_SOME(allocatedSubnet6);
+  EXPECT_EQ(allocatedSubnet6.get(), agentNetwork6.get());
 
   // Hit the `state` end-point again. We should be seeing the
   // Agents overlay subnet allocation in the `state` endpoint.
@@ -741,10 +765,26 @@ TEST_F(OverlayTest, ROOT_checkMasterRecovery)
       info->overlays(0).subnet(), AF_INET);
 
   ASSERT_SOME(agentNetwork);
-  EXPECT_EQ(24, agentNetwork->prefix());
+  EXPECT_EQ(OVERLAY_PREFIX, agentNetwork->prefix());
 
   Try<net::IP::Network> allocatedSubnet = net::IP::Network::parse(
       "192.168.0.0/24", AF_INET);
+
+  ASSERT_SOME(allocatedSubnet);
+  EXPECT_EQ(allocatedSubnet.get(), agentNetwork.get());
+
+  // IPv6
+  Try<net::IP::Network> agentNetwork6 = net::IP::Network::parse(
+      info->overlays(0).subnet6(), AF_INET6);
+
+  ASSERT_SOME(agentNetwork6);
+  EXPECT_EQ(OVERLAY_PREFIX6, agentNetwork6->prefix());
+
+  Try<net::IP::Network> allocatedSubnet6 = net::IP::Network::parse(
+      "fd02::/96", AF_INET6);
+
+  ASSERT_SOME(allocatedSubnet6);
+  EXPECT_EQ(allocatedSubnet6.get(), agentNetwork6.get());
 
   ASSERT_SOME(allocatedSubnet);
   EXPECT_EQ(allocatedSubnet.get(), agentNetwork.get());
@@ -892,6 +932,19 @@ TEST_F(OverlayTest, ROOT_checkAgentRecovery)
   ASSERT_SOME(allocatedSubnet);
   EXPECT_EQ(allocatedSubnet.get(), agentNetwork.get());
 
+  // IPv6
+  Try<net::IP::Network> agentNetwork6 = net::IP::Network::parse(
+      info->overlays(0).subnet6(), AF_INET6);
+
+  ASSERT_SOME(agentNetwork6);
+  EXPECT_EQ(OVERLAY_PREFIX6, agentNetwork6->prefix());
+
+  Try<net::IP::Network> allocatedSubnet6 = net::IP::Network::parse(
+      "fd02::/96", AF_INET6);
+
+  ASSERT_SOME(allocatedSubnet6);
+  EXPECT_EQ(allocatedSubnet6.get(), agentNetwork6.get());
+
   // Re-start the agent and wait for the agent to re-register.
   Future<AgentRegisteredAcknowledgement> agentReRegisteredAcknowledgement =
     FUTURE_PROTOBUF(AgentRegisteredAcknowledgement(), _, _);
@@ -1003,13 +1056,26 @@ TEST_F(OverlayTest, ROOT_checkAgentNetworkConfigChange)
       info->overlays(0).subnet(), AF_INET);
 
   ASSERT_SOME(agentNetwork);
-  EXPECT_EQ(24, agentNetwork->prefix());
+  EXPECT_EQ(OVERLAY_PREFIX, agentNetwork->prefix());
 
   Try<net::IP::Network> allocatedSubnet = net::IP::Network::parse(
       "192.168.0.0/24", AF_INET);
 
   ASSERT_SOME(allocatedSubnet);
   EXPECT_EQ(allocatedSubnet.get(), agentNetwork.get());
+
+  // IPv6
+  Try<net::IP::Network> agentNetwork6 = net::IP::Network::parse(
+      info->overlays(0).subnet6(), AF_INET6);
+
+  ASSERT_SOME(agentNetwork6);
+  EXPECT_EQ(OVERLAY_PREFIX6, agentNetwork6->prefix());
+
+  Try<net::IP::Network> allocatedSubnet6 = net::IP::Network::parse(
+      "fd02::/96", AF_INET6);
+
+  ASSERT_SOME(allocatedSubnet6);
+  EXPECT_EQ(allocatedSubnet6.get(), agentNetwork6.get());
 
   // Check that the `mesos-bridge` and `docker-bridge` are present.
   EXPECT_TRUE(info->overlays(0).has_mesos_bridge());
@@ -1186,7 +1252,9 @@ TEST_F(OverlayTest, ROOT_checkAddVirtualNetworks)
   OverlayInfo overlay;
   overlay.set_name("mz-test-add");
   overlay.set_subnet("11.0.0.0/8");
-  overlay.set_prefix(24);
+  overlay.set_subnet6("fd04::/64");
+  overlay.set_prefix(OVERLAY_PREFIX);
+  overlay.set_prefix6(OVERLAY_PREFIX6);
 
   masterOverlayConfig.mutable_network()->add_overlays()->CopyFrom(overlay);
 
@@ -1227,6 +1295,7 @@ TEST_F(OverlayTest, ROOT_checkAddVirtualNetworks)
 
   ASSERT_SOME(_overlay);
   ASSERT_EQ(_overlay->subnet(), "11.0.0.0/8");
+  ASSERT_EQ(_overlay->subnet6(), "fd04::/64");
 
   // Hit the `overlay` endpoint of the agent to check that module is
   // up and responding.
@@ -1265,6 +1334,8 @@ TEST_F(OverlayTest, ROOT_checkAddVirtualNetworks)
   ASSERT_SOME(agentOverlay);
   ASSERT_EQ(agentOverlay->subnet(), "11.0.0.0/24");
   ASSERT_EQ(agentOverlay->info().subnet(), "11.0.0.0/8");
+  ASSERT_EQ(agentOverlay->subnet6(), "fd04::/64");
+  ASSERT_EQ(agentOverlay->info().subnet6(), "fd04::/64");
 }
 
 } // namespace tests {

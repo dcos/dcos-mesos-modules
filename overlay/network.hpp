@@ -16,8 +16,8 @@
 #include <stout/try.hpp>
 
 using std::hex;
+
 using net::IP;
-using net::IPNetwork;
 using net::MAC;
 
 namespace mesos {
@@ -41,7 +41,9 @@ public:
   IP(const struct in6_addr& _storage)
     : net::IP(_storage) {}
 
+  // Convert net::IP to overlay::IP object
   static Try<IP> convert(const net::IP& ip);
+
   static Try<IP> parse(const std::string& value, int family);
 
   bool operator==(const IP& that) const
@@ -132,44 +134,40 @@ inline Try<IP> IP::convert(const net::IP& ip)
 inline Try<IP> IP::parse(const std::string& value, int family)
 {
   Try<net::IP> ip = net::IP::parse(value, family);
+
   if (ip.isError()) {
     return Error(ip.error());
   }
 
-  switch(family) {
-    case AF_INET:
-      return IP(ip.get().in().get());
-    case AF_INET6:
-      return IP(ip.get().in6().get());
-    default:
-      UNREACHABLE();
-  }
+  return IP::convert(ip.get());
 }
-  
 
 // Returns the string representation of the given IP using the
 // canonical form, for example: "10.0.0.1" or "fe80::1".
 inline std::ostream& operator<<(std::ostream& stream, const IP& ip)
 {
-  stream << ip;
-  return stream;
+  const net::IP& _ip = ip;
+  return stream << _ip;
 }
-
-class Network : public net::IPNetwork
+  
+class Network : public net::IP::Network
 {
 public:
   // default constructor
   Network() 
-    :net::IPNetwork(net::IP(0), net::IP(0)),
+    :net::IP::Network(net::IP(0), net::IP(0)),
      prefix_(0)
   {}  
 
   // paramatized constructor
   Network(const net::IP& address, uint8_t prefix)
-    :net::IPNetwork(address, toMask(prefix, address.family())),
-     prefix_(prefix)
-  {}
+    :net::IP::Network(address, toMask(prefix, address.family())),
+     prefix_(prefix) {}
 
+  Network(const Network& network)
+    :net::IP::Network(network),
+     prefix_(network.prefix()) {}
+  
   // Creates an IP network from the given IP address and netmask.
   // Returns error if the netmask is not valid (e.g., not contiguous).
   static Try<Network> parse(const std::string& value, int family = AF_UNSPEC);
@@ -177,14 +175,58 @@ public:
   // Helper function to convert prefix to netmask
   static net::IP toMask(uint8_t prefix, int family); 
 
+  // Helper function to return the first address of a network 
+  IP begin() {
+    switch (address_->family()) {
+      case AF_INET: {
+        uint32_t addr = ntohl(address_->in().get().s_addr);
+        uint32_t mask = ntohl(netmask_->in().get().s_addr);
+        return IP(addr & mask);    
+      }
+      case AF_INET6: {
+        in6_addr saddr6;
+        in6_addr addr6 = address_->in6().get();
+        in6_addr mask6 = netmask_->in6().get();
+        for (int i = 0; i < 16; i++) {
+          saddr6.s6_addr[i] = addr6.s6_addr[i] & mask6.s6_addr[i];
+        }
+        return IP(saddr6);
+      }
+      default:
+        UNREACHABLE();
+    }
+  }
+
+  // Helper function to return the last address of a network
+  IP end() {
+    switch (address_->family()) {
+      case AF_INET: {
+        uint32_t addr = ntohl(address_->in().get().s_addr);
+        uint32_t mask = ntohl(netmask_->in().get().s_addr);
+        return IP(addr | ~mask);
+      }
+      case AF_INET6: {
+        in6_addr eaddr6;
+        in6_addr addr6 = address_->in6().get();
+        in6_addr mask6 = netmask_->in6().get();
+        for (int i = 0; i < 16; i++) {
+          eaddr6.s6_addr[i] = addr6.s6_addr[i] | ~mask6.s6_addr[i];
+        }
+        return IP(eaddr6);
+      }
+      default:
+        UNREACHABLE();
+    }
+  }
+
   bool operator==(const Network& that) const
   {
-    return net::IPNetwork::operator==(that);
+    return net::IP::Network::operator==(that);
   }
 
   bool operator!=(const Network& that) const
   {
-    return net::IPNetwork::operator!=(that);
+    return net::IP::Network::operator!=(that);
   }
 
   bool operator<(const Network& that) const
@@ -206,18 +248,18 @@ public:
   }
 
   Network& operator++() {
-    switch (address_.family()) {
+    switch (address_->family()) {
       case AF_INET: {
-        uint32_t addr = ntohl(address_.in().get().s_addr);
+        uint32_t addr = ntohl(address_->in().get().s_addr);
         addr = addr >> (32 - prefix_);
         addr = (addr + 1) << (32 - prefix_);
-        address_ = net::IP(addr);
+        address_.reset(new net::IP(addr));
         break;
       }
       case AF_INET6: {
         bool incremented = false;
         uint8_t startInx = prefix_ >> 3;
-        in6_addr addr6 = address_.in6().get();
+        in6_addr addr6 = address_->in6().get();
 
         if (prefix_ & 7) {
           uint8_t bitshift = 8 - (prefix_ & 7);
@@ -226,7 +268,7 @@ public:
             addr6.s6_addr[startInx] = (lowerbits + 1) << bitshift;
             index_ = startInx;
             incremented = true;
-          }
+          }          
         }
 
         if (!incremented) {
@@ -237,9 +279,9 @@ public:
               break;
             }   
           }
-        }       
+        }
 
-        address_ = net::IP(addr6);  
+        address_.reset(new net::IP(addr6));  
         break;
       }
       default: {
@@ -250,16 +292,16 @@ public:
   }
 
   Network& operator--() {
-    switch (address_.family()) {
+    switch (address_->family()) {
       case AF_INET: {
-        uint32_t addr = ntohl(address_.in().get().s_addr);
+        uint32_t addr = ntohl(address_->in().get().s_addr);
         addr = addr >> (32 - prefix_);
         addr = (addr - 1) << (32 - prefix_);
-        address_ = net::IP(addr);
+        address_.reset(new net::IP(addr));
         break;
       }
       case AF_INET6: {
-        in6_addr addr6 = address_.in6().get();
+        in6_addr addr6 = address_->in6().get();
         if ((prefix_ & 7) && (index_ == prefix_ >> 3)) {
           uint8_t bitshift = 8 - (prefix_ & 7);
           uint8_t lowerbits = addr6.s6_addr[index_] >> bitshift;
@@ -272,7 +314,7 @@ public:
           index_--;
         }
 
-        address_ = net::IP(addr6);
+        address_.reset(new net::IP(addr6));
         break;
       }
       default: {
@@ -291,14 +333,14 @@ private:
 
 inline Try<Network> Network::parse(const std::string& value, int family)
 {
-  Try<net::IPNetwork> ipNetwork = net::IPNetwork::parse(value, family);
-  if (ipNetwork.isError()) {
-    return Error(ipNetwork.error());
+  Try<net::IP::Network> network = net::IP::Network::parse(value, family);
+  if (network.isError()) {
+    return Error(network.error());
   }
 
-  return Network(ipNetwork.get().address(), ipNetwork.get().prefix());
+  return Network(network.get().address(), network.get().prefix());
 }
-  
+
 inline net::IP Network::toMask(uint8_t prefix, int family)
 {
   switch (family) {
@@ -329,10 +371,10 @@ inline net::IP Network::toMask(uint8_t prefix, int family)
 
 //Returns the string representation of the given IP network using the
 //canonical form with prefix. For example: "10.0.0.1/8".
-inline std::ostream& operator<<(std::ostream& stream, const Network& _network)
+inline std::ostream& operator<<(std::ostream& stream, const Network& network)
 {
-  stream << _network;
-  return stream;
+   const net::IP::Network& _network = network;
+   return stream << _network;
 }
 
 } // overlay
