@@ -38,7 +38,9 @@
 #include "agent.hpp"
 #include "constants.hpp"
 #include "messages.hpp"
+#include "network.hpp"
 #include "overlay.hpp"
+
 
 #include "common/shell.hpp"
 
@@ -53,8 +55,6 @@ using std::list;
 using std::string;
 using std::tuple;
 using std::vector;
-
-using net::IP;
 
 using process::delay;
 
@@ -662,6 +662,12 @@ Future<Nothing> ManagerProcess::configureMesosNetwork(const string& name)
 
   const AgentOverlayInfo& overlay = overlays[name];
 
+  if (!overlay.has_subnet()) {
+    LOG(WARNING) << "IPv4 address not present for mesos bridge."
+                 << " Skipping... "<< name;
+    return Nothing();
+  }
+
   if (!networkConfig.mesos_bridge()) {
     LOG(INFO) << "Not configuring Mesos network for '" << name
               << "' since operator has disallowed `mesos_bridge`.";
@@ -675,14 +681,7 @@ Future<Nothing> ManagerProcess::configureMesosNetwork(const string& name)
     return Nothing();
   }
 
-  if (overlay.has_mesos_bridge()) {
-    if (!overlay.mesos_bridge().has_ip()) {
-      LOG(WARNING) << "IP address is required for mesos bridge";
-    }
-    return Nothing();
-  }
-
-  Try<IPNetwork> subnet = IPNetwork::parse(
+  Try<Network> subnet = Network::parse(
       overlay.mesos_bridge().ip(),
       AF_INET);
 
@@ -811,45 +810,42 @@ Future<Nothing> ManagerProcess::_configureDockerNetwork(
     return Failure("Missing Docker bridge info");
   }
 
+  Option<Network> subnet = None();
+  Option<Network> subnet6 = None();
+
+  if (overlay.docker_bridge().has_ip()) {
+    Try<Network> _subnet = Network::parse(
+        overlay.docker_bridge().ip(),
+        AF_INET);
+
+    if (_subnet.isError()) {
+      return Failure("Failed to parse bridge ip: " + _subnet.error());
+    }
+    subnet = _subnet.get();
+  }
+
+  if (overlay.docker_bridge().has_ip6()) {
+    Try<Network> _subnet6 = Network::parse(
+        overlay.docker_bridge().ip6(),
+        AF_INET6);
+
+    if (_subnet6.isError()) {
+      return Failure("Failed to parse bridge ipv6: " + _subnet6.error());
+    }
+    subnet6 = _subnet6.get();  
+  }
+
   Try<string> dockerCommand = strings::format(
     "docker network create --driver=bridge "
     "--opt=com.docker.network.bridge.name=%s "
     "--opt=com.docker.network.bridge.enable_ip_masquerade=false "
-    "--opt=com.docker.network.driver.mtu=%s ",
+    "--opt=com.docker.network.driver.mtu=%s "
+    "%s "
+    "%s ",
     overlay.docker_bridge().name(),
-    stringify(networkConfig.overlay_mtu()));
-
-  if (overlay.docker_bridge().has_ip()) {
-    Try<IPNetwork> subnet = IPNetwork::parse(
-        overlay.docker_bridge().ip(),
-        AF_INET);
-
-    if (subnet.isError()) {
-      return Failure("Failed to parse bridge ip: " + subnet.error());
-    }
-
-    dockerCommand = strings::format(
-      " %s --subnet=%s ", 
-      stringify(dockerCommand.get()),
-      stringify(subnet.get()));
-  }
-
-  if (overlay.docker_bridge().has_ip6()) {
-    Try<net::IPNetwork> subnet6 = IPNetwork::parse(
-        overlay.docker_bridge().ip6(),
-        AF_INET6);
-
-    if (subnet6.isError()) {
-      return Failure("Failed to parse bridge ipv6: " + subnet6.error());
-    }
-
-    dockerCommand = strings::format(
-      " %s --ipv6 --subnet=%s ",
-      stringify(dockerCommand.get()),
-      stringify(subnet6.get()));
-  }
-
-  dockerCommand = strings::format(" %s %s ", stringify(dockerCommand.get()), name);
+    stringify(networkConfig.overlay_mtu()),
+    subnet.isSome() ? "--subnet=" + stringify(subnet.get()) : "",
+    subnet6.isSome() ? "--ipv6 --subnet=" + stringify(subnet6.get()) : "");
 
   if (dockerCommand.isError()) {
     return Failure(

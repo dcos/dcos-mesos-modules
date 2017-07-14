@@ -130,34 +130,15 @@ struct Vtep
       network6(_network6),
       oui(_oui)
   {
-    uint32_t addr = ntohl(network.address().in().get().s_addr);
-    uint32_t mask = ntohl(network.netmask().in().get().s_addr);
-    IP startIP = IP(addr & mask);
-    IP endIP = IP(addr | ~mask);
-
-    LOG(INFO) << "Vtep IPv4: " << startIP << "-" << endIP;
-
-    freeIP += (Bound<IP>::open(startIP), Bound<IP>::open(endIP));
+    freeIP += (
+      Bound<IP>::open(network.begin()), 
+      Bound<IP>::open(network.end()));
 
     // IPv6
     if (network6.isSome()) {
-      in6_addr saddr6, eaddr6;
-      in6_addr addr6 = network6.get().address().in6().get();
-      in6_addr mask6 = network6.get().netmask().in6().get();
-      for (int i = 0; i < 16; i++) {
-        saddr6.s6_addr[i] = addr6.s6_addr[i] & mask6.s6_addr[i];
-        eaddr6.s6_addr[i] = addr6.s6_addr[i] | ~mask6.s6_addr[i];
-      }
-
-      IP startIP6 = IP(saddr6);
-      IP endIP6 = IP(eaddr6);
-
-      LOG(INFO) << "Vtep IPv6: " << startIP6 << "-" << endIP6;
-
       freeIP6 +=
-        (Bound<IP>::open(startIP6),
-         Bound<IP>::open(endIP6));
-    
+        (Bound<IP>::open(network6.get().begin()),
+         Bound<IP>::open(network6.get().end()));
     }
   }
 
@@ -253,37 +234,18 @@ struct Vtep
   void reset()
   {
     freeIP = IntervalSet<IP>();
-    uint32_t addr = ntohl(network.address().in().get().s_addr);
-    uint32_t mask = ntohl(network.netmask().in().get().s_addr);
-    IP startIP = IP(addr & mask);
-    IP endIP = IP(addr | ~mask);
-
-    LOG(INFO) << "Reset vtep IPv4: " << startIP << "-" << endIP;
 
     freeIP +=
-      (Bound<IP>::open(startIP),
-       Bound<IP>::open(endIP));
+      (Bound<IP>::open(network.begin()),
+       Bound<IP>::open(network.end()));
 
     // IPv6
     if (network6.isSome()) {
       freeIP6 = IntervalSet<IP>();
 
-      in6_addr saddr6, eaddr6;
-      in6_addr addr6 = network6.get().address().in6().get();
-      in6_addr mask6 = network6.get().netmask().in6().get();
-      for (int i = 0; i < 16; i++) {
-        saddr6.s6_addr[i] = addr6.s6_addr[i] & mask6.s6_addr[i];
-        eaddr6.s6_addr[i] = addr6.s6_addr[i] | ~mask6.s6_addr[i];
-      }
-
-      IP startIP6 = IP(saddr6);
-      IP endIP6 = IP(eaddr6);
-
-      LOG(INFO) << "Reset vtep IPv6: " << startIP6 << "-" << endIP6;
-
       freeIP6 +=
-        (Bound<IP>::open(startIP6), 
-         Bound<IP>::open(endIP6));
+        (Bound<IP>::open(network6.get().begin()), 
+         Bound<IP>::open(network6.get().end()));
 	}
   }
 
@@ -1095,7 +1057,7 @@ public:
         if (_address.isError()) {
           return Error(
               "Unable to determine subnet for network: " +
-              stringify(_address.get()));
+              _address.error());
         }
 
         Try<Nothing> valid = updateAddressSpace(_address.get());
@@ -1119,7 +1081,7 @@ public:
         if (_address6.isError()) {
           return Error(
              "Unable to determine IPv6 subnet for network: " +
-             stringify(_address6.get()));
+              _address6.error());
         }
 
         Try<Nothing> valid6 = updateAddressSpace(_address6.get());
@@ -1391,7 +1353,7 @@ protected:
         }
         
         vtepIP6 = _vtepIP6.get();
-        LOG(INFO) << "Allocated VTEP IPv6 : " << _vtepIP6.get();
+        LOG(INFO) << "Allocated VTEP IPv6 : " << vtepIP6.get();
       }
 
       Try<IP> _vtepIP = IP::convert(vtepIP.get().address());
@@ -1431,7 +1393,7 @@ protected:
       // Update the `networkState in the replicated log before
       // sending the overlay configuration to the Agent.
       update(Owned<Operation>(
-            new AddAgent(agents.at(agentIP.get()).getAgentInfo())))
+            new AddAgent(agent->getAgentInfo())))
         .onAny(defer(self(),
               &ManagerProcess::_registerAgent,
               pid,
