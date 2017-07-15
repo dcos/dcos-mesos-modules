@@ -54,7 +54,6 @@ using std::tuple;
 using std::vector;
 
 using net::IP;
-using net::IPNetwork;
 
 using process::delay;
 
@@ -658,7 +657,7 @@ Future<Nothing> ManagerProcess::configureMesosNetwork(const string& name)
     return Nothing();
   }
 
-  Try<IPNetwork> subnet = IPNetwork::parse(
+  Try<net::IP::Network> subnet = net::IP::Network::parse(
       overlay.mesos_bridge().ip(),
       AF_INET);
 
@@ -777,7 +776,7 @@ Future<Nothing> ManagerProcess::_configureDockerNetwork(
     return Failure("Missing Docker bridge info");
   }
 
-  Try<IPNetwork> subnet = IPNetwork::parse(
+  Try<net::IP::Network> subnet = net::IP::Network::parse(
       overlay.docker_bridge().ip(),
       AF_INET);
 

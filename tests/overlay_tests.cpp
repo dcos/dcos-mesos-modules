@@ -485,13 +485,13 @@ TEST_F(OverlayTest, checkMasterAgentComm)
   ASSERT_EQ(1, info->overlays_size());
   EXPECT_EQ(OVERLAY_NAME, info->overlays(0).info().name());
 
-  Try<net::IPNetwork> agentNetwork = net::IPNetwork::parse(
+  Try<net::IP::Network> agentNetwork = net::IP::Network::parse(
       info->overlays(0).subnet(), AF_INET);
 
   ASSERT_SOME(agentNetwork);
   EXPECT_EQ(24, agentNetwork->prefix());
 
-  Try<net::IPNetwork> allocatedSubnet = net::IPNetwork::parse(
+  Try<net::IP::Network> allocatedSubnet = net::IP::Network::parse(
       "192.168.0.0/24", AF_INET);
 
   ASSERT_SOME(allocatedSubnet);
@@ -753,13 +753,13 @@ TEST_F(OverlayTest, ROOT_checkMasterRecovery)
   ASSERT_EQ(1, info->overlays_size());
   EXPECT_EQ(OVERLAY_NAME, info->overlays(0).info().name());
 
-  Try<net::IPNetwork> agentNetwork = net::IPNetwork::parse(
+  Try<net::IP::Network> agentNetwork = net::IP::Network::parse(
       info->overlays(0).subnet(), AF_INET);
 
   ASSERT_SOME(agentNetwork);
   EXPECT_EQ(24, agentNetwork->prefix());
 
-  Try<net::IPNetwork> allocatedSubnet = net::IPNetwork::parse(
+  Try<net::IP::Network> allocatedSubnet = net::IP::Network::parse(
       "192.168.0.0/24", AF_INET);
 
   ASSERT_SOME(allocatedSubnet);
@@ -896,13 +896,13 @@ TEST_F(OverlayTest, ROOT_checkAgentRecovery)
   ASSERT_EQ(1, info->overlays_size());
   EXPECT_EQ(OVERLAY_NAME, info->overlays(0).info().name());
 
-  Try<net::IPNetwork> agentNetwork = net::IPNetwork::parse(
+  Try<net::IP::Network> agentNetwork = net::IP::Network::parse(
       info->overlays(0).subnet(), AF_INET);
 
   ASSERT_SOME(agentNetwork);
   EXPECT_EQ(24, agentNetwork->prefix());
 
-  Try<net::IPNetwork> allocatedSubnet = net::IPNetwork::parse(
+  Try<net::IP::Network> allocatedSubnet = net::IP::Network::parse(
       "192.168.0.0/24", AF_INET);
 
   ASSERT_SOME(allocatedSubnet);
@@ -1015,13 +1015,13 @@ TEST_F(OverlayTest, ROOT_checkAgentNetworkConfigChange)
   ASSERT_EQ(1, info->overlays_size());
   EXPECT_EQ(OVERLAY_NAME, info->overlays(0).info().name());
 
-  Try<net::IPNetwork> agentNetwork = net::IPNetwork::parse(
+  Try<net::IP::Network> agentNetwork = net::IP::Network::parse(
       info->overlays(0).subnet(), AF_INET);
 
   ASSERT_SOME(agentNetwork);
   EXPECT_EQ(24, agentNetwork->prefix());
 
-  Try<net::IPNetwork> allocatedSubnet = net::IPNetwork::parse(
+  Try<net::IP::Network> allocatedSubnet = net::IP::Network::parse(
       "192.168.0.0/24", AF_INET);
 
   ASSERT_SOME(allocatedSubnet);
