@@ -44,7 +44,6 @@ using std::string;
 using std::vector;
 
 using net::IP;
-using net::IPNetwork;
 using net::MAC;
 
 using process::DESCRIPTION;
@@ -124,7 +123,7 @@ static Try<net::MAC> createMAC(const string& _mac, const bool& oui)
 
 struct Vtep
 {
-  Vtep(const IPNetwork& _network, const MAC _oui)
+  Vtep(const net::IP::Network& _network, const MAC _oui)
     : network(_network), oui(_oui)
   {
     // `endIP` = `32 - network.prefix()` number of LSB bits set.
@@ -136,7 +135,7 @@ struct Vtep
     freeIP += (Bound<uint32_t>::closed(1), Bound<uint32_t>::closed(endIP - 1));
   }
 
-  Try<IPNetwork> allocateIP()
+  Try<net::IP::Network> allocateIP()
   {
     if (freeIP.empty()) {
       return Error("Unable to allocate a VTEP IP due to exhaustion");
@@ -148,10 +147,10 @@ struct Vtep
     uint32_t address = ntohl(network.address().in().get().s_addr);
     address += ip;
 
-    return IPNetwork::create(net::IP(address),network.prefix()) ;
+    return net::IP::Network::create(net::IP(address), network.prefix()) ;
   }
 
-  Try<Nothing> reserve(const net::IPNetwork& ip)
+  Try<Nothing> reserve(const net::IP::Network& ip)
   {
     uint32_t _ip = ntohl(ip.address().in().get().s_addr);
     uint32_t mask = ntohl(network.netmask().in().get().s_addr);
@@ -210,7 +209,7 @@ struct Vtep
   }
 
   // Network allocated to the VTEP.
-  IPNetwork network;
+  net::IP::Network network;
 
   MAC oui;
 
@@ -222,7 +221,7 @@ struct Overlay
 {
   Overlay(
       const string& _name,
-      const net::IPNetwork& _network,
+      const net::IP::Network& _network,
       const uint8_t _prefix)
     : name(_name),
     network(_network),
@@ -248,7 +247,7 @@ struct Overlay
     return overlay;
   }
 
-  Try<net::IPNetwork> allocate()
+  Try<net::IP::Network> allocate()
   {
     if (freeNetworks.empty()) {
       return Error("No free subnets available in the " + name + "overlay");
@@ -263,10 +262,10 @@ struct Overlay
     subnet = subnet << (32 - prefix);
     agentSubnet |= subnet;
 
-    return net::IPNetwork::create(net::IP(agentSubnet), prefix);
+    return net::IP::Network::create(net::IP(agentSubnet), prefix);
   }
 
-  Try<Nothing> free(const net::IPNetwork& subnet)
+  Try<Nothing> free(const net::IP::Network& subnet)
   {
     if (subnet.prefix() != prefix) {
       return Error(
@@ -287,7 +286,7 @@ struct Overlay
     return Nothing();
   }
 
-  Try<Nothing> reserve(const net::IPNetwork& subnet)
+  Try<Nothing> reserve(const net::IP::Network& subnet)
   {
     uint32_t netmask = ntohl(network.netmask().in().get().s_addr);
     uint32_t _subnet = ntohl(subnet.address().in().get().s_addr);
@@ -325,7 +324,7 @@ struct Overlay
   std::string name;
 
   // Network allocated to this overlay.
-  net::IPNetwork network;
+  net::IP::Network network;
 
   // Prefix length allocated to each agent.
   uint8_t prefix;
@@ -414,14 +413,14 @@ public:
       }
 
       AgentOverlayInfo _overlay;
-      Option<net::IPNetwork> agentSubnet = None();
+      Option<net::IP::Network> agentSubnet = None();
 
       _overlay.mutable_info()->set_name(name);
       _overlay.mutable_info()->set_subnet(stringify(overlay->network));
       _overlay.mutable_info()->set_prefix(overlay->prefix);
 
       if (networkConfig.allocate_subnet()) {
-        Try<net::IPNetwork> _agentSubnet = overlay->allocate();
+        Try<net::IP::Network> _agentSubnet = overlay->allocate();
         if (_agentSubnet.isError()) {
           LOG(ERROR) << "Cannot allocate subnet from overlay "
                      << name << " to Agent " << ip << ":"
@@ -516,7 +515,7 @@ private:
     }
     const string name = _overlay->info().name();
 
-    Try<IPNetwork> network = net::IPNetwork::parse(
+    Try<net::IP::Network> network = net::IP::Network::parse(
         _overlay->subnet(),
         AF_INET);
 
@@ -547,7 +546,8 @@ private:
 
     // Create the Mesos bridge.
     if (networkConfig.mesos_bridge()) {
-      Try<IPNetwork> mesosSubnet = net::IPNetwork::create((IP(address)), (IP(mask)));
+      Try<net::IP::Network> mesosSubnet = 
+        net::IP::Network::create((IP(address)), (IP(mask)));
 
       if (mesosSubnet.isError()) {
         return Error(
@@ -563,7 +563,7 @@ private:
 
     // Create the docker bridge.
     if (networkConfig.docker_bridge()) {
-      Try<IPNetwork> dockerSubnet = net::IPNetwork::create(
+      Try<net::IP::Network> dockerSubnet = net::IP::Network::create(
           IP(address | (0x1 << (32 - (network->prefix() + 1)))),
           IP(mask));
 
@@ -739,8 +739,8 @@ public:
     NetworkConfig networkConfig;
     networkConfig.CopyFrom(masterConfig.network());
 
-    Try<net::IPNetwork> vtepSubnet =
-      net::IPNetwork::parse(networkConfig.vtep_subnet(), AF_INET);
+    Try<net::IP::Network> vtepSubnet =
+      net::IP::Network::parse(networkConfig.vtep_subnet(), AF_INET);
     if (vtepSubnet.isError()) {
       return Error(
           "Unable to parse the VTEP Subnet: " + vtepSubnet.error());
@@ -768,7 +768,7 @@ public:
     // `Error` if it detects an overlay that is going to use an
     // already configured address space.
     auto updateAddressSpace =
-      [&addressSpace](const IPNetwork &network) -> Try<Nothing> {
+      [&addressSpace](const net::IP::Network &network) -> Try<Nothing> {
         uint32_t startIP = ntohl(network.address().in().get().s_addr);
 
         uint32_t mask = ntohl(network.netmask().in().get().s_addr);
@@ -816,8 +816,8 @@ public:
 
       LOG(INFO) << "Configuring overlay network:" << overlay.name();
 
-      Try<net::IPNetwork> address =
-        net::IPNetwork::parse(overlay.subnet(), AF_INET);
+      Try<net::IP::Network> address =
+        net::IP::Network::parse(overlay.subnet(), AF_INET);
       if (address.isError()) {
         return Error(
             "Unable to determine subnet for network: " +
@@ -1057,7 +1057,7 @@ protected:
       // New Agent.
       LOG(INFO) << "New registration from pid: " << pid;
 
-      Try<net::IPNetwork> vtepIP = vtep.allocateIP();
+      Try<net::IP::Network> vtepIP = vtep.allocateIP();
       if (vtepIP.isError()) {
         LOG(ERROR)
           << "Unable to get VTEP IP for Agent: " << vtepIP.error()
@@ -1237,7 +1237,7 @@ protected:
         // clear the overlay state.
         _networkState.mutable_agents(i)->mutable_overlays(j)->clear_state();
 
-        Try<net::IPNetwork> network = net::IPNetwork::parse(
+        Try<net::IP::Network> network = net::IP::Network::parse(
             overlay.subnet(),
             AF_INET);
 
@@ -1264,8 +1264,8 @@ protected:
         // information would be the same. We therefore need to reserve
         // the VTEP IP and MAC only once.
         if (j == 0) {
-          Try<net::IPNetwork> vtepIP =
-            net::IPNetwork::parse(overlay.backend().vxlan().vtep_ip(), AF_INET);
+          Try<net::IP::Network> vtepIP =
+            net::IP::Network::parse(overlay.backend().vxlan().vtep_ip(), AF_INET);
           if (vtepIP.isError()) {
             LOG(ERROR) << "Unable to parse the retrieved `vtepIP`: "
                        << overlay.backend().vxlan().vtep_ip() << ": "
@@ -1335,7 +1335,7 @@ private:
 
   ManagerProcess(
       const hashmap<string, Owned<Overlay>>& _overlays,
-      const net::IPNetwork& vtepSubnet,
+      const net::IP::Network& vtepSubnet,
       const net::MAC& vtepMACOUI,
       const NetworkConfig& _networkConfig,
       const Owned<mesos::state::protobuf::State> _replicatedLog,
