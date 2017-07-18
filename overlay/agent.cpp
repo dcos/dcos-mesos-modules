@@ -689,7 +689,7 @@ Future<Nothing> ManagerProcess::configureMesosNetwork(const string& name)
   };
 
   Try<Nothing> write = os::write(
-      path::join(cniDir, name + ".cni"),
+      path::join(cniDir, name + ".conf"),
       jsonify(config));
 
   if (write.isError()) {
