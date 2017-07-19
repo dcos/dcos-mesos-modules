@@ -335,10 +335,12 @@ AC_CHECK_HEADER([picojson.h],
                 [MESOS_CPPFLAGS+=" -DPICOJSON_USE_INT64 -D__STDC_FORMAT_MACROS"],
                 [AC_MSG_ERROR([picojson is not installed.])])
 
-# Check for the systemd journal header.
-AC_CHECK_HEADER([systemd/sd-journal.h],
-                [],
-                [AC_MSG_ERROR([systemd journald headers not found.])])
+if test "$OS_NAME" = "linux"; then
+  # Check for the systemd journal header.
+  AC_CHECK_HEADER([systemd/sd-journal.h],
+                  [],
+                  [AC_MSG_ERROR([systemd journald headers not found.])])
+fi
 
 LDFLAGS=${old_LDFLAGS}
 CPPFLAGS=${old_CPPFLAGS}
