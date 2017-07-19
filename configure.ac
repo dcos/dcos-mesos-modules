@@ -224,6 +224,10 @@ case "${target_os}" in
     OS_NAME=linux
     LIB_EXT="so"
     ;;
+  darwin*)
+    OS_NAME=darwin
+    LIB_EXT="dylib"
+    ;;
   *)
     AC_MSG_ERROR("Mesosphere's Modules are currently unsupported on your platform.")
 esac
