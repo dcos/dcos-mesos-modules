@@ -55,8 +55,11 @@ libremovedockercfg_la_LDFLAGS =				\
 # Journald ContainerLogger Module.
 ###############################################################################
 
-# Library with the ContainerLogger module.
-pkglib_LTLIBRARIES += libjournaldlogger.la
+if OS_LINUX
+  # Library with the ContainerLogger module.
+  pkglib_LTLIBRARIES += libjournaldlogger.la
+endif
+
 libjournaldlogger_la_SOURCES =				\
   journald/journald.hpp					\
   journald/lib_journald.hpp				\
@@ -66,8 +69,11 @@ libjournaldlogger_la_LDFLAGS =				\
   -release $(PACKAGE_VERSION)				\
   -shared $(MESOS_LDFLAGS)
 
-# Companion binary for the ContainerLogger module.
-bin_PROGRAMS += mesos-journald-logger
+if OS_LINUX
+  # Companion binary for the ContainerLogger module.
+  bin_PROGRAMS += mesos-journald-logger
+endif
+
 mesos_journald_logger_SOURCES =				\
   journald/journald.hpp					\
   journald/journald.cpp
@@ -180,8 +186,10 @@ test_dockercfg_LDADD =					\
   libmesos_tests.la					\
   libremovedockercfg.la
 
-# Test (make check) binary for the journald module.
-check_PROGRAMS += test-journald
+if OS_LINUX
+  # Test (make check) binary for the journald module.
+  check_PROGRAMS += test-journald
+endif
 
 test_journald_SOURCES =					\
   tests/journald_tests.cpp
@@ -231,6 +239,8 @@ endif
 
 check-local: $(check_PROGRAMS)
 	./test-dockercfg
+if OS_LINUX
 	./test-journald --verbose
+endif
 	./test-logsink --verbose
 	LIBPROCESS_IP=127.0.0.1 LIBPROCESS_PORT=5050 ./test-overlay --verbose
