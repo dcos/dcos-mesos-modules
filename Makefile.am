@@ -9,7 +9,9 @@ GOOGLETEST = $(MESOS_BUILD_DIR)/$(BUNDLE_SUBDIR)/googletest-release-$(GOOGLETEST
 include $(MESOS_ROOT)/$(BUNDLE_SUBDIR)/versions.am
 GMOCK = $(GOOGLETEST)/googlemock
 GTEST = $(GOOGLETEST)/googletest
+
 ZOOKEEPER = $(MESOS_BUILD_DIR)/$(BUNDLE_SUBDIR)/zookeeper-$(ZOOKEEPER_VERSION)/src/c
+NVML = $(MESOS_BUILD_DIR)/$(BUNDLE_SUBDIR)/nvml-$(NVML_VERSION)
 endif
 
 # We want to install modules in mesos directory.
@@ -147,6 +149,7 @@ libmesos_tests_la_CPPFLAGS =				\
   -I$(MESOS_BUILD_DIR)/include/mesos			\
   -I$(ZOOKEEPER)/include				\
   -I$(ZOOKEEPER)/generated				\
+  -I$(NVML)						\
   -isystem $(GMOCK)/include				\
   -I$(GTEST)/include					\
   -DMODULES_BUILD_DIR=\"$(abs_top_builddir)\"		\
