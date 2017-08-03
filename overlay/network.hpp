@@ -69,9 +69,9 @@ public:
   IP& operator++() {
     switch (family_) {
       case AF_INET: {
-       uint32_t address = ntohl(storage_.in_.s_addr);
-       storage_.in_.s_addr = htonl(address + 1);
-       break;
+        uint32_t address = ntohl(storage_.in_.s_addr);
+        storage_.in_.s_addr = htonl(address + 1);
+        break;
       }
       case AF_INET6: {
         in6_addr addr6 = storage_.in6_;
@@ -119,6 +119,7 @@ private:
   uint8_t index_;
 };
 
+
 inline Try<IP> IP::convert(const net::IP& ip)
 {
   switch(ip.family()) {
@@ -131,6 +132,7 @@ inline Try<IP> IP::convert(const net::IP& ip)
   }
 }
 
+
 inline Try<IP> IP::parse(const std::string& value, int family)
 {
   Try<net::IP> ip = net::IP::parse(value, family);
@@ -142,6 +144,7 @@ inline Try<IP> IP::parse(const std::string& value, int family)
   return IP::convert(ip.get());
 }
 
+
 // Returns the string representation of the given IP using the
 // canonical form, for example: "10.0.0.1" or "fe80::1".
 inline std::ostream& operator<<(std::ostream& stream, const IP& ip)
@@ -150,6 +153,7 @@ inline std::ostream& operator<<(std::ostream& stream, const IP& ip)
   return stream << _ip;
 }
   
+
 class Network : public net::IP::Network
 {
 public:
@@ -176,7 +180,7 @@ public:
   static net::IP toMask(uint8_t prefix, int family); 
 
   // Helper function to return the first address of a network 
-  IP begin() {
+  IP begin() const {
     switch (address_->family()) {
       case AF_INET: {
         uint32_t addr = ntohl(address_->in().get().s_addr);
@@ -198,7 +202,7 @@ public:
   }
 
   // Helper function to return the last address of a network
-  IP end() {
+  IP end() const {
     switch (address_->family()) {
       case AF_INET: {
         uint32_t addr = ntohl(address_->in().get().s_addr);
@@ -331,6 +335,7 @@ private:
   uint8_t index_;
 };
 
+
 inline Try<Network> Network::parse(const std::string& value, int family)
 {
   Try<net::IP::Network> network = net::IP::Network::parse(value, family);
@@ -341,11 +346,12 @@ inline Try<Network> Network::parse(const std::string& value, int family)
   return Network(network.get().address(), network.get().prefix());
 }
 
+
 inline net::IP Network::toMask(uint8_t prefix, int family)
 {
   switch (family) {
     case AF_INET: {
-      uint32_t mask = 0xffffff << (32 - prefix);
+      uint32_t mask = 0xffffffff << (32 - prefix);
       return net::IP(mask); 
     }
     case AF_INET6: {
@@ -369,6 +375,7 @@ inline net::IP Network::toMask(uint8_t prefix, int family)
   }
 }
 
+
 //Returns the string representation of the given IP network using the
 //canonical form with prefix. For example: "10.0.0.1/8".
 inline std::ostream& operator<<(std::ostream& stream, const Network& network)
@@ -376,6 +383,7 @@ inline std::ostream& operator<<(std::ostream& stream, const Network& network)
    const net::IP::Network& _network = network;
    return stream << _network;
 }
+
 
 } // overlay
 } // modules
