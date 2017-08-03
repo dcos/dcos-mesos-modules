@@ -841,11 +841,13 @@ Future<Nothing> ManagerProcess::_configureDockerNetwork(
     "--opt=com.docker.network.bridge.enable_ip_masquerade=false "
     "--opt=com.docker.network.driver.mtu=%s "
     "%s "
-    "%s ",
+    "%s "
+    "%s",
     overlay.docker_bridge().name(),
     stringify(networkConfig.overlay_mtu()),
     subnet.isSome() ? "--subnet=" + stringify(subnet.get()) : "",
-    subnet6.isSome() ? "--ipv6 --subnet=" + stringify(subnet6.get()) : "");
+    subnet6.isSome() ? "--ipv6 --subnet=" + stringify(subnet6.get()) : "",
+    name);
 
   if (dockerCommand.isError()) {
     return Failure(
