@@ -286,11 +286,11 @@ struct Overlay
       Network startSubnet = Network(IP(startAddr), prefix.get());
       Network endSubnet = Network(IP(endAddr), prefix.get());
 
-      LOG(INFO) << "IPv4: " << startSubnet << " - " << endSubnet;
+      LOG(INFO) << name << " IPv4: " << startSubnet << " - " << endSubnet;
 
       freeNetworks +=
         (Bound<Network>::closed(startSubnet),
-         Bound<Network>::open(endSubnet));
+         Bound<Network>::closed(endSubnet));
     }
 
     // IPv6
@@ -312,7 +312,7 @@ struct Overlay
 
       freeNetworks6 +=
         (Bound<Network>::closed(startSubnet6),
-         Bound<Network>::open(endSubnet6));
+         Bound<Network>::closed(endSubnet6));
     }
   }
 
@@ -452,7 +452,7 @@ struct Overlay
       Network startSubnet = Network(IP(startAddr), prefix.get());
       Network endSubnet = Network(IP(endAddr), prefix.get());
 
-      LOG(INFO) << "Reset IPv4: " << startSubnet << " - " << endSubnet;
+      LOG(INFO) << name << " Reset IPv4: " << startSubnet << " - " << endSubnet;
 
       freeNetworks +=
         (Bound<Network>::open(startSubnet),
@@ -476,7 +476,8 @@ struct Overlay
       Network startSubnet6 = Network(IP(startAddr6), prefix6.get());
       Network endSubnet6 = Network(IP(endAddr6), prefix6.get());
 
-      LOG(INFO) << "Reset IPv6: " << startSubnet6 << " - " << endSubnet6; 
+      LOG(INFO) << name 
+                << " Reset IPv6: " << startSubnet6 << " - " << endSubnet6; 
 
       freeNetworks6 +=
         (Bound<Network>::open(startSubnet6),
@@ -580,7 +581,7 @@ public:
     // agent. Queue the message on the Agent. Finally, ask Master to
     // reliably send these messages to the Agent.
     foreachpair (const string& name, const Owned<Overlay>& overlay, _overlays) {
-      // skip if the overlay is present
+      // Skip if the overlay is present
       if (overlays.contains(name)) {
         continue;
       }
@@ -718,7 +719,7 @@ private:
     const string name = _overlay->info().name();
 
     // IPv4
-    Option<Network> network_ = None();
+    Option<Network> _network = None();
     if (_overlay->has_subnet()) {
       Try<Network> network = Network::parse(
           _overlay->subnet(),
@@ -730,20 +731,11 @@ private:
             name + "' : " + network.error());
       }
 
-      Try<struct in_addr> subnet = network->address().in();
-
-      if (subnet.isError()) {
-        return Error(
-            "Unable to get a 'struct in_addr' representation of "
-            "the network :"  + subnet.error());
-      }
-
-      uint32_t address = ntohl(subnet.get().s_addr);
-      network_ = Network(IP(address), network->prefix() + 1);
+      _network = Network(network->address(), network->prefix() + 1);
     }
 
     // IPv6
-    Option<Network> network6_ = None();
+    Option<Network> _network6 = None();
     if (_overlay->has_subnet6()) {
       Try<Network> network6 = Network::parse(
           _overlay->subnet6(),
@@ -754,17 +746,17 @@ private:
             name + "' : " + network6.error());
       }
 
-      network6_ = Network(network6->address(), network6->prefix() + 1);
+      _network6 = Network(network6->address(), network6->prefix() + 1);
     }
 
     // Create the Mesos bridge.
     if (networkConfig.mesos_bridge()) {
       BridgeInfo mesosBridgeInfo;
-      if (network_.isSome()) {
-        mesosBridgeInfo.set_ip(stringify(network_.get()));
+      if (_network.isSome()) {
+        mesosBridgeInfo.set_ip(stringify(_network.get()));
       }
-      if (network6_.isSome()) {
-        mesosBridgeInfo.set_ip6(stringify(network6_.get()));
+      if (_network6.isSome()) {
+        mesosBridgeInfo.set_ip6(stringify(_network6.get()));
       }
       mesosBridgeInfo.set_name(MESOS_BRIDGE_PREFIX + name);
       _overlay->mutable_mesos_bridge()->CopyFrom(mesosBridgeInfo);
@@ -773,11 +765,11 @@ private:
     // Create the docker bridge.
     if (networkConfig.docker_bridge()) {
       BridgeInfo dockerBridgeInfo;
-      if (network_.isSome()) {
-        dockerBridgeInfo.set_ip(stringify(++(network_.get())));
+      if (_network.isSome()) {
+        dockerBridgeInfo.set_ip(stringify(++(_network.get())));
       }
-      if (network6_.isSome()) {
-        dockerBridgeInfo.set_ip6(stringify(++(network6_.get())));
+      if (_network6.isSome()) {
+        dockerBridgeInfo.set_ip6(stringify(++(_network6.get())));
       }
       dockerBridgeInfo.set_name(DOCKER_BRIDGE_PREFIX + name);
       _overlay->mutable_docker_bridge()->CopyFrom(dockerBridgeInfo);
@@ -944,6 +936,7 @@ public:
 
     Try<Network> vtepSubnet =
       Network::parse(networkConfig.vtep_subnet(), AF_INET);
+
     if (vtepSubnet.isError()) {
       return Error(
           "Unable to parse the VTEP Subnet: " + vtepSubnet.error());
@@ -968,6 +961,7 @@ public:
     if (networkConfig.has_vtep_subnet6()) {
       Try<Network> _vtepSubnet6 =
         Network::parse(networkConfig.vtep_subnet6(), AF_INET6);
+
       if (_vtepSubnet6.isError()) {
         return Error(
             "Unable to parse the VTEP IPv6 Subnet: " + _vtepSubnet6.error());
@@ -984,32 +978,10 @@ public:
     // already configured address space.
     auto updateAddressSpace =
       [&addressSpace](const Network &network) -> Try<Nothing> {
-        IP startIP, endIP;
-        switch(network.address().family()) {
-          case AF_INET: {
-            uint32_t addr = ntohl(network.address().in().get().s_addr);
-            uint32_t mask = ntohl(network.netmask().in().get().s_addr);
-            startIP  = IP(addr & mask);
-            endIP = IP(addr | ~mask);
-            break;
-          }
-          case AF_INET6: {
-            in6_addr saddr6, eaddr6;
-            in6_addr addr6 = network.address().in6().get();
-            in6_addr mask6 = network.netmask().in6().get();
-            for (int i = 0; i < 16; i++) {
-              saddr6.s6_addr[i] = addr6.s6_addr[i] & mask6.s6_addr[i];
-              eaddr6.s6_addr[i] = addr6.s6_addr[i] | ~mask6.s6_addr[i];
-            }
-            startIP = IP(saddr6);
-            endIP = IP(eaddr6); 
-            break;
-          }
-        }
 
         Interval<IP> overlaySpace =
-          (Bound<IP>::closed(startIP), 
-           Bound<IP> ::closed(endIP));
+          (Bound<IP>::closed(network.begin()), 
+           Bound<IP>::closed(network.end()));
 
         if (addressSpace.intersects(overlaySpace)) {
           return Error("Found overlapping address spaces");
@@ -1054,6 +1026,7 @@ public:
       if (overlay.has_subnet()) {
         Try<Network> _address =
           Network::parse(overlay.subnet(), AF_INET);
+
         if (_address.isError()) {
           return Error(
               "Unable to determine subnet for network: " +
@@ -1078,6 +1051,7 @@ public:
       if (overlay.has_subnet6()) {
         Try<Network> _address6 = 
           Network::parse(overlay.subnet6(), AF_INET6);
+
         if (_address6.isError()) {
           return Error(
              "Unable to determine IPv6 subnet for network: " +
@@ -1592,7 +1566,7 @@ protected:
           Try<Nothing> result = overlays.at(overlay.info().name())->reserve6(network6.get());
           if (result.isError()) {
             LOG(ERROR) << "Unable to reserve the IPv6 subnet " << network6.get()
-                     << ": " << result.error();
+                       << ": " << result.error();
             abort();
           }
         }
@@ -1604,6 +1578,7 @@ protected:
         if (j == 0) {
           Try<Network> vtepIP =
             Network::parse(overlay.backend().vxlan().vtep_ip(), AF_INET);
+
           if (vtepIP.isError()) {
             LOG(ERROR) << "Unable to parse the retrieved `vtepIP`: "
                        << overlay.backend().vxlan().vtep_ip() << ": "
@@ -1629,6 +1604,7 @@ protected:
           if (overlay.backend().vxlan().has_vtep_ip6()) {
             Try<Network> vtepIP6 =
               Network::parse(overlay.backend().vxlan().vtep_ip6(), AF_INET6);
+
             if (vtepIP6.isError()) {
               LOG(ERROR) << "Unable to parse the retrieved `vtep IPv6`: "
                 << overlay.backend().vxlan().vtep_ip6() << ": "
@@ -1640,7 +1616,7 @@ protected:
             result = vtep.reserve6(vtepIP6.get());
             if (result.isError()) {
               LOG(ERROR) << "Unable to reserve VTEP IPv6: "
-                << vtepIP6.get() << ": " << result.error();
+                         << vtepIP6.get() << ": " << result.error();
               abort();
             }
           }
