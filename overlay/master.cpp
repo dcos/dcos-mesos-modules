@@ -147,7 +147,7 @@ struct Vtep
     uint32_t address = ntohl(network.address().in().get().s_addr);
     address += ip;
 
-    return net::IP::Network::create(net::IP(address), network.prefix()) ;
+    return net::IP::Network::create(net::IP(address), network.prefix());
   }
 
   Try<Nothing> reserve(const net::IP::Network& ip)
@@ -187,12 +187,12 @@ struct Vtep
 
     uint8_t mac[6];
 
-    //Set the OUI.
+    // Set the OUI.
     mac[0] = oui[0];
     mac[1] = oui[1];
     mac[2] = oui[2];
 
-    //Set the NIC.
+    // Set the NIC.
     mac[3] = nic[1];
     mac[4] = nic[2];
     mac[5] = nic[3];
@@ -269,8 +269,9 @@ struct Overlay
   {
     if (subnet.prefix() != prefix) {
       return Error(
-          "Cannot free this network because prefix " + stringify(subnet.prefix()) +
-          " does not match Agent prefix " + stringify(prefix) + " of the overlay");
+          "Cannot free this network because prefix " +
+          stringify(subnet.prefix()) + " does not match Agent prefix " +
+          stringify(prefix) + " of the overlay");
     }
 
     if (subnet.prefix() < network.prefix()) {
@@ -370,7 +371,7 @@ public:
   Agent(const net::IP& _ip, const Option<BackendInfo>& _backend = None())
     : backend(_backend),
       ip(_ip) {};
-      
+
   const net::IP getIP() const { return ip; };
 
   void addOverlay(const AgentOverlayInfo& overlay)
@@ -498,7 +499,7 @@ public:
     const string name = overlay.info().name();
     if (!overlays.contains(name)) {
       LOG(ERROR) << "Got update for unknown network "
-                 << overlay.info().name() ;
+                 << overlay.info().name();
     }
 
     overlays.at(name)->mutable_state()->set_status(overlay.state().status());
@@ -546,7 +547,7 @@ private:
 
     // Create the Mesos bridge.
     if (networkConfig.mesos_bridge()) {
-      Try<net::IP::Network> mesosSubnet = 
+      Try<net::IP::Network> mesosSubnet =
         net::IP::Network::create((IP(address)), (IP(mask)));
 
       if (mesosSubnet.isError()) {
@@ -1178,25 +1179,26 @@ protected:
 
     recovering = true;
 
-    replicatedLog->fetch<State>(REPLICATED_LOG_STORE_KEY)
+    replicatedLog->fetch<overlay::State>(REPLICATED_LOG_STORE_KEY)
       .onAny(defer(self(),
                    &ManagerProcess::_recover,
                    lambda::_1));
   }
 
-  void _recover(Future<Variable<State>> variable)
+  void _recover(Future<Variable<overlay::State>> variable)
   {
     CHECK_NOTNULL(replicatedLog.get());
 
     if (!variable.isReady()) {
       LOG(WARNING) << "This " << self().id <<"might have been demoted."
                    << "Aborting recovery of replicated log"
-                   <<(variable.isDiscarded() ? "discarded" : variable.failure());
+                   <<(variable.isDiscarded() ? "discarded"
+                       : variable.failure());
 
       return;
     }
 
-    State _networkState = variable.get().get();
+    overlay::State _networkState = variable.get().get();
 
     // Only if the `network_config` is present does it imply that the
     // overlay-master stored state in the replicated log, else  this
@@ -1251,7 +1253,9 @@ protected:
 
         // We should already have this particular overlay at bootup.
         CHECK(overlays.contains(overlay.info().name()));
-        Try<Nothing> result = overlays.at(overlay.info().name())->reserve(network.get());
+        Try<Nothing> result =
+          overlays.at(overlay.info().name())->reserve(network.get());
+
         if (result.isError()) {
           LOG(ERROR) << "Unable to reserve the subnet " << network.get()
                      << ": " << result.error();
@@ -1265,7 +1269,9 @@ protected:
         // the VTEP IP and MAC only once.
         if (j == 0) {
           Try<net::IP::Network> vtepIP =
-            net::IP::Network::parse(overlay.backend().vxlan().vtep_ip(), AF_INET);
+            net::IP::Network::parse(
+                overlay.backend().vxlan().vtep_ip(), AF_INET);
+
           if (vtepIP.isError()) {
             LOG(ERROR) << "Unable to parse the retrieved `vtepIP`: "
                        << overlay.backend().vxlan().vtep_ip() << ": "
@@ -1317,9 +1323,9 @@ private:
 
   Owned<mesos::state::protobuf::State> replicatedLog;
 
-  Option<Variable<State>> storedState;
+  Option<Variable<overlay::State>> storedState;
 
-  State networkState;
+  overlay::State networkState;
 
   // We need to keep track of `storage` and `log`, since we will need
   // to free them up when the master manager process is deleted.
@@ -1394,7 +1400,7 @@ private:
 
       CHECK_NOTNULL(replicatedLog.get());
 
-      State _networkState;
+      overlay::State _networkState;
       _networkState.CopyFrom(networkState);
 
       foreach (Owned<Operation> operation, operations) {
@@ -1402,7 +1408,7 @@ private:
       }
 
 
-      Variable<State> stateVariable = storedState.get();
+      Variable<overlay::State> stateVariable = storedState.get();
       stateVariable = stateVariable.mutate(_networkState);
 
       replicatedLog->store(stateVariable)
@@ -1412,14 +1418,15 @@ private:
   }
 
   void _store(
-      const Future<Option<Variable<State>>>& variable,
+      const Future<Option<Variable<overlay::State>>>& variable,
       std::deque<Owned<Operation>> applied)
   {
     storing = false;
 
     if (!variable.isReady()) {
       LOG(WARNING) << "Not updating `State` due to failure to write to log."
-                   << (variable.isDiscarded() ? "discarded" : variable.failure());
+                   << (variable.isDiscarded() ? "discarded"
+                       : variable.failure());
       demote();
       return;
     }
@@ -1433,13 +1440,14 @@ private:
 
     LOG(INFO) << "Stored the network state successfully";
 
-    State storedNetworkState = variable.get().get().get();
+    overlay::State storedNetworkState = variable.get().get().get();
 
     VLOG(1) << "Stored the following network state:";
     if (storedNetworkState.has_network()) {
       VLOG(1) << "VTEP: " << storedNetworkState.network().vtep_subnet();
       VLOG(1) << "VTEP OUI: " << storedNetworkState.network().vtep_mac_oui();
-      VLOG(1) << "Total overlays: " << storedNetworkState.network().overlays_size();
+      VLOG(1) << "Total overlays: "
+              << storedNetworkState.network().overlays_size();
     }
 
     if (storedNetworkState.agents_size() > 0) {
@@ -1529,10 +1537,10 @@ private:
   Owned<ManagerProcess> process;
 };
 
-} // namespace master
-} // namespace overlay
-} // namespace modules
-} // namespace mesos
+} // namespace master {
+} // namespace overlay {
+} // namespace modules {
+} // namespace mesos {
 
 
 using mesos::modules::overlay::master::Manager;
@@ -1613,5 +1621,5 @@ Module<Anonymous> com_mesosphere_mesos_OverlayMasterManager(
     "Mesosphere",
     "help@mesosphere.io",
     "Master Overlay Helper Module",
-    NULL,
+    nullptr,
     createOverlayMasterManager);
