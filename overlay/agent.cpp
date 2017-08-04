@@ -107,7 +107,8 @@ static string OVERLAY_HELP()
 }
 
 
-Try<Owned<ManagerProcess>> ManagerProcess::create(const AgentConfig& agentConfig)
+Try<Owned<ManagerProcess>> ManagerProcess::create(
+    const AgentConfig& agentConfig)
 {
   Option<string> master = None();
   if (master.isNone() && agentConfig.has_master()) {
@@ -283,7 +284,7 @@ void ManagerProcess::updateAgentOverlays(
       // Here, we assume that the overlay configuration never changes.
       // Therefore, if the overlay is in `STATUS_OK`, we will skip the
       // configuration.
-      if (status == OverlayState::STATUS_OK) { 
+      if (status == OverlayState::STATUS_OK) {
         LOG(INFO) << "Skipping configuration for overlay network '"
                   << name << "' as it has been configured.";
 
@@ -473,6 +474,9 @@ void ManagerProcess::doReliableRegistration(Duration maxBackoff)
   registerMessage.mutable_network_config()->CopyFrom(networkConfig);
 
   // Send registration to the overlay master.
+  LOG(INFO) << "Sending registration message to master: "
+            << overlayMaster.get();
+
   send(overlayMaster.get(), registerMessage);
 
   // Bound the maximum backoff by 'REGISTRATION_RETRY_INTERVAL_MAX'.
@@ -633,7 +637,7 @@ Future<Nothing> ManagerProcess::_configure(
     return runScriptCommand(command.get())
       .then(defer(self(), overlaySuccess))
       .onFailed(defer(self(), overlayFailure))
-      .onDiscarded(defer(self(),lambda::bind(overlayFailure, "discarded"))) ;
+      .onDiscarded(defer(self(), lambda::bind(overlayFailure, "discarded")));
   }
 }
 
@@ -668,7 +672,8 @@ Future<Nothing> ManagerProcess::configureMesosNetwork(const string& name)
   AgentNetworkConfig _networkConfig;
   _networkConfig.CopyFrom(networkConfig);
 
-  auto config = [name, subnet, overlay, _networkConfig](JSON::ObjectWriter* writer) {
+  auto config = [name, subnet, overlay, _networkConfig](
+      JSON::ObjectWriter* writer) {
     writer->field("name", name);
     writer->field("type", "bridge");
     writer->field("bridge", overlay.mesos_bridge().name());
@@ -882,7 +887,7 @@ Manager::Manager(const Owned<ManagerProcess>& _process)
 }
 
 } // namespace agent {
-} // namespace overlay{
+} // namespace overlay {
 } // namespace modules {
 } // namespace mesos {
 
@@ -970,5 +975,5 @@ Module<Anonymous> com_mesosphere_mesos_OverlayAgentManager(
     "Mesosphere",
     "help@mesosphere.io",
     "DCOS Overlay Agent Module",
-    NULL,
+    nullptr,
     createOverlayAgentManager);
