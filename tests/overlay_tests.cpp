@@ -1,38 +1,3 @@
-/**
- * This file is © 2016 Mesosphere, Inc. (“Mesosphere”).  Mesosphere licenses
- * this file to you solely pursuant to the following terms (and you may not use
- * this file except in compliance with such terms):
- *
- * 1. Subject to your compliance with the following terms, Mesosphere hereby
- * grants you a nonexclusive, limited, personal, non-sublicensable,
- * non-transferable, royalty-free license to use this file solely for your
- * internal business purposes.
- *
- * 2. You may not (and agree not to, and not to authorize or enable others to),
- * directly or indirectly: (a) copy, distribute, rent, lease, timeshare, operate
- * a service bureau, or otherwise use for the benefit of a third party, this
- * file; or (b) remove any proprietary notices from this file.  Except as
- * expressly set forth herein, as between you and Mesosphere, Mesosphere retains
- * all right, title and interest in and to this file.
- *
- * 3. Unless required by applicable law or otherwise agreed to in writing,
- * Mesosphere provides this file on an "AS IS" BASIS, WITHOUT WARRANTIES OR
- * CONDITIONS OF ANY KIND, either express or implied, including, without
- * limitation, any warranties or conditions of TITLE, NON-INFRINGEMENT,
- * MERCHANTABILITY, or FITNESS FOR A PARTICULAR PURPOSE.
- *
- * 4. In no event and under no legal theory, whether in tort (including
- * negligence), contract, or otherwise, unless required by applicable law (such
- * as deliberate and grossly negligent acts) or agreed to in writing, shall
- * Mesosphere be liable to you for damages, including any direct, indirect,
- * special, incidental, or consequential damages of any character arising as a
- * result of these terms or out of the use or inability to use this file
- * (including but not limited to damages for loss of goodwill, work stoppage,
- * computer failure or malfunction, or any and all other commercial damages or
- * losses), even if Mesosphere has been advised of the possibility of such
- * damages.
- */
-
 #include <string>
 #include <ostream>
 
@@ -123,6 +88,7 @@ using mesos::modules::overlay::RESERVED_NETWORKS;
 using mesos::modules::overlay::internal::AgentConfig;
 using mesos::modules::overlay::internal::AgentRegisteredAcknowledgement;
 using mesos::modules::overlay::internal::AgentRegisteredMessage;
+using mesos::modules::overlay::internal::RegisterAgentMessage;
 using mesos::modules::overlay::internal::MasterConfig;
 using mesos::modules::overlay::OverlayInfo;
 using mesos::modules::overlay::State;
@@ -157,7 +123,10 @@ protected:
                          ".libs/libmesos_network_overlay.so"));
             writer->field("modules", [](JSON::ArrayWriter* writer) {
               auto masterModuleConfig = [](JSON::ObjectWriter* writer) {
-              writer->field("name", "com_mesosphere_mesos_OverlayMasterManager");
+              writer->field(
+                "name",
+                "com_mesosphere_mesos_OverlayMasterManager");
+
               writer->field("parameters", [](JSON::ArrayWriter* writer) {
                 writer->element([](JSON::ObjectWriter* writer) {
                   writer->field("key", "master_config");
@@ -197,7 +166,8 @@ protected:
 
     // Setup Master and Agent config.
     masterOverlayConfig.mutable_network()->set_vtep_subnet("44.128.0.0/16");
-    masterOverlayConfig.mutable_network()->set_vtep_mac_oui("70:B3:D5:00:00:00");
+    masterOverlayConfig.mutable_network()->set_vtep_mac_oui(
+        "70:B3:D5:00:00:00");
 
     OverlayInfo overlay;
     overlay.set_name(OVERLAY_NAME);
@@ -256,7 +226,6 @@ protected:
       // Tests have passed cleanup.
       foreach(const OverlayInfo& overlay,
               masterOverlayConfig.network().overlays()) {
-
         Future<string> iptables = runCommand(
             "iptables",
             {"iptables",
@@ -313,7 +282,8 @@ protected:
 
   // This takes in a user defined `_masterOverlayConfig` and merges
   // with the already initialized `masterOverlayConfig`.
-  Try<Owned<Anonymous>> startOverlayMaster(const MasterConfig& _masterOverlayConfig)
+  Try<Owned<Anonymous>> startOverlayMaster(
+      const MasterConfig& _masterOverlayConfig)
   {
     masterOverlayConfig.MergeFrom(_masterOverlayConfig);
     return startOverlayMaster();
@@ -334,7 +304,8 @@ protected:
       overlayAgent::ManagerProcess::create(agentOverlayConfig);
 
     if (_agentModule.isError()) {
-      return Error("Unable to create overlay Agent module: " + _agentModule.error());
+      return Error(
+          "Unable to create overlay Agent module: " + _agentModule.error());
     }
 
     agentModule = _agentModule.get();
@@ -413,8 +384,9 @@ TEST_F(OverlayTest, checkMasterAgentComm)
 
   // Master `Anonymous` module created successfully. Lets see if we
   // can hit the `state` endpoint of the Master.
-  UPID overlayMaster = UPID(master.get()->pid);
-  overlayMaster.id = MASTER_MANAGER_PROCESS_ID;
+  UPID overlayMaster = UPID(
+      MASTER_MANAGER_PROCESS_ID,
+      master.get()->pid.address);
 
   Future<Response> masterResponse = process::http::get(
       overlayMaster,
@@ -446,6 +418,11 @@ TEST_F(OverlayTest, checkMasterAgentComm)
 
   // Setup a future to notify the test that Agent overlay module has
   // registered.
+  Future<RegisterAgentMessage> registerAgentMessage =
+    FUTURE_PROTOBUF(RegisterAgentMessage(), _, _);
+
+  // Setup a future to notify the test that Agent overlay module has
+  // registered.
   Future<AgentRegisteredMessage> agentRegisteredMessage =
     FUTURE_PROTOBUF(AgentRegisteredMessage(), _, _);
 
@@ -454,6 +431,8 @@ TEST_F(OverlayTest, checkMasterAgentComm)
 
   ASSERT_SOME(agentModule);
 
+  AWAIT_READY(registerAgentMessage);
+
   AWAIT_READY(agentRegisteredMessage);
 
   // Check that the agent is allowed to progress.
@@ -461,10 +440,11 @@ TEST_F(OverlayTest, checkMasterAgentComm)
 
   // Agent manager has been created. Hit the `overlay` endpoint to
   // check that module is up and responding.
-  UPID overlayAgent = UPID(master.get()->pid);
-  overlayAgent.id = AGENT_MANAGER_PROCESS_ID;
+  UPID overlayAgent = UPID(
+      AGENT_MANAGER_PROCESS_ID,
+      master.get()->pid.address);
 
-   Future<Response> agentResponse = process::http::get(
+  Future<Response> agentResponse = process::http::get(
       overlayAgent,
       "overlay");
 
@@ -535,8 +515,9 @@ TEST_F(OverlayTest, ROOT_checkMesosNetwork)
 
   // Master `Anonymous` module created successfully. Lets see if we
   // can hit the `state` endpoint of the Master.
-  UPID overlayMaster = UPID(master.get()->pid);
-  overlayMaster.id = MASTER_MANAGER_PROCESS_ID;
+  UPID overlayMaster = UPID(
+      MASTER_MANAGER_PROCESS_ID,
+      master.get()->pid.address);
 
   AgentConfig agentOverlayConfig;
   agentOverlayConfig.set_master(stringify(overlayMaster.address));
@@ -580,7 +561,7 @@ TEST_F(OverlayTest, ROOT_checkMesosNetwork)
 
   // Verify the CNI configuration has been installed correctly.
   Try<string> cniConfig = os::read(
-      path::join("cni", stringify(OVERLAY_NAME) + ".cni"));
+      path::join("cni", stringify(OVERLAY_NAME) + ".conf"));
 
   ASSERT_SOME(cniConfig);
 
@@ -622,8 +603,9 @@ TEST_F(OverlayTest, ROOT_checkDockerNetwork)
 
   // Master `Anonymous` module created successfully. Lets see if we
   // can hit the `state` endpoint of the Master.
-  UPID overlayMaster = UPID(master.get()->pid);
-  overlayMaster.id = MASTER_MANAGER_PROCESS_ID;
+  UPID overlayMaster = UPID(
+      MASTER_MANAGER_PROCESS_ID,
+      master.get()->pid.address);
 
   AgentConfig agentOverlayConfig;
   agentOverlayConfig.set_master(stringify(overlayMaster.address));
@@ -702,8 +684,9 @@ TEST_F(OverlayTest, ROOT_checkMasterRecovery)
 
   // Master `Anonymous` module created successfully. Lets see if we
   // can hit the `state` endpoint of the Master.
-  UPID overlayMaster = UPID(master.get()->pid);
-  overlayMaster.id = MASTER_MANAGER_PROCESS_ID;
+  UPID overlayMaster = UPID(
+      MASTER_MANAGER_PROCESS_ID,
+      master.get()->pid.address);
 
   AgentConfig agentOverlayConfig;
   agentOverlayConfig.set_master(stringify(overlayMaster.address));
@@ -1137,7 +1120,9 @@ TEST_F(OverlayTest, checkReservedNetworks)
     MasterConfig masterOverlayConfig;
     masterOverlayConfig.mutable_network()->add_overlays()->CopyFrom(overlay);
 
-    Try<Owned<Anonymous>> masterModule = startOverlayMaster(masterOverlayConfig);
+    Try<Owned<Anonymous>> masterModule = startOverlayMaster(
+        masterOverlayConfig);
+
     ASSERT_ERROR(masterModule);
   }
 }
