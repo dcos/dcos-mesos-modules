@@ -192,10 +192,9 @@ class LinterBase(object):
                 linter=self.linter_type,
                 plural=plural)
 
-            license_errors = self.check_license_header(filtered_candidates_set)
             encoding_errors = self.check_encoding(list(filtered_candidates_set))
             lint_errors = self.run_lint(list(filtered_candidates_set))
-            total_errors = license_errors + encoding_errors + lint_errors
+            total_errors = encoding_errors + lint_errors
 
             sys.stderr.write('Total errors found: {num_errors}\n'.format(
                 num_errors=total_errors))
