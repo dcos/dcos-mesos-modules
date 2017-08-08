@@ -45,6 +45,7 @@
 
 namespace http = process::http;
 namespace io = process::io;
+namespace network = process::network;
 
 typedef mesos::modules::overlay::AgentOverlayInfo::State OverlayState;
 
@@ -442,8 +443,16 @@ void ManagerProcess::detected(const Future<Option<MasterInfo>>& mesosMaster)
   } else {
     latestMesosMaster = mesosMaster.get();
 
-    overlayMaster = UPID(mesosMaster.get()->pid());
-    overlayMaster->id = MASTER_MANAGER_PROCESS_ID;
+    Try<net::IP> ip = net::IP::parse(mesosMaster.get()->address().ip());
+    if (ip.isError()) {
+      EXIT(EXIT_FAILURE)
+        << "Failed to parse the IP address of the leading Master: "
+        << ip.error();
+    }
+
+    overlayMaster = UPID(
+        MASTER_MANAGER_PROCESS_ID,
+        network::inet::Address(ip.get(), mesosMaster.get()->address().port()));
 
     link(overlayMaster.get());
 
