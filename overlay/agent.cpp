@@ -507,7 +507,7 @@ void ManagerProcess::doReliableRegistration(Duration maxBackoff)
 Future<http::Response> ManagerProcess::overlay(const http::Request& request)
 {
   AgentInfo agent;
-  agent.set_ip(stringify(self().address.ip));
+  agent.set_ip(stringify(self().address().ip));
 
   foreachvalue (const AgentOverlayInfo& overlay, overlays) {
     agent.add_overlays()->CopyFrom(overlay);
