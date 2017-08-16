@@ -684,22 +684,31 @@ Future<Nothing> ManagerProcess::configureMesosNetwork(const string& name)
   auto config = [name, subnet, overlay, _networkConfig](
       JSON::ObjectWriter* writer) {
     writer->field("name", name);
-    writer->field("type", "bridge");
-    writer->field("bridge", overlay.mesos_bridge().name());
-    writer->field("isGateway", true);
-    writer->field("ipMasq", false);
-    writer->field("mtu", _networkConfig.overlay_mtu());
+    writer->field("type", "mesos-cni-port-mapper");
+    writer->field("excludeDevices", 
+      [overlay](JSON::ArrayWriter* writer) { 
+        writer->element(overlay.mesos_bridge().name());
+    });
+    writer->field("chain", "OVERLAY-DEFAULT-BRIDGE"),
+    writer->field("delegate", 
+      [subnet, overlay, _networkConfig](JSON::ObjectWriter* writer) {
+        writer->field("type", "bridge");
+        writer->field("bridge", overlay.mesos_bridge().name());
+        writer->field("isGateway", true);
+        writer->field("ipMasq", false);
+        writer->field("mtu", _networkConfig.overlay_mtu());
 
-    writer->field("ipam", [subnet](JSON::ObjectWriter* writer) {
-        writer->field("type", "host-local");
-        writer->field("subnet", stringify(subnet.get()));
+        writer->field("ipam", [subnet](JSON::ObjectWriter* writer) {
+          writer->field("type", "host-local");
+          writer->field("subnet", stringify(subnet.get()));
 
-        writer->field("routes", [](JSON::ArrayWriter* writer) {
-          writer->element([](JSON::ObjectWriter* writer) {
-            writer->field("dst", "0.0.0.0/0");
+          writer->field("routes", [](JSON::ArrayWriter* writer) {
+            writer->element([](JSON::ObjectWriter* writer) {
+              writer->field("dst", "0.0.0.0/0");
             });
           });
         });
+      });
   };
 
   Try<Nothing> write = os::write(
