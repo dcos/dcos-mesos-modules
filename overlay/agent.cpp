@@ -14,6 +14,7 @@
 #include <stout/os/exists.hpp>
 #include <stout/os/write.hpp>
 #include <stout/protobuf.hpp>
+#include <stout/strings.hpp>
 #include <stout/try.hpp>
 
 #include <process/collect.hpp>
@@ -689,7 +690,7 @@ Future<Nothing> ManagerProcess::configureMesosNetwork(const string& name)
       [overlay](JSON::ArrayWriter* writer) { 
         writer->element(overlay.mesos_bridge().name());
     });
-    writer->field("chain", "OVERLAY-DEFAULT-BRIDGE"),
+    writer->field("chain", strings::upper(overlay.mesos_bridge().name())),
     writer->field("delegate", 
       [subnet, overlay, _networkConfig](JSON::ObjectWriter* writer) {
         writer->field("type", "bridge");
