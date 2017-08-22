@@ -1,3 +1,4 @@
+#include <map>
 #include <string>
 #include <vector>
 
@@ -289,6 +290,189 @@ TEST_F(JournaldLoggerTest, ROOT_LogToJournaldWithBigLabel)
 
   AWAIT_READY(secondQuery);
   ASSERT_FALSE(strings::contains(secondQuery.get(), specialString));
+}
+
+
+// This checks a specific case where the arguments passed into the
+// ContainerLogger will differ if the Mesos agent restarts before
+// launching a nested container.
+TEST_F(JournaldLoggerTest, ROOT_CGROUPS_LaunchThenRecoverThenLaunchNested)
+{
+  mesos::internal::slave::Flags flags = CreateSlaveFlags();
+  flags.launcher = "linux";
+  flags.isolation = "cgroups/cpu,filesystem/linux,namespaces/pid";
+
+  // Use the journald container logger.
+  flags.container_logger = JOURNALD_LOGGER_NAME;
+
+  Fetcher fetcher(flags);
+
+  Try<MesosContainerizer*> create = MesosContainerizer::create(
+      flags,
+      false,
+      &fetcher);
+
+  ASSERT_SOME(create);
+
+  Owned<MesosContainerizer> containerizer(create.get());
+
+  // Generate an AgentID to "recover" the MesosContainerizer with.
+  mesos::internal::slave::state::SlaveState state;
+  state.id = SlaveID();
+  state.id.set_value(UUID::random().toString());
+
+  AWAIT_READY(containerizer->recover(state));
+
+  ContainerID containerId;
+  containerId.set_value(UUID::random().toString());
+
+  const std::string specialParentString = "special-parent-string";
+
+  // We want to print a special string to stdout and then sleep
+  // so that there is enough time to launch a nested container.
+  ExecutorInfo executor = createExecutorInfo(
+      "executor",
+      "echo '" + specialParentString + "' && sleep 1000",
+      "cpus:1");
+
+  executor.mutable_framework_id()->set_value(UUID::random().toString());
+
+  // Make a valid ExecutorRunPath, much like the
+  // `slave::paths::getExecutorRunPath` helper (that we don't have access to).
+  const std::string executorRunPath = path::join(
+      flags.work_dir,
+      "slaves", stringify(state.id),
+      "frameworks", stringify(executor.framework_id()),
+      "executors", stringify(executor.executor_id()),
+      "runs", stringify(containerId));
+
+  ASSERT_SOME(os::mkdir(executorRunPath));
+
+  // Launch the top-level/parent container.
+  // We need to checkpoint it so that it will survive recovery
+  // (hence the `forked.pid` argument).
+  Future<bool> launch = containerizer->launch(
+      containerId,
+      createContainerConfig(None(), executor, executorRunPath),
+      std::map<std::string, std::string>(),
+      path::join(flags.work_dir,
+          "meta",
+          "slaves", stringify(state.id),
+          "frameworks", stringify(executor.framework_id()),
+          "executors", stringify(executor.executor_id()),
+          "runs", stringify(containerId),
+          "pids", "forked.pid"));
+
+  AWAIT_ASSERT_TRUE(launch);
+
+  Future<ContainerStatus> status = containerizer->status(containerId);
+  AWAIT_READY(status);
+  ASSERT_TRUE(status->has_executor_pid());
+
+  pid_t pid = status->executor_pid();
+
+  // Emulate a Mesos agent restart by destroying and recreating the
+  // MesosContainerizer object.
+  containerizer.reset();
+
+  create = MesosContainerizer::create(
+      flags,
+      false,
+      &fetcher);
+
+  ASSERT_SOME(create);
+
+  containerizer.reset(create.get());
+
+  // Create a mock `SlaveState`.
+  mesos::internal::slave::state::ExecutorState executorState;
+  executorState.id = executor.executor_id();
+  executorState.info = executor;
+  executorState.latest = containerId;
+
+  mesos::internal::slave::state::RunState runState;
+  runState.id = containerId;
+  runState.forkedPid = pid;
+  executorState.runs.put(containerId, runState);
+
+  mesos::internal::slave::state::FrameworkState frameworkState;
+  frameworkState.id = executor.framework_id();
+  frameworkState.executors.put(executor.executor_id(), executorState);
+
+  mesos::internal::slave::state::SlaveState slaveState;
+  slaveState.id = state.id;
+  slaveState.frameworks.put(executor.framework_id(), frameworkState);
+
+  // Recover by using the mock `SlaveState`.
+  AWAIT_READY(containerizer->recover(slaveState));
+
+  status = containerizer->status(containerId);
+  AWAIT_READY(status);
+  ASSERT_TRUE(status->has_executor_pid());
+  EXPECT_EQ(pid, status->executor_pid());
+
+  // Now launch the nested container.
+  ContainerID nestedContainerId;
+  nestedContainerId.mutable_parent()->CopyFrom(containerId);
+  nestedContainerId.set_value(UUID::random().toString());
+
+  const std::string specialChildString = "special-child-string";
+
+  // This one can be short lived.
+  // We just need it to print a child-specific string and then exit.
+  launch = containerizer->launch(
+      nestedContainerId,
+      createContainerConfig(createCommandInfo(
+          "echo '" + specialChildString + "'")),
+      std::map<std::string, std::string>(),
+      None());
+
+  AWAIT_ASSERT_TRUE(launch);
+
+  status = containerizer->status(nestedContainerId);
+  AWAIT_READY(status);
+  ASSERT_TRUE(status->has_executor_pid());
+
+  // Wait for the nested container to finish.
+  Future<Option<mesos::slave::ContainerTermination>> nestedWait =
+    containerizer->wait(nestedContainerId);
+
+  AWAIT_READY(nestedWait);
+  ASSERT_SOME(nestedWait.get());
+
+  // Destroy the parent container.
+  Future<Option<mesos::slave::ContainerTermination>> wait =
+    containerizer->wait(containerId);
+
+  containerizer->destroy(containerId);
+
+  AWAIT_READY(wait);
+  ASSERT_SOME(wait.get());
+  ASSERT_TRUE(wait.get()->has_status());
+  EXPECT_WTERMSIG_EQ(SIGKILL, wait.get()->status());
+
+  // Now run two filters based on AGENT_ID and FRAMEWORK_ID.
+  // Normally, we would expect to get the same result from each filter.
+  // But in fact, we should *not* find the child string inside the
+  // query based on FRAMEWORK_ID because the MesosContainerizer
+  // will not persist that information after the emulated restart.
+  Future<std::string> firstQuery = runCommand(
+      "journalctl",
+      {"journalctl",
+      "AGENT_ID=" + stringify(state.id)});
+
+  Future<std::string> secondQuery = runCommand(
+      "journalctl",
+      {"journalctl",
+       "FRAMEWORK_ID=" + stringify(executor.framework_id())});
+
+  AWAIT_READY(firstQuery);
+  EXPECT_TRUE(strings::contains(firstQuery.get(), specialParentString));
+  EXPECT_TRUE(strings::contains(firstQuery.get(), specialChildString));
+
+  AWAIT_READY(secondQuery);
+  EXPECT_TRUE(strings::contains(secondQuery.get(), specialParentString));
+  EXPECT_FALSE(strings::contains(secondQuery.get(), specialChildString));
 }
 
 
