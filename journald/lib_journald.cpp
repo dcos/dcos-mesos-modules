@@ -163,10 +163,16 @@ public:
 
     // NOTE: This field is required by the master/agent, but the protobuf
     // is optional for backwards compatibility.
-    CHECK(executorInfo.has_framework_id());
-    label.set_key("FRAMEWORK_ID");
-    label.set_value(executorInfo.framework_id().value());
-    labels.add_labels()->CopyFrom(label);
+    //
+    // NOTE: It is possible for the ExecutorInfo object to be blank if
+    // a nested container is launched after restarting the Mesos agent.
+    // This is because the agent does not need to keep the ExecutorInfo
+    // checkpointed after it has already launched the executor.
+    if (executorInfo.has_framework_id()) {
+      label.set_key("FRAMEWORK_ID");
+      label.set_value(executorInfo.framework_id().value());
+      labels.add_labels()->CopyFrom(label);
+    }
 
     label.set_key("EXECUTOR_ID");
     label.set_value(executorInfo.executor_id().value());
