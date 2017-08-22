@@ -330,20 +330,20 @@ TEST_F(JournaldLoggerTest, ROOT_CGROUPS_LaunchThenRecoverThenLaunchNested)
 
   // We want to print a special string to stdout and then sleep
   // so that there is enough time to launch a nested container.
-  ExecutorInfo executor = createExecutorInfo(
+  ExecutorInfo executorInfo = createExecutorInfo(
       "executor",
       "echo '" + specialParentString + "' && sleep 1000",
       "cpus:1");
 
-  executor.mutable_framework_id()->set_value(UUID::random().toString());
+  executorInfo.mutable_framework_id()->set_value(UUID::random().toString());
 
   // Make a valid ExecutorRunPath, much like the
   // `slave::paths::getExecutorRunPath` helper (that we don't have access to).
   const std::string executorRunPath = path::join(
       flags.work_dir,
       "slaves", stringify(state.id),
-      "frameworks", stringify(executor.framework_id()),
-      "executors", stringify(executor.executor_id()),
+      "frameworks", stringify(executorInfo.framework_id()),
+      "executors", stringify(executorInfo.executor_id()),
       "runs", stringify(containerId));
 
   ASSERT_SOME(os::mkdir(executorRunPath));
@@ -353,13 +353,13 @@ TEST_F(JournaldLoggerTest, ROOT_CGROUPS_LaunchThenRecoverThenLaunchNested)
   // (hence the `forked.pid` argument).
   Future<bool> launch = containerizer->launch(
       containerId,
-      createContainerConfig(None(), executor, executorRunPath),
+      createContainerConfig(None(), executorInfo, executorRunPath),
       std::map<std::string, std::string>(),
       path::join(flags.work_dir,
           "meta",
           "slaves", stringify(state.id),
-          "frameworks", stringify(executor.framework_id()),
-          "executors", stringify(executor.executor_id()),
+          "frameworks", stringify(executorInfo.framework_id()),
+          "executors", stringify(executorInfo.executor_id()),
           "runs", stringify(containerId),
           "pids", "forked.pid"));
 
@@ -386,8 +386,8 @@ TEST_F(JournaldLoggerTest, ROOT_CGROUPS_LaunchThenRecoverThenLaunchNested)
 
   // Create a mock `SlaveState`.
   mesos::internal::slave::state::ExecutorState executorState;
-  executorState.id = executor.executor_id();
-  executorState.info = executor;
+  executorState.id = executorInfo.executor_id();
+  executorState.info = executorInfo;
   executorState.latest = containerId;
 
   mesos::internal::slave::state::RunState runState;
@@ -396,12 +396,12 @@ TEST_F(JournaldLoggerTest, ROOT_CGROUPS_LaunchThenRecoverThenLaunchNested)
   executorState.runs.put(containerId, runState);
 
   mesos::internal::slave::state::FrameworkState frameworkState;
-  frameworkState.id = executor.framework_id();
-  frameworkState.executors.put(executor.executor_id(), executorState);
+  frameworkState.id = executorInfo.framework_id();
+  frameworkState.executors.put(executorInfo.executor_id(), executorState);
 
   mesos::internal::slave::state::SlaveState slaveState;
   slaveState.id = state.id;
-  slaveState.frameworks.put(executor.framework_id(), frameworkState);
+  slaveState.frameworks.put(executorInfo.framework_id(), frameworkState);
 
   // Recover by using the mock `SlaveState`.
   AWAIT_READY(containerizer->recover(slaveState));
@@ -464,7 +464,7 @@ TEST_F(JournaldLoggerTest, ROOT_CGROUPS_LaunchThenRecoverThenLaunchNested)
   Future<std::string> secondQuery = runCommand(
       "journalctl",
       {"journalctl",
-       "FRAMEWORK_ID=" + stringify(executor.framework_id())});
+       "FRAMEWORK_ID=" + stringify(executorInfo.framework_id())});
 
   AWAIT_READY(firstQuery);
   EXPECT_TRUE(strings::contains(firstQuery.get(), specialParentString));
