@@ -108,7 +108,7 @@ constexpr char MASTER_OVERLAY_MODULE_NAME[] =
   "com_mesosphere_mesos_OverlayMasterManager";
 
 constexpr uint32_t OVERLAY_PREFIX = 24;
-constexpr uint32_t OVERLAY_PREFIX6 = 96;
+constexpr uint32_t OVERLAY_PREFIX6 = 80;
 
 class OverlayTest : public MesosTest
 {
@@ -497,7 +497,7 @@ TEST_F(OverlayTest, checkMasterAgentComm)
   EXPECT_EQ(OVERLAY_PREFIX6, agentNetwork6->prefix());
 
   Try<net::IP::Network> allocatedSubnet6 = net::IP::Network::parse(
-      "fd02::/96", AF_INET6);
+      "fd02::/80", AF_INET6);
 
   ASSERT_SOME(allocatedSubnet6);
   EXPECT_EQ(allocatedSubnet6.get(), agentNetwork6.get());
@@ -781,7 +781,7 @@ TEST_F(OverlayTest, ROOT_checkMasterRecovery)
   EXPECT_EQ(OVERLAY_PREFIX6, agentNetwork6->prefix());
 
   Try<net::IP::Network> allocatedSubnet6 = net::IP::Network::parse(
-      "fd02::/96", AF_INET6);
+      "fd02::/80", AF_INET6);
 
   ASSERT_SOME(allocatedSubnet6);
   EXPECT_EQ(allocatedSubnet6.get(), agentNetwork6.get());
@@ -940,7 +940,7 @@ TEST_F(OverlayTest, ROOT_checkAgentRecovery)
   EXPECT_EQ(OVERLAY_PREFIX6, agentNetwork6->prefix());
 
   Try<net::IP::Network> allocatedSubnet6 = net::IP::Network::parse(
-      "fd02::/96", AF_INET6);
+      "fd02::/80", AF_INET6);
 
   ASSERT_SOME(allocatedSubnet6);
   EXPECT_EQ(allocatedSubnet6.get(), agentNetwork6.get());
@@ -1072,7 +1072,7 @@ TEST_F(OverlayTest, ROOT_checkAgentNetworkConfigChange)
   EXPECT_EQ(OVERLAY_PREFIX6, agentNetwork6->prefix());
 
   Try<net::IP::Network> allocatedSubnet6 = net::IP::Network::parse(
-      "fd02::/96", AF_INET6);
+      "fd02::/80", AF_INET6);
 
   ASSERT_SOME(allocatedSubnet6);
   EXPECT_EQ(allocatedSubnet6.get(), agentNetwork6.get());

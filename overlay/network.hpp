@@ -176,7 +176,7 @@ public:
   static net::IP toMask(uint8_t prefix, int family); 
 
   // Helper function to return the first address of a network 
-  IP begin() {
+  IP begin() const {
     switch (address_->family()) {
       case AF_INET: {
         uint32_t addr = ntohl(address_->in().get().s_addr);
@@ -198,7 +198,7 @@ public:
   }
 
   // Helper function to return the last address of a network
-  IP end() {
+  IP end() const {
     switch (address_->family()) {
       case AF_INET: {
         uint32_t addr = ntohl(address_->in().get().s_addr);

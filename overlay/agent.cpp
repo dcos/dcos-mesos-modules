@@ -662,12 +662,6 @@ Future<Nothing> ManagerProcess::configureMesosNetwork(const string& name)
 
   const AgentOverlayInfo& overlay = overlays[name];
 
-  if (!overlay.has_subnet()) {
-    LOG(WARNING) << "IPv4 address not present for mesos bridge."
-                 << " Skipping... "<< name;
-    return Nothing();
-  }
-
   if (!networkConfig.mesos_bridge()) {
     LOG(INFO) << "Not configuring Mesos network for '" << name
               << "' since operator has disallowed `mesos_bridge`.";
@@ -678,6 +672,12 @@ Future<Nothing> ManagerProcess::configureMesosNetwork(const string& name)
                    << " since operator has not configured agent to configure "
                    << "`mesos_bridge`.";
     }
+    return Nothing();
+  }
+
+  if (!overlay.has_subnet()) {
+    LOG(WARNING) << "IPv4 address not present for mesos bridge."
+                 << " Skipping... "<< name;
     return Nothing();
   }
 
