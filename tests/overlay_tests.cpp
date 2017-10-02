@@ -573,19 +573,24 @@ TEST_F(OverlayTest, ROOT_checkMesosNetwork)
   ASSERT_SOME(network);
   EXPECT_EQ(network.get(), OVERLAY_NAME);
 
-  Result<JSON::Boolean> ipMasq = json->find<JSON::Boolean>("ipMasq");
-  ASSERT_SOME(ipMasq);
+  // Since we introduced port-mapping support for DC/OS overlay with
+  // the `MesoContainerizer`, the bridge configuration is now part of
+  // the `delegate` field in the CNI configuration. Therefore need to
+  // we need find the `ipMasq`, `mtu` and `ipam` fields under
+  // `delegate`.
+  Result<JSON::Boolean> ipMasq = json->find<JSON::Boolean>("delegate.ipMasq");
+  ASSERT_SOME(ipMasq) << "CNI config: " << cniConfig.get();
   EXPECT_EQ(ipMasq.get(), false);
 
-  Result<JSON::Number> mtu = json->find<JSON::Number>("mtu");
-  ASSERT_SOME(mtu);
+  Result<JSON::Number> mtu = json->find<JSON::Number>("delegate.mtu");
+  ASSERT_SOME(mtu) << "CNI config: " << cniConfig.get();
   EXPECT_EQ(mtu.get(), 1420);
 
-  Result<JSON::Object> ipam = json->find<JSON::Object>("ipam");
-  ASSERT_SOME(ipam);
+  Result<JSON::Object> ipam = json->find<JSON::Object>("delegate.ipam");
+  ASSERT_SOME(ipam) << "CNI config: " << cniConfig.get();
 
   Result<JSON::String> subnet = ipam->find<JSON::String>("subnet");
-  ASSERT_SOME(subnet);
+  ASSERT_SOME(subnet) << "CNI config: " << cniConfig.get();
   EXPECT_EQ(subnet.get(), "192.168.0.0/25");
 }
 
