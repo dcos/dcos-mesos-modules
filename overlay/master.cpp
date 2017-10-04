@@ -970,7 +970,7 @@ public:
 protected:
   virtual void initialize()
   {
-    LOG(INFO) << "Adding route for '" << self().id << "/state'";
+    LOG(INFO) << "Adding route for '" << self().id() << "/state'";
 
     route("/state",
           OVERLAY_HELP,
@@ -1014,17 +1014,17 @@ protected:
     }
 
     // Recovery complete.
-    if (agents.contains(pid.address.ip)) {
+    if (agents.contains(pid.address().ip)) {
       LOG(INFO) << "Agent " << pid << " re-registering.";
 
       // Check if any new overlay need to be installed on the
       // agent.
-      if (agents.at(pid.address.ip).addOverlays(
+      if (agents.at(pid.address().ip).addOverlays(
             overlays,
             registerMessage.network_config())) {
         // We installed a new overlay on this agent.
         update(Owned<Operation>(
-               new ModifyAgent(agents.at(pid.address.ip).getAgentInfo())))
+               new ModifyAgent(agents.at(pid.address().ip).getAgentInfo())))
           .onAny(defer(self(),
                  &ManagerProcess::_registerAgent,
                  pid,
@@ -1034,7 +1034,7 @@ protected:
       }
 
       // Ensure that the agent is added to the replicated log.
-      const string agentIP = stringify(pid.address.ip);
+      const string agentIP = stringify(pid.address().ip);
       for (int i = 0; i < networkState.agents_size(); i++) {
         if (agentIP == networkState.agents(i).ip()) {
           // Given that `networkState` already has this Agent, the
@@ -1085,16 +1085,16 @@ protected:
       BackendInfo backend;
       backend.mutable_vxlan()->CopyFrom(vxlan);
 
-      agents.emplace(pid.address.ip, Agent(pid.address.ip, backend));
+      agents.emplace(pid.address().ip, Agent(pid.address().ip, backend));
 
-      Agent* agent = &(agents.at(pid.address.ip));
+      Agent* agent = &(agents.at(pid.address().ip));
 
       agent->addOverlays(overlays, registerMessage.network_config());
 
       // Update the `networkState in the replicated log before
       // sending the overlay configuration to the Agent.
       update(Owned<Operation>(
-            new AddAgent(agents.at(pid.address.ip).getAgentInfo())))
+            new AddAgent(agents.at(pid.address().ip).getAgentInfo())))
         .onAny(defer(self(),
               &ManagerProcess::_registerAgent,
               pid,
@@ -1116,9 +1116,9 @@ protected:
       return;
     }
 
-    CHECK(agents.contains(pid.address.ip));
+    CHECK(agents.contains(pid.address().ip));
 
-    list<AgentOverlayInfo> _overlays = agents.at(pid.address.ip).getOverlays();
+    list<AgentOverlayInfo> _overlays = agents.at(pid.address().ip).getOverlays();
 
     // Create the network update message and send it to the Agent.
     UpdateAgentOverlaysMessage update;
@@ -1137,19 +1137,19 @@ protected:
 
   void agentRegistered(const UPID& from, const AgentRegisteredMessage& message)
   {
-    if(agents.contains(from.address.ip)) {
+    if(agents.contains(from.address().ip)) {
       LOG(INFO) << "Got ACK for addition of networks from " << from;
       for(int i = 0; i < message.overlays_size(); i++) {
-        agents.at(from.address.ip).updateOverlayState(message.overlays(i));
+        agents.at(from.address().ip).updateOverlayState(message.overlays(i));
       }
 
       // We don't need to store the "state" of an overlay network on
       // an agent in the replicated log so go ahead and update the
       // `networkState` without updating the overlay replicated log.
       for (int i = 0; i < networkState.agents_size(); i++) {
-        if (stringify(from.address.ip) == networkState.agents(i).ip()) {
+        if (stringify(from.address().ip) == networkState.agents(i).ip()) {
           networkState.mutable_agents(i)->CopyFrom(
-              agents.at(from.address.ip).getAgentInfo());
+              agents.at(from.address().ip).getAgentInfo());
 
           LOG(INFO) << "Sending register ACK to: " << from;
           send(from, AgentRegisteredAcknowledgement());
@@ -1190,7 +1190,7 @@ protected:
     CHECK_NOTNULL(replicatedLog.get());
 
     if (!variable.isReady()) {
-      LOG(WARNING) << "This " << self().id <<"might have been demoted."
+      LOG(WARNING) << "This " << self().id() <<"might have been demoted."
                    << "Aborting recovery of replicated log"
                    <<(variable.isDiscarded() ? "discarded"
                        : variable.failure());

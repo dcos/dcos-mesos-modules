@@ -387,7 +387,7 @@ TEST_F(OverlayTest, checkMasterAgentComm)
   // can hit the `state` endpoint of the Master.
   UPID overlayMaster = UPID(
       MASTER_MANAGER_PROCESS_ID,
-      master.get()->pid.address);
+      master.get()->pid.address());
 
   Future<Response> masterResponse = process::http::get(
       overlayMaster,
@@ -415,7 +415,7 @@ TEST_F(OverlayTest, checkMasterAgentComm)
   ASSERT_EQ(0, state->agents_size());
 
   AgentConfig agentOverlayConfig;
-  agentOverlayConfig.set_master(stringify(overlayMaster.address));
+  agentOverlayConfig.set_master(stringify(overlayMaster.address()));
 
   // Setup a future to notify the test that Agent overlay module has
   // registered.
@@ -443,7 +443,7 @@ TEST_F(OverlayTest, checkMasterAgentComm)
   // check that module is up and responding.
   UPID overlayAgent = UPID(
       AGENT_MANAGER_PROCESS_ID,
-      master.get()->pid.address);
+      master.get()->pid.address());
 
   Future<Response> agentResponse = process::http::get(
       overlayAgent,
@@ -518,10 +518,10 @@ TEST_F(OverlayTest, ROOT_checkMesosNetwork)
   // can hit the `state` endpoint of the Master.
   UPID overlayMaster = UPID(
       MASTER_MANAGER_PROCESS_ID,
-      master.get()->pid.address);
+      master.get()->pid.address());
 
   AgentConfig agentOverlayConfig;
-  agentOverlayConfig.set_master(stringify(overlayMaster.address));
+  agentOverlayConfig.set_master(stringify(overlayMaster.address()));
   // Enable Mesos network.
   agentOverlayConfig.mutable_network_config()->set_mesos_bridge(true);
 
@@ -611,10 +611,10 @@ TEST_F(OverlayTest, ROOT_checkDockerNetwork)
   // can hit the `state` endpoint of the Master.
   UPID overlayMaster = UPID(
       MASTER_MANAGER_PROCESS_ID,
-      master.get()->pid.address);
+      master.get()->pid.address());
 
   AgentConfig agentOverlayConfig;
-  agentOverlayConfig.set_master(stringify(overlayMaster.address));
+  agentOverlayConfig.set_master(stringify(overlayMaster.address()));
   // Enable Docker network.
   agentOverlayConfig.mutable_network_config()->set_docker_bridge(true);
 
@@ -692,10 +692,10 @@ TEST_F(OverlayTest, ROOT_checkMasterRecovery)
   // can hit the `state` endpoint of the Master.
   UPID overlayMaster = UPID(
       MASTER_MANAGER_PROCESS_ID,
-      master.get()->pid.address);
+      master.get()->pid.address());
 
   AgentConfig agentOverlayConfig;
-  agentOverlayConfig.set_master(stringify(overlayMaster.address));
+  agentOverlayConfig.set_master(stringify(overlayMaster.address()));
   // Enable Mesos network.
   agentOverlayConfig.mutable_network_config()->set_mesos_bridge(true);
   // Enable Docker network.
@@ -718,8 +718,9 @@ TEST_F(OverlayTest, ROOT_checkMasterRecovery)
 
   // Agent manager has been created. Hit the `overlay` endpoint to
   // check that module is up and responding.
-  UPID overlayAgent = UPID(master.get()->pid);
-  overlayAgent.id = AGENT_MANAGER_PROCESS_ID;
+  UPID overlayAgent = UPID(
+      AGENT_MANAGER_PROCESS_ID,
+      master.get()->pid.address());
 
   Future<Response> agentResponse = process::http::get(
       overlayAgent,
@@ -834,11 +835,12 @@ TEST_F(OverlayTest, ROOT_checkAgentRecovery)
 
   // Master `Anonymous` module created successfully. Lets see if we
   // can hit the `state` endpoint of the Master.
-  UPID overlayMaster = UPID(master.get()->pid);
-  overlayMaster.id = MASTER_MANAGER_PROCESS_ID;
+  UPID overlayMaster = UPID(
+      MASTER_MANAGER_PROCESS_ID,
+      master.get()->pid.address());
 
   AgentConfig agentOverlayConfig;
-  agentOverlayConfig.set_master(stringify(overlayMaster.address));
+  agentOverlayConfig.set_master(stringify(overlayMaster.address()));
   // Enable Mesos network.
   agentOverlayConfig.mutable_network_config()->set_mesos_bridge(true);
   // Enable Docker network.
@@ -861,8 +863,9 @@ TEST_F(OverlayTest, ROOT_checkAgentRecovery)
 
   // Agent manager has been created. Hit the `overlay` endpoint to
   // check that module is up and responding.
-  UPID overlayAgent = UPID(master.get()->pid);
-  overlayAgent.id = AGENT_MANAGER_PROCESS_ID;
+  UPID overlayAgent = UPID(
+      AGENT_MANAGER_PROCESS_ID,
+      master.get()->pid.address());
 
   Future<Response> agentResponse = process::http::get(
       overlayAgent,
@@ -956,11 +959,12 @@ TEST_F(OverlayTest, ROOT_checkAgentNetworkConfigChange)
 
   // Master `Anonymous` module created successfully. Lets see if we
   // can hit the `state` endpoint of the Master.
-  UPID overlayMaster = UPID(master.get()->pid);
-  overlayMaster.id = MASTER_MANAGER_PROCESS_ID;
+  UPID overlayMaster = UPID(
+      MASTER_MANAGER_PROCESS_ID,
+      master.get()->pid.address());
 
   AgentConfig agentOverlayConfig;
-  agentOverlayConfig.set_master(stringify(overlayMaster.address));
+  agentOverlayConfig.set_master(stringify(overlayMaster.address()));
   // Enable Mesos network.
   agentOverlayConfig.mutable_network_config()->set_mesos_bridge(true);
   // Enable Docker network.
@@ -980,8 +984,9 @@ TEST_F(OverlayTest, ROOT_checkAgentNetworkConfigChange)
 
   // Agent manager has been created. Hit the `overlay` endpoint to
   // check that module is up and responding.
-  UPID overlayAgent = UPID(master.get()->pid);
-  overlayAgent.id = AGENT_MANAGER_PROCESS_ID;
+  UPID overlayAgent = UPID(
+      AGENT_MANAGER_PROCESS_ID,
+      master.get()->pid.address());
 
   Future<Response> agentResponse = process::http::get(
       overlayAgent,
@@ -1154,11 +1159,12 @@ TEST_F(OverlayTest, ROOT_checkAddVirtualNetworks)
 
   // Master `Anonymous` module created successfully. Lets see if we
   // can hit the `state` endpoint of the Master.
-  UPID overlayMaster = UPID(master.get()->pid);
-  overlayMaster.id = MASTER_MANAGER_PROCESS_ID;
+  UPID overlayMaster = UPID(
+      MASTER_MANAGER_PROCESS_ID,
+      master.get()->pid.address());
 
   AgentConfig agentOverlayConfig;
-  agentOverlayConfig.set_master(stringify(overlayMaster.address));
+  agentOverlayConfig.set_master(stringify(overlayMaster.address()));
   // Enable Mesos network.
   agentOverlayConfig.mutable_network_config()->set_mesos_bridge(true);
   // Enable Docker network.
@@ -1235,8 +1241,9 @@ TEST_F(OverlayTest, ROOT_checkAddVirtualNetworks)
 
   // Hit the `overlay` endpoint of the agent to check that module is
   // up and responding.
-  UPID overlayAgent = UPID(master.get()->pid);
-  overlayAgent.id = AGENT_MANAGER_PROCESS_ID;
+  UPID overlayAgent = UPID(
+      AGENT_MANAGER_PROCESS_ID,
+      master.get()->pid.address());
 
   Future<Response> agentResponse = process::http::get(
       overlayAgent,
