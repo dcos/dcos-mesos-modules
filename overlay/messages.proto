@@ -1,6 +1,13 @@
+syntax = "proto2";
+
 package mesos.modules.overlay.internal;
 
 import "overlay/overlay.proto";
+
+// NOTE: This option is necessary if any protobufs defined in this file
+// are used in libprocess message routing (i.e. `install<T>(...)`).
+// See: https://issues.apache.org/jira/browse/MESOS-6971
+option cc_enable_arenas = true;
 
 
 // Message used by the Agent to register with the overlay-master.
