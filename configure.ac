@@ -298,7 +298,7 @@ fi
 
 # Ensure we can build the C++11 features we expect, and set the std
 # CXXFLAG as appropriate.
-AX_CXX_COMPILE_STDCXX_11([noext], [mandatory])
+AX_CXX_COMPILE_STDCXX([11], [noext], [mandatory])
 
 old_CPPFLAGS=${CPPFLAGS}
 CPPFLAGS="${CPPFLAGS} ${MESOS_CPPFLAGS}"

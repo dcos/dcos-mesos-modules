@@ -47,6 +47,7 @@ using std::vector;
 
 using mesos::internal::master::Master;
 
+using mesos::internal::slave::Containerizer;
 using mesos::internal::slave::DockerContainerizer;
 using mesos::internal::slave::Fetcher;
 using mesos::internal::slave::MesosContainerizer;
@@ -72,8 +73,8 @@ public:
     add(&Flags::enabled,
         "enabled",
         "Top level control of systemd support. When enabled, features such as\n"
-        "processes life-time extension are enabled unless there is an explicit\n"
-        "flag to disable these (see other flags).",
+        "processes life-time extension are enabled unless there is an \n"
+        "explicit flag to disable these (see other flags).",
         true);
 
     add(&Flags::runtime_directory,
@@ -351,7 +352,7 @@ TEST_F(JournaldLoggerTest, ROOT_CGROUPS_LaunchThenRecoverThenLaunchNested)
   // Launch the top-level/parent container.
   // We need to checkpoint it so that it will survive recovery
   // (hence the `forked.pid` argument).
-  Future<bool> launch = containerizer->launch(
+  Future<Containerizer::LaunchResult> launch = containerizer->launch(
       containerId,
       createContainerConfig(None(), executorInfo, executorRunPath),
       std::map<std::string, std::string>(),
@@ -363,7 +364,7 @@ TEST_F(JournaldLoggerTest, ROOT_CGROUPS_LaunchThenRecoverThenLaunchNested)
           "runs", stringify(containerId),
           "pids", "forked.pid"));
 
-  AWAIT_ASSERT_TRUE(launch);
+  AWAIT_ASSERT_EQ(Containerizer::LaunchResult::SUCCESS, launch);
 
   Future<ContainerStatus> status = containerizer->status(containerId);
   AWAIT_READY(status);
@@ -427,7 +428,8 @@ TEST_F(JournaldLoggerTest, ROOT_CGROUPS_LaunchThenRecoverThenLaunchNested)
       std::map<std::string, std::string>(),
       None());
 
-  AWAIT_ASSERT_TRUE(launch);
+  AWAIT_ASSERT_EQ(Containerizer::LaunchResult::SUCCESS, launch);
+
 
   status = containerizer->status(nestedContainerId);
   AWAIT_READY(status);
