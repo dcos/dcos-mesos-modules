@@ -134,6 +134,19 @@ Try<Owned<ManagerProcess>> ManagerProcess::create(
         "the JSON config, or 'MESOS_MASTER' environment variable");
   }
 
+  if (strings::startsWith(master.get(), "file://")) {
+    const string path = master.get().substr(7);
+
+    Try<std::string> read = os::read(path);
+
+    if (read.isError()) {
+      return Error("Error reading master configuration file '" +
+                   path + "': " + read.error());
+    }
+
+    master = read.get();
+  }
+
   Try<MasterDetector*> detector = MasterDetector::create(master.get());
   if (detector.isError()) {
     return Error("Unable to create master detector: " + detector.error());
@@ -696,12 +709,12 @@ Future<Nothing> ManagerProcess::configureMesosNetwork(const string& name)
       JSON::ObjectWriter* writer) {
     writer->field("name", name);
     writer->field("type", "mesos-cni-port-mapper");
-    writer->field("excludeDevices", 
-      [overlay](JSON::ArrayWriter* writer) { 
+    writer->field("excludeDevices",
+      [overlay](JSON::ArrayWriter* writer) {
         writer->element(overlay.mesos_bridge().name());
     });
     writer->field("chain", strings::upper(overlay.mesos_bridge().name())),
-    writer->field("delegate", 
+    writer->field("delegate",
       [subnet, overlay, _networkConfig](JSON::ObjectWriter* writer) {
         writer->field("type", "bridge");
         writer->field("bridge", overlay.mesos_bridge().name());
@@ -832,7 +845,7 @@ Future<Nothing> ManagerProcess::_configureDockerNetwork(
     if (_subnet6.isError()) {
       return Failure("Failed to parse bridge ipv6: " + _subnet6.error());
     }
-    subnet6 = _subnet6.get();  
+    subnet6 = _subnet6.get();
   }
 
   Try<string> dockerCommand = strings::format(

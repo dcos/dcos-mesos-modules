@@ -126,12 +126,12 @@ struct Vtep
   Vtep(const Network& _network,
        const Option<Network>& _network6,
        const MAC _oui)
-    : network(_network), 
+    : network(_network),
       network6(_network6),
       oui(_oui)
   {
     freeIP += (
-      Bound<IP>::open(network.begin()), 
+      Bound<IP>::open(network.begin()),
       Bound<IP>::open(network.end()));
 
     // IPv6
@@ -164,7 +164,7 @@ struct Vtep
     freeIP6 -= ip6;
 
     return Network(ip6, network6.get().prefix()) ;
-  } 
+  }
 
   Try<Nothing> reserve(const Network& ip)
   {
@@ -199,7 +199,7 @@ struct Vtep
 
     return Nothing();
   }
-    
+
   // We generate the VTEP MAC from the IP by taking the least 24 bits
   // of the IP and using the 24 bits as the NIC of the MAC.
   //
@@ -244,7 +244,7 @@ struct Vtep
       freeIP6 = IntervalSet<IP>();
 
       freeIP6 +=
-        (Bound<IP>::open(network6.get().begin()), 
+        (Bound<IP>::open(network6.get().begin()),
          Bound<IP>::open(network6.get().end()));
 	}
   }
@@ -304,7 +304,7 @@ struct Overlay
         endAddr6.s6_addr[i] = addr6.s6_addr[i] | ~startMask6.s6_addr[i];
         endAddr6.s6_addr[i] &= endMask6_.s6_addr[i];
       }
-    
+
       Network startSubnet6 = Network(IP(startAddr6), prefix6.get());
       Network endSubnet6 = Network(IP(endAddr6), prefix6.get());
 
@@ -361,8 +361,8 @@ struct Overlay
   {
     if (subnet.prefix() != prefix.get()) {
       return Error(
-          "Cannot free this network because prefix " + 
-          stringify(subnet.prefix()) + " does not match Agent prefix " + 
+          "Cannot free this network because prefix " +
+          stringify(subnet.prefix()) + " does not match Agent prefix " +
           stringify(prefix.get()) + " of the overlay");
     }
 
@@ -381,8 +381,8 @@ struct Overlay
   {
     if (subnet6.prefix() != prefix6.get()) {
       return Error(
-          "Cannot free this IPv6 network because prefix " + 
-          stringify(subnet6.prefix()) + " does not match Agent prefix " + 
+          "Cannot free this IPv6 network because prefix " +
+          stringify(subnet6.prefix()) + " does not match Agent prefix " +
           stringify(prefix6.get()) + " of the overlay");
     }
 
@@ -402,7 +402,7 @@ struct Overlay
     uint32_t _mask = ntohl(subnet.netmask().in().get().s_addr);
     uint32_t _address = ntohl(subnet.address().in().get().s_addr);
     Network _subnet = Network(IP(_address & _mask), subnet.prefix());
-   
+
 
     if (!freeNetworks.contains(_subnet)) {
       return Error(
@@ -414,7 +414,7 @@ struct Overlay
 
     return Nothing();
   }
- 
+
   Try<Nothing> reserve6(const Network& subnet6)
   {
     in6_addr _maskedAddr6;
@@ -442,7 +442,7 @@ struct Overlay
     // Re-initialize `freeNetworks`.
     if (network.isSome()) {
       freeNetworks = IntervalSet<Network>();
- 
+
       uint32_t addr = ntohl(network.get().address().in().get().s_addr);
       uint32_t startMask = ntohl(network.get().netmask().in().get().s_addr);
       uint32_t endMask = 0xffffffff << (32 - prefix.get());
@@ -476,14 +476,14 @@ struct Overlay
       Network startSubnet6 = Network(IP(startAddr6), prefix6.get());
       Network endSubnet6 = Network(IP(endAddr6), prefix6.get());
 
-      LOG(INFO) << name 
-                << " Reset IPv6: " << startSubnet6 << " - " << endSubnet6; 
+      LOG(INFO) << name
+                << " Reset IPv6: " << startSubnet6 << " - " << endSubnet6;
 
       freeNetworks6 +=
         (Bound<Network>::open(startSubnet6),
          Bound<Network>::open(endSubnet6));
     }
-  } 
+  }
 
   // Canonical name of the network.
   std::string name;
@@ -980,7 +980,7 @@ public:
       [&addressSpace](const Network &network) -> Try<Nothing> {
 
         Interval<IP> overlaySpace =
-          (Bound<IP>::closed(network.begin()), 
+          (Bound<IP>::closed(network.begin()),
            Bound<IP>::closed(network.end()));
 
         if (addressSpace.intersects(overlaySpace)) {
@@ -1040,7 +1040,7 @@ public:
               "Incorrect address space for the overlay network '" +
               overlay.name() + "': " + valid.error());
         }
-        
+
         address = _address.get();
         prefix = overlay.prefix();
       }
@@ -1049,7 +1049,7 @@ public:
       Option<uint8_t> prefix6 = None();
       Option<Network> address6 = None();
       if (overlay.has_subnet6()) {
-        Try<Network> _address6 = 
+        Try<Network> _address6 =
           Network::parse(overlay.subnet6(), AF_INET6);
 
         if (_address6.isError()) {
@@ -1059,7 +1059,7 @@ public:
         }
 
         Try<Nothing> valid6 = updateAddressSpace(_address6.get());
-      
+
         if (valid6.isError()) {
           return Error(
               "Incorrect IPv6 address space for the overlay network '" +
@@ -1138,6 +1138,19 @@ public:
           << "Using replicated log with zookeeper URL "
           << zkURL.get() << " with a quorum of " << quorum.get()
           << " for leader election.";
+
+        if (strings::startsWith(zkURL.get(), "file://")) {
+          const string path = zkURL.get().substr(7);
+
+          Try<std::string> read = os::read(path);
+
+          if (read.isError()) {
+            return Error("Error reading zookeeper configuration file '" +
+                         path + "': " + read.error());
+          }
+
+          zkURL = read.get();
+        }
 
         Try<zookeeper::URL> url = zookeeper::URL::parse(zkURL.get());
         if (url.isError()) {
@@ -1320,12 +1333,12 @@ protected:
       if (vtep.network6.isSome()) {
         Try<Network> _vtepIP6 = vtep.allocateIP6();
         if (_vtepIP6.isError()) {
-          LOG(ERROR) 
+          LOG(ERROR)
            << "Unable to get VTEP IPv6 for Agent: " << _vtepIP6.error()
            << "Cannot fulfill registration for Agent: " << pid;
           return;
         }
-        
+
         vtepIP6 = _vtepIP6.get();
         LOG(INFO) << "Allocated VTEP IPv6 : " << vtepIP6.get();
       }
@@ -1382,7 +1395,7 @@ protected:
   // Will be called once the operation is successfully applied to the
   // `networkState`.
   void _registerAgent(const UPID& pid,
-                      const IP& agentIP, 
+                      const IP& agentIP,
                       const Future<bool>& result)
   {
     if (!result.isReady()) {
