@@ -85,8 +85,6 @@ constexpr char REPLICATED_LOG_STORE[] = "overlay_replicated_log";
 constexpr char REPLICATED_LOG_STORE_KEY[] = "network-state";
 constexpr char REPLICATED_LOG_STORE_REPLICAS[] = "overlay_log_replicas";
 
-constexpr Duration PENDING_MESSAGE_PERIOD = Seconds(10);
-
 const string OVERLAY_HELP = HELP(
     TLDR("Allocate overlay network resources for Master."),
     USAGE("/overlay-master/overlays"),
