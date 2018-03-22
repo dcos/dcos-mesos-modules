@@ -214,6 +214,11 @@ if test -n "`echo $with_systemd`"; then
   MESOS_CPPFLAGS="${MESOS_CPPFLAGS} -I${with_systemd}"
 fi
 
+AC_PATH_TOOL([PKG_CONFIG], [pkg-config], [], [$PATH])
+if test -z "`echo $PKG_CONFIG`"; then
+  AC_MSG_ERROR([pkg-config not found in PATH])
+fi
+
 if test -d "$mesos_build_dir"; then
   # Add 3rdparty libraries to paths
   MESOS_CPPFLAGS="${MESOS_CPPFLAGS} -isystem ${mesos_build_dir}/3rdparty/include"
