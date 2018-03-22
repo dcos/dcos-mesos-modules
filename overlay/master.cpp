@@ -149,7 +149,7 @@ struct Vtep
     IP ip = freeIP.begin()->lower();
     freeIP -= ip;
 
-    return Network(ip, network.prefix()) ;
+    return Network(ip, network.prefix());
   }
 
   Try<Network> allocateIP6()
@@ -161,7 +161,7 @@ struct Vtep
     IP ip6 = freeIP6.begin()->lower();
     freeIP6 -= ip6;
 
-    return Network(ip6, network6.get().prefix()) ;
+    return Network(ip6, network6.get().prefix());
   }
 
   Try<Nothing> reserve(const Network& ip)
@@ -244,7 +244,7 @@ struct Vtep
       freeIP6 +=
         (Bound<IP>::open(network6.get().begin()),
          Bound<IP>::open(network6.get().end()));
-	}
+    }
   }
 
   // Network allocated to the VTEP.
@@ -590,11 +590,13 @@ public:
 
       _overlay.mutable_info()->set_name(name);
       if (overlay->network.isSome()) {
-        _overlay.mutable_info()->set_subnet(stringify(overlay->network.get()));
+        const std::string& subnet = stringify(overlay->network.get());
+        _overlay.mutable_info()->set_subnet(subnet);
         _overlay.mutable_info()->set_prefix(overlay->prefix.get());
       }
       if (overlay->network6.isSome()) {
-        _overlay.mutable_info()->set_subnet6(stringify(overlay->network6.get()));
+        const std::string& subnet6 = stringify(overlay->network6.get());
+        _overlay.mutable_info()->set_subnet6(subnet6);
         _overlay.mutable_info()->set_prefix6(overlay->prefix6.get());
       }
 
@@ -976,7 +978,6 @@ public:
     // already configured address space.
     auto updateAddressSpace =
       [&addressSpace](const Network &network) -> Try<Nothing> {
-
         Interval<IP> overlaySpace =
           (Bound<IP>::closed(network.begin()),
            Bound<IP>::closed(network.end()));
@@ -1551,7 +1552,8 @@ protected:
           CHECK(overlays.contains(overlay.info().name()));
 
           LOG(INFO) << "reserving IPv4 " << stringify(network.get());
-          Try<Nothing> result = overlays.at(overlay.info().name())->reserve(network.get());
+          Try<Nothing> result =
+            overlays.at(overlay.info().name())->reserve(network.get());
           if (result.isError()) {
             LOG(ERROR) << "Unable to reserve the subnet " << network.get()
                        << ": " << result.error();
@@ -1574,7 +1576,8 @@ protected:
           }
 
           LOG(INFO) << "reserving IPv6 " << stringify(network6.get());
-          Try<Nothing> result = overlays.at(overlay.info().name())->reserve6(network6.get());
+          Try<Nothing> result =
+            overlays.at(overlay.info().name())->reserve6(network6.get());
           if (result.isError()) {
             LOG(ERROR) << "Unable to reserve the IPv6 subnet " << network6.get()
                        << ": " << result.error();

@@ -181,7 +181,6 @@ protected:
     overlay.set_subnet6(OVERLAY_SUBNET6);
     overlay.set_prefix(OVERLAY_PREFIX);
     overlay.set_prefix6(OVERLAY_PREFIX6);
-    
 
     masterOverlayConfig.mutable_network()->add_overlays()->CopyFrom(overlay);
 
@@ -212,7 +211,6 @@ protected:
     Future<string> cleanupResult = runScriptCommand(cleanup.get());
 
     cleanupResult.await();
-
   }
 
   virtual void TearDown()
