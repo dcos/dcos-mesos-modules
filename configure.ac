@@ -166,8 +166,13 @@ if test -n "`echo $with_protobuf`"; then
   MESOS_CPPFLAGS="${MESOS_CPPFLAGS} -I${with_protobuf}/include"
   MESOS_LDFLAGS="${MESOS_LDFLAGS} -L${with_protobuf}/lib -lprotobuf"
 else
-  # Check for the protobuf compiler in default PATH.
-  AC_PATH_TOOL([PROTOCOMPILER], [protoc], [], [$PATH])
+  if test -d "$mesos_build_dir"; then
+    # Check for the protobuf compiler in 3rdparty PATH.
+    AC_PATH_TOOL([PROTOCOMPILER], [protoc], [], [${mesos_build_dir}/3rdparty/bin])
+  else
+    # Check for the protobuf compiler in default PATH.
+    AC_PATH_TOOL([PROTOCOMPILER], [protoc], [], [$PATH])
+  fi
 fi
 
 if test -z "`echo $PROTOCOMPILER`"; then
@@ -207,6 +212,12 @@ fi
 
 if test -n "`echo $with_systemd`"; then
   MESOS_CPPFLAGS="${MESOS_CPPFLAGS} -I${with_systemd}"
+fi
+
+if test -d "$mesos_build_dir"; then
+  # Add 3rdparty libraries to paths
+  MESOS_CPPFLAGS="${MESOS_CPPFLAGS} -isystem ${mesos_build_dir}/3rdparty/include"
+  MESOS_LDFLAGS="${MESOS_LDFLAGS} -L${mesos_build_dir}/3rdparty/lib"
 fi
 
 # Enable flag to check whether root and build dir were provided.
