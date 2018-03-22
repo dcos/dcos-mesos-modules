@@ -27,12 +27,12 @@ namespace overlay {
 class IP : public net::IP
 {
 public:
-  //default constructor
+  // default constructor
   IP()
     : net::IP(0) {}
 
   // paramatized constructor
-  IP(const uint32_t _address) 
+  IP(const uint32_t _address)
     : net::IP(_address) {}
 
   IP(const struct in_addr& _storage)
@@ -64,7 +64,7 @@ public:
   bool operator>(const IP& that) const
   {
     return net::IP::operator>(that);
-  } 
+  }
 
   IP& operator++() {
     switch (family_) {
@@ -81,10 +81,10 @@ public:
             index_ = i;
             break;
           }
-        } 
+        }
         storage_.in6_  = addr6;
         break;
-      } 
+      }
       default: {
        UNREACHABLE();
       }
@@ -113,7 +113,7 @@ public:
       }
     }
     return *this;
-  } 
+  }
 
 private:
   uint8_t index_;
@@ -152,16 +152,16 @@ inline std::ostream& operator<<(std::ostream& stream, const IP& ip)
   const net::IP& _ip = ip;
   return stream << _ip;
 }
-  
+
 
 class Network : public net::IP::Network
 {
 public:
   // default constructor
-  Network() 
+  Network()
     :net::IP::Network(net::IP(0), net::IP(0)),
      prefix_(0)
-  {}  
+  {}
 
   // paramatized constructor
   Network(const net::IP& address, uint8_t prefix)
@@ -171,21 +171,21 @@ public:
   Network(const Network& network)
     :net::IP::Network(network),
      prefix_(network.prefix()) {}
-  
+
   // Creates an IP network from the given IP address and netmask.
   // Returns error if the netmask is not valid (e.g., not contiguous).
   static Try<Network> parse(const std::string& value, int family = AF_UNSPEC);
 
   // Helper function to convert prefix to netmask
-  static net::IP toMask(uint8_t prefix, int family); 
+  static net::IP toMask(uint8_t prefix, int family);
 
-  // Helper function to return the first address of a network 
+  // Helper function to return the first address of a network
   IP begin() const {
     switch (address_->family()) {
       case AF_INET: {
         uint32_t addr = ntohl(address_->in().get().s_addr);
         uint32_t mask = ntohl(netmask_->in().get().s_addr);
-        return IP(addr & mask);    
+        return IP(addr & mask);
       }
       case AF_INET6: {
         in6_addr saddr6;
@@ -272,7 +272,7 @@ public:
             addr6.s6_addr[startInx] = (lowerbits + 1) << bitshift;
             index_ = startInx;
             incremented = true;
-          }          
+          }
         }
 
         if (!incremented) {
@@ -281,18 +281,18 @@ public:
               addr6.s6_addr[i]++;
               index_ = i;
               break;
-            }   
+            }
           }
         }
 
-        address_.reset(new net::IP(addr6));  
+        address_.reset(new net::IP(addr6));
         break;
       }
       default: {
         UNREACHABLE();
       }
-   }
-   return *this;
+    }
+    return *this;
   }
 
   Network& operator--() {
@@ -352,7 +352,7 @@ inline net::IP Network::toMask(uint8_t prefix, int family)
   switch (family) {
     case AF_INET: {
       uint32_t mask = 0xffffffff << (32 - prefix);
-      return net::IP(mask); 
+      return net::IP(mask);
     }
     case AF_INET6: {
       in6_addr mask;
@@ -368,26 +368,26 @@ inline net::IP Network::toMask(uint8_t prefix, int family)
         uint8_t _mask = 0xff << (8 - prefix);
         mask.s6_addr[i] = _mask;
       }
-      return net::IP(mask); 
+      return net::IP(mask);
     }
-    default: 
+    default:
       UNREACHABLE();
   }
 }
 
 
-//Returns the string representation of the given IP network using the
-//canonical form with prefix. For example: "10.0.0.1/8".
+// Returns the string representation of the given IP network using the
+// canonical form with prefix. For example: "10.0.0.1/8".
 inline std::ostream& operator<<(std::ostream& stream, const Network& network)
 {
-   const net::IP::Network& _network = network;
-   return stream << _network;
+  const net::IP::Network& _network = network;
+  return stream << _network;
 }
 
 
-} // overlay
-} // modules
-} // mesos 
+} // namespace overlay {
+} // namespace modules {
+} // namespace mesos {
 
 
 namespace std {
@@ -418,6 +418,6 @@ struct hash<mesos::modules::overlay::IP>
   }
 };
 
-} // namespace std
+} // namespace std {
 
 #endif // __OVERLAY_NETWORK_HPP__

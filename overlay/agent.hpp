@@ -49,7 +49,9 @@ protected:
 
   process::Future<Nothing> configureDockerNetwork(const std::string& name);
 
-  process::Future<Nothing> _configureDockerNetwork(const std::string& name, bool exists);
+  process::Future<Nothing> _configureDockerNetwork(
+      const std::string& name,
+      bool exists);
 
   process::Future<Nothing> __configureDockerNetwork(
       const std::string& name,
