@@ -31,18 +31,6 @@ cd build
 make
 ```
 
-### Google-protobuf
-
-Building these modules requires an installation of `google-protobuf`.
-One way is to do the following:
-```
-    cd <mesos-source>/build/3rdparty/protobuf-3.3.0
-    make distclean
-    ./configure --prefix=$HOME/usr
-    make
-    make install
-```
-
 ### Systemd journald headers
 
 Some of these modules also require systemd development headers and libraries.
@@ -50,6 +38,13 @@ For example on CentOS 7:
 ```
 sudo yum install systemd-devel
 ```
+
+### Vargrant development environment
+
+You can also use [vagrant](https://www.vagrantup.com/) for your development
+environment. The repo contains Vagrantfile that will give you vagrant image with
+all development dependencies. The parent directory would be mounted as `/work`
+inside that image.
 
 ## Build Instructions
 
@@ -59,9 +54,6 @@ To start, generate the required build files and create a build directory:
 mkdir build
 cd build
 ```
-
-> **NOTE**: Depending on where you installed `google-protobuf`, you may need
-> to add `--with-protobuf=/path/to/protobuf/installation`.
 
 If building against an installation of Mesos:
 ```
@@ -76,7 +68,7 @@ If building against the Mesos source directory:
 Finally:
 ```
 make
-make check
+sudo make check
 ```
 
 ## Using Modules
