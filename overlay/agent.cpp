@@ -109,49 +109,9 @@ static string OVERLAY_HELP()
 
 
 Try<Owned<ManagerProcess>> ManagerProcess::create(
-    const AgentConfig& agentConfig)
+    const AgentConfig& agentConfig,
+    Option<Owned<MasterDetector>> _detector)
 {
-  Option<string> master = None();
-  if (master.isNone() && agentConfig.has_master()) {
-    master = agentConfig.master();
-  } else {
-    master = os::getenv(MESOS_MASTER);
-
-    // If the agent is running as part of the master it will need to
-    // get the ZK URL from 'MESOS_ZK'.
-    if (master.isNone()) {
-      master = os::getenv(MESOS_ZK);
-    }
-  }
-
-  // We should have learned about the master either from the JSON
-  // config of the module, or from the 'MESOS_MASTER' environment
-  // variable.
-  if (master.isNone()) {
-    return Error(
-        "Master unspecified, hence cannot create a "
-        "`MasterDetector`. Please specify master either through "
-        "the JSON config, or 'MESOS_MASTER' environment variable");
-  }
-
-  if (strings::startsWith(master.get(), "file://")) {
-    const string path = master.get().substr(7);
-
-    Try<std::string> read = os::read(path);
-
-    if (read.isError()) {
-      return Error("Error reading master configuration file '" +
-                   path + "': " + read.error());
-    }
-
-    master = read.get();
-  }
-
-  Try<MasterDetector*> detector = MasterDetector::create(master.get());
-  if (detector.isError()) {
-    return Error("Unable to create master detector: " + detector.error());
-  }
-
   Try<Nothing> mkdir = os::mkdir(agentConfig.cni_dir());
   if (mkdir.isError()) {
     return Error("Failed to create CNI config directory: " + mkdir.error());
@@ -207,12 +167,70 @@ Try<Owned<ManagerProcess>> ManagerProcess::create(
     }
   }
 
+  Try<Owned<MasterDetector>> detector = Error("");
+  if (_detector.isSome()) {
+      detector = _detector.get();
+  } else {
+      detector = ManagerProcess::createDetector(agentConfig);
+  }
+
+  if (detector.isError()) {
+    return Error(detector.error());
+  }
+
   return Owned<ManagerProcess>(
       new ManagerProcess(
         agentConfig.cni_dir(),
         networkConfig,
         agentConfig.max_configuration_attempts(),
-        Owned<MasterDetector>(detector.get())));
+        detector.get()));
+}
+
+
+Try<Owned<MasterDetector>> ManagerProcess::createDetector(
+    const AgentConfig& agentConfig)
+{
+  Option<string> master = None();
+  if (agentConfig.has_master()) {
+    master = agentConfig.master();
+  } else {
+    master = os::getenv(MESOS_MASTER);
+
+    // If the agent is running as part of the master it will need to
+    // get the ZK URL from 'MESOS_ZK'.
+    if (master.isNone()) {
+      master = os::getenv(MESOS_ZK);
+    }
+  }
+
+  // We should have learned about the master either from the JSON
+  // config of the module, or from the 'MESOS_MASTER' environment
+  // variable.
+  if (master.isNone()) {
+    return Error(
+        "Master unspecified, hence cannot create a "
+        "`MasterDetector`. Please specify master either through "
+        "the JSON config, or 'MESOS_MASTER' environment variable");
+  }
+
+  if (strings::startsWith(master.get(), "file://")) {
+    const string path = master.get().substr(7);
+
+    Try<std::string> read = os::read(path);
+
+    if (read.isError()) {
+      return Error("Error reading master configuration file '" +
+                   path + "': " + read.error());
+    }
+
+    master = read.get();
+  }
+
+  Try<MasterDetector*> detector = MasterDetector::create(master.get());
+  if (detector.isError()) {
+    return Error("Unable to create master detector: " + detector.error());
+  }
+  return Owned<MasterDetector>(detector.get());
 }
 
 
@@ -921,9 +939,12 @@ ManagerProcess::ManagerProcess(
 }
 
 
-Try<Manager*> Manager::create(const AgentConfig& agentConfig)
+Try<Manager*> Manager::create(
+    const AgentConfig& agentConfig,
+    Option<Owned<master::detector::MasterDetector>> detector)
 {
-  Try<Owned<ManagerProcess>> process = ManagerProcess::create(agentConfig);
+  Try<Owned<ManagerProcess>> process =
+    ManagerProcess::create(agentConfig, detector);
   if (process.isError()) {
     return Error(
         "Unable to create `ManagerProcess`:" +

@@ -21,7 +21,9 @@ class ManagerProcess : public ProtobufProcess<ManagerProcess>
 {
 public:
   static Try<process::Owned<ManagerProcess>> create(
-      const overlay::internal::AgentConfig& agentConfig);
+      const overlay::internal::AgentConfig& agentConfig,
+      Option<process::Owned<master::detector::MasterDetector>>
+        detector = None());
 
   process::Future<Nothing> ready();
 
@@ -80,6 +82,9 @@ private:
       const uint32_t _maxConfigAttempts,
       process::Owned<master::detector::MasterDetector> _detector);
 
+  static Try<process::Owned<master::detector::MasterDetector>> createDetector(
+      const internal::AgentConfig& agentConfig);
+
   const std::string cniDir;
 
   const overlay::internal::AgentNetworkConfig networkConfig;
@@ -104,7 +109,9 @@ class Manager : public Anonymous
 {
 public:
   static Try<Manager*> create(
-      const overlay::internal::AgentConfig& agentConfig);
+      const overlay::internal::AgentConfig& agentConfig,
+      Option<process::Owned<master::detector::MasterDetector>>
+        detector = None());
 
   virtual ~Manager();
 
