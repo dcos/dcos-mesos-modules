@@ -421,6 +421,8 @@ void ManagerProcess::agentRegisteredAcknowledgement(const UPID& from)
 
   configAttempts++;
 
+  link(from);
+
   if (configAttempts > maxConfigAttempts) {
     LOG(ERROR) << "Could not configure some overlay networks after "
                << configAttempts
