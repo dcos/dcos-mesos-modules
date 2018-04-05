@@ -73,6 +73,7 @@ using mesos::internal::slave::Containerizer;
 using mesos::internal::slave::MesosContainerizerProcess;
 using mesos::internal::slave::Slave;
 
+using mesos::master::detector::StandaloneMasterDetector;
 using mesos::master::detector::MasterDetector;
 
 using mesos::modules::common::runCommand;
@@ -306,10 +307,18 @@ protected:
   // `agentOverlayConfig` initialized during `Setup`. By default the
   // `agentOverlayConfig` has the Mesos and the Docker networks
   // disabled, and only has the subnet allocation enabled.
-  Try<Owned<overlayAgent::ManagerProcess>> startOverlayAgent()
+  Try<Owned<overlayAgent::ManagerProcess>> startOverlayAgent(
+      Option<AgentConfig> _agentOverlayConfig = None(),
+      Option<Owned<MasterDetector>> detector = None())
   {
+    if (_agentOverlayConfig.isSome()) {
+      // Takes in a user-defined `_agentOverlayConfig` and merges with the
+      // `agentOverlayConfig`, before initializing the overlay Agent
+      // module.
+      agentOverlayConfig.MergeFrom(_agentOverlayConfig.get());
+    }
     Try<Owned<overlayAgent::ManagerProcess>> _agentModule =
-      overlayAgent::ManagerProcess::create(agentOverlayConfig);
+      overlayAgent::ManagerProcess::create(agentOverlayConfig, detector);
 
     if (_agentModule.isError()) {
       return Error(
@@ -321,16 +330,6 @@ protected:
     spawn(agentModule->get());
 
     return agentModule.get();
-  }
-
-  // Takes in a user-defined `_agentOverlayConfig` and merges with the
-  // `agentOverlayConfig`, before initializing the overlay Agent
-  // module.
-  Try<Owned<overlayAgent::ManagerProcess>> startOverlayAgent(
-      const AgentConfig& _agentOverlayConfig)
-  {
-    agentOverlayConfig.MergeFrom(_agentOverlayConfig);
-    return startOverlayAgent();
   }
 
   Try<Nothing> stopOverlayAgent()
@@ -1339,6 +1338,75 @@ TEST_F(OverlayTest, ROOT_checkAddVirtualNetworks)
   ASSERT_EQ(agentOverlay->info().subnet(), "11.0.0.0/8");
   ASSERT_EQ(agentOverlay->subnet6(), "fd04::/80");
   ASSERT_EQ(agentOverlay->info().subnet6(), "fd04::/64");
+}
+
+
+// Tests the ability of the `Agent overlay module` to be registered
+// when master failover happens
+TEST_F(OverlayTest, checkAgentResetConfigurationAttempts)
+{
+  Try<Owned<cluster::Master>> master = StartMaster();
+  ASSERT_SOME(master);
+  StandaloneMasterDetector *detector =
+    new StandaloneMasterDetector(master.get()->pid);
+
+  LOG(INFO) << "Master PID: " << master.get()->pid;
+
+  // Ask overlay Master to use the replicated log by setting
+  // `replicated_log_dir`. We are not specifying `zk` configuration so
+  // the `quorum` will default to "1".
+  MasterConfig masterOverlayConfig;
+  masterOverlayConfig
+    .set_replicated_log_dir("overlay_replicated_log");
+
+  Try<Owned<Anonymous>> masterModule = startOverlayMaster(masterOverlayConfig);
+  ASSERT_SOME(masterModule);
+
+  // Master `Anonymous` module created successfully.
+  UPID overlayMaster = UPID(
+      MASTER_MANAGER_PROCESS_ID,
+      master.get()->pid.address);
+
+  AgentConfig agentOverlayConfig;
+  agentOverlayConfig.set_master(stringify(overlayMaster.address));
+  // Set number of times the agent will attempt to configure virtual
+  // networks by re-registering with the master.
+  agentOverlayConfig.set_max_configuration_attempts(1);
+
+  // Setup futures to notify the test that Agent overlay module has
+  // registered.
+  Future<AgentRegisteredAcknowledgement> agentRegisteredAcknowledgement =
+    FUTURE_PROTOBUF(AgentRegisteredAcknowledgement(), _, _);
+
+  Try<Owned<overlayAgent::ManagerProcess>> agentModule = startOverlayAgent(
+      agentOverlayConfig, detector);
+
+  AWAIT_READY(agentRegisteredAcknowledgement);
+
+  ASSERT_SOME(agentModule);
+
+  // Check the agent is allowed to progress.
+  AWAIT_READY(agentModule.get()->ready());
+
+  // Simulate a new master detected event to the agent module
+  // StandaloneMasterDetector detector(master.get()->pid);
+  detector->appoint(master.get()->pid);
+
+  // Wait for the agent module to (re-)register.
+  agentRegisteredAcknowledgement = FUTURE_PROTOBUF(
+    AgentRegisteredAcknowledgement(), _, _);
+  AWAIT_READY(agentRegisteredAcknowledgement);
+
+  // And again
+
+  // Simulate a new master detected event to the agent module
+  // StandaloneMasterDetector detector(master.get()->pid);
+  detector->appoint(master.get()->pid);
+
+  // Wait for the agent module to (re-)register.
+  agentRegisteredAcknowledgement = FUTURE_PROTOBUF(
+    AgentRegisteredAcknowledgement(), _, _);
+  AWAIT_READY(agentRegisteredAcknowledgement);
 }
 
 } // namespace tests {
