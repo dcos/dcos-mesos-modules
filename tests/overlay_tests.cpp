@@ -517,6 +517,7 @@ TEST_F(OverlayTest, checkMasterAgentComm)
 
   AgentInfo masterAgentInfo;
   masterAgentInfo.CopyFrom(state->agents(0));
+  info->clear_configuration_attempts();
   EXPECT_EQ(
       info.get().SerializeAsString(),
       masterAgentInfo.SerializeAsString());
@@ -809,6 +810,7 @@ TEST_F(OverlayTest, ROOT_checkMasterRecovery)
 
   AgentInfo masterAgentInfo;
   masterAgentInfo.CopyFrom(state->agents(0));
+  info->clear_configuration_attempts();
   EXPECT_EQ(
       info.get().SerializeAsString(),
       masterAgentInfo.SerializeAsString())
@@ -1397,16 +1399,26 @@ TEST_F(OverlayTest, checkAgentResetConfigurationAttempts)
     AgentRegisteredAcknowledgement(), _, _);
   AWAIT_READY(agentRegisteredAcknowledgement);
 
-  // And again
+  // Hit the `overlay` endpoint of the agent to check that
+  // there was only one attempt.
+  UPID overlayAgent = UPID(master.get()->pid);
+  overlayAgent.id = AGENT_MANAGER_PROCESS_ID;
 
-  // Simulate a new master detected event to the agent module
-  // StandaloneMasterDetector detector(master.get()->pid);
-  detector->appoint(master.get()->pid);
+  Future<Response> agentResponse = process::http::get(
+      overlayAgent,
+      "overlay");
 
-  // Wait for the agent module to (re-)register.
-  agentRegisteredAcknowledgement = FUTURE_PROTOBUF(
-    AgentRegisteredAcknowledgement(), _, _);
-  AWAIT_READY(agentRegisteredAcknowledgement);
+  AWAIT_EXPECT_RESPONSE_STATUS_EQ(OK().status, agentResponse);
+  AWAIT_EXPECT_RESPONSE_HEADER_EQ(
+      APPLICATION_JSON,
+      "Content-Type",
+      agentResponse);
+
+  Try<AgentInfo> info = parseAgentOverlay(agentResponse->body);
+  ASSERT_SOME(info);
+
+  // There should be only one attempt.
+  ASSERT_EQ(1, info->configuration_attempts());
 }
 
 } // namespace tests {

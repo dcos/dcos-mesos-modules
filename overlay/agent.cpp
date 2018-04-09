@@ -541,6 +541,7 @@ Future<http::Response> ManagerProcess::overlay(const http::Request& request)
 {
   AgentInfo agent;
   agent.set_ip(stringify(self().address.ip));
+  agent.set_configuration_attempts(configAttempts);
 
   foreachvalue (const AgentOverlayInfo& overlay, overlays) {
     agent.add_overlays()->CopyFrom(overlay);
