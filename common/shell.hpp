@@ -19,7 +19,7 @@ namespace common {
 inline process::Future<std::string> runCommand(
     const std::string& command,
     const std::vector<std::string>& argv,
-    const Duration& timeout = Seconds(-1))
+    const Duration& timeout = Milliseconds(5000))
 {
   Try<process::Subprocess> s = process::subprocess(
       command,
@@ -32,29 +32,24 @@ inline process::Future<std::string> runCommand(
     return process::Failure(
       "Unable to execute '" + command + "': " + s.error());
   }
+  pid_t pid = s->pid();
 
   typedef std::tuple<
     process::Future<Option<int>>,
     process::Future<std::string>,
     process::Future<std::string>> ProcessTuple;
 
-  process::Future<ProcessTuple> p =
-    await(s->status(),
-          process::io::read(s->out().get()),
-          process::io::read(s->err().get()));
-  pid_t pid = s->pid();
-
-  if (timeout != Seconds(-1)) {
-    p = p.after(timeout,
+  return await(
+      s->status(),
+      process::io::read(s->out().get()),
+      process::io::read(s->err().get()))
+    .after(timeout,
                 [&](const process::Future<ProcessTuple> &t) ->
                     process::Future<ProcessTuple> {
         // NOTE: Discarding this future has no effect on the subprocess
         os::killtree(pid, SIGKILL);
         return std::make_tuple(-1, "", "timeout after " + stringify(timeout));
-    });
-  }
-
-  return p
+    })
     .then([command](const ProcessTuple& t) -> process::Future<std::string> {
         process::Future<Option<int>> status = std::get<0>(t);
         if (!status.isReady()) {
@@ -95,7 +90,7 @@ inline process::Future<std::string> runCommand(
 // chain shell commands.
 inline process::Future<std::string> runScriptCommand(
     const std::string& command,
-    const Duration& timeout = Seconds(-1))
+    const Duration& timeout = Milliseconds(5000))
 {
   std::vector<std::string> argv = {os::Shell::arg0, os::Shell::arg1, command};
 
