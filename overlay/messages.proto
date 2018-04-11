@@ -58,6 +58,9 @@ message AgentNetworkConfig {
   // however to support GCE we are setting the default MTU value to
   // 1420 bytes.
   optional uint32 overlay_mtu = 4 [default = 1420];
+
+  // Timeout for calls to docker deamon and networking tools, ms
+  optional uint32 command_timeout = 5 [default = 15000];
 }
 
 
