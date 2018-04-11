@@ -8,6 +8,7 @@
 #include <process/future.hpp>
 #include <process/subprocess.hpp>
 
+#include <stout/os/killtree.hpp>
 #include <stout/os/shell.hpp>
 
 namespace mesos {
@@ -17,7 +18,8 @@ namespace common {
 // Exec's a command.
 inline process::Future<std::string> runCommand(
     const std::string& command,
-    const std::vector<std::string>& argv)
+    const std::vector<std::string>& argv,
+    const Duration& timeout = Seconds(-1))
 {
   Try<process::Subprocess> s = process::subprocess(
       command,
@@ -31,14 +33,29 @@ inline process::Future<std::string> runCommand(
       "Unable to execute '" + command + "': " + s.error());
   }
 
-  return await(
-      s->status(),
-      process::io::read(s->out().get()),
-      process::io::read(s->err().get()))
-    .then([command](
-          const std::tuple<process::Future<Option<int>>,
-          process::Future<std::string>,
-          process::Future<std::string>>& t) -> process::Future<std::string> {
+  typedef std::tuple<
+    process::Future<Option<int>>,
+    process::Future<std::string>,
+    process::Future<std::string>> ProcessTuple;
+
+  process::Future<ProcessTuple> p =
+    await(s->status(),
+          process::io::read(s->out().get()),
+          process::io::read(s->err().get()));
+  pid_t pid = s->pid();
+
+  if (timeout != Seconds(-1)) {
+    p = p.after(timeout,
+                [&](const process::Future<ProcessTuple> &t) ->
+                    process::Future<ProcessTuple> {
+        // NOTE: Discarding this future has no effect on the subprocess
+        os::killtree(pid, SIGKILL);
+        return std::make_tuple(-1, "", "timeout after " + stringify(timeout));
+    });
+  }
+
+  return p
+    .then([command](const ProcessTuple& t) -> process::Future<std::string> {
         process::Future<Option<int>> status = std::get<0>(t);
         if (!status.isReady()) {
         return process::Failure(
@@ -77,11 +94,12 @@ inline process::Future<std::string> runCommand(
 // Run `command` as a shell script. This is useful when wanting to
 // chain shell commands.
 inline process::Future<std::string> runScriptCommand(
-    const std::string& command)
+    const std::string& command,
+    const Duration& timeout = Seconds(-1))
 {
   std::vector<std::string> argv = {os::Shell::arg0, os::Shell::arg1, command};
 
-  return runCommand(os::Shell::name, argv);
+  return runCommand(os::Shell::name, argv, timeout);
 };
 
 } // namespace common {
