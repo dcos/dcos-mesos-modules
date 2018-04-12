@@ -96,6 +96,10 @@ message AgentInfo {
 
   // The overlay networks that exist on this agent.
   repeated AgentOverlayInfo overlays = 2;
+
+  // Number of configuration attempts. For more information
+  // please see max_configuration_attempts in AgentConfig.
+  optional uint32 configuration_attempts = 3;
 }
 
 
