@@ -123,10 +123,12 @@ struct Vtep
 {
   Vtep(const Network& _network,
        const Option<Network>& _network6,
-       const MAC _oui)
+       const MAC _oui,
+       const Option<size_t>& _mtu)
     : network(_network),
       network6(_network6),
-      oui(_oui)
+      oui(_oui),
+      mtu(_mtu)
   {
     freeIP += (
       Bound<IP>::open(network.begin()),
@@ -253,6 +255,8 @@ struct Vtep
   Option<Network> network6;
 
   net::MAC oui;
+
+  Option<size_t> mtu;
 
   IntervalSet<IP> freeIP;
 
@@ -969,6 +973,12 @@ public:
       vtepSubnet6 = _vtepSubnet6.get();
     }
 
+    // MTU for VTEP
+    Option<size_t> vtepMTU = None();
+    if (networkConfig.has_vtep_mtu()) {
+      vtepMTU = networkConfig.vtep_mtu();
+    }
+
     hashmap<string, Owned<Overlay>> overlays;
     IntervalSet<IP> addressSpace;
 
@@ -1197,6 +1207,7 @@ public:
           vtepSubnet.get(),
           vtepSubnet6,
           vtepMACOUI.get(),
+          vtepMTU,
           networkConfig,
           replicatedLog,
           storage,
@@ -1363,8 +1374,13 @@ protected:
       vxlan.set_vtep_name("vtep1024");
       vxlan.set_vtep_ip(stringify(vtepIP.get()));
       vxlan.set_vtep_mac(stringify(vtepMAC.get()));
+
       if (vtepIP6.isSome()) {
         vxlan.set_vtep_ip6(stringify(vtepIP6.get()));
+      }
+
+      if (vtep.mtu.isSome()) {
+        vxlan.set_vtep_mtu(vtep.mtu.get());
       }
 
       BackendInfo backend;
@@ -1686,6 +1702,7 @@ private:
       const Network& vtepSubnet,
       const Option<Network>& vtepSubnet6,
       const net::MAC& vtepMACOUI,
+      const Option<size_t>& vtepMTU,
       const NetworkConfig& _networkConfig,
       const Owned<mesos::state::protobuf::State> _replicatedLog,
       Storage* _storage,
@@ -1698,7 +1715,7 @@ private:
       storedState(None()),
       storage(_storage),
       log(_log),
-      vtep(vtepSubnet, vtepSubnet6, vtepMACOUI)
+      vtep(vtepSubnet, vtepSubnet6, vtepMACOUI, vtepMTU)
   {
     networkState.mutable_network()->CopyFrom(_networkConfig);
   };
