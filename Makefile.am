@@ -228,9 +228,25 @@ test_overlay_LDADD =					\
   $(MESOS_BUILD_DIR)/src/.libs/libmesos.la		\
   libmesos_tests.la					\
   libmesos_network_overlay.la
+
+# Test (make check) binary for the common functions
+check_PROGRAMS += test-common
+
+test_common_SOURCES =					\
+  tests/common_tests.cpp
+
+test_common_CPPFLAGS =					\
+  $(libmesos_tests_la_CPPFLAGS)
+
+test_common_LDADD =					\
+  $(MESOS_LDFLAGS)					\
+  $(MESOS_BUILD_DIR)/$(BUNDLE_SUBDIR)/.libs/libgmock.la	\
+  $(MESOS_BUILD_DIR)/src/.libs/libmesos.la		\
+  libmesos_tests.la
 endif
 
 check-local: $(check_PROGRAMS)
+	./test-common --verbose
 	./test-dockercfg
 	./test-journald --verbose
 	./test-logsink --verbose

@@ -156,7 +156,10 @@ Try<Owned<ManagerProcess>> ManagerProcess::create(
           "Unable to create `ipset` command: " + ipsetCommand.error());
     }
 
-    Future<string> ipset = runScriptCommand(ipsetCommand.get());
+    Duration timeout = Milliseconds(networkConfig.command_timeout());
+    Future<string> ipset = runScriptCommand(
+        ipsetCommand.get(),
+        timeout);
 
     ipset.await();
 
@@ -681,7 +684,8 @@ Future<Nothing> ManagerProcess::_configure(
     // `_updateAgentOverlays`, which might not be set if this race
     // were to occur, even though the overlay configuration went
     // through fine.
-    return runScriptCommand(command.get())
+    Duration timeout = Milliseconds(networkConfig.command_timeout());
+    return runScriptCommand(command.get(), timeout)
       .then(defer(self(), overlaySuccess))
       .onFailed(defer(self(), overlayFailure))
       .onDiscarded(defer(self(), lambda::bind(overlayFailure, "discarded")));
@@ -889,7 +893,8 @@ Future<Nothing> ManagerProcess::_configureDockerNetwork(
         dockerCommand.error());
   }
 
-  return runScriptCommand(dockerCommand.get())
+  Duration timeout = Milliseconds(networkConfig.command_timeout());
+  return runScriptCommand(dockerCommand.get(), timeout)
     .then(defer(self(),
           &Self::__configureDockerNetwork,
           name,
@@ -915,7 +920,8 @@ Future<Nothing> ManagerProcess::__configureDockerNetwork(
   const string iptablesCommand = "iptables -D DOCKER-ISOLATION -j RETURN; "
     "iptables -I DOCKER-ISOLATION 1 -j RETURN";
 
-  return runScriptCommand(iptablesCommand)
+  Duration timeout = Milliseconds(networkConfig.command_timeout());
+  return runScriptCommand(iptablesCommand, timeout)
     .then([]() -> Future<Nothing> {
         return Nothing();
         });
