@@ -22,6 +22,7 @@ message VxLANInfo {
   required string vtep_ip = 3;
   required string vtep_mac = 4;
   optional string vtep_ip6 = 5;
+  optional uint32 vtep_mtu = 6;
 }
 
 
@@ -131,4 +132,7 @@ message NetworkConfig {
 
   // IPv6 subnet for vtep
   optional string vtep_subnet6 = 4;
+
+  // MTU for vtep
+  optional uint32 vtep_mtu = 5;
 }

@@ -1421,6 +1421,73 @@ TEST_F(OverlayTest, checkAgentResetConfigurationAttempts)
   ASSERT_EQ(1, info->configuration_attempts());
 }
 
+
+// Tests the custom mtu configuration
+TEST_F(OverlayTest, checkMTUConfiguration)
+{
+  Try<Owned<cluster::Master>> master = StartMaster();
+  ASSERT_SOME(master);
+  LOG(INFO) << "Master PID: " << master.get()->pid;
+
+  // Ask overlay Master to use the replicated log by setting
+  // `replicated_log_dir`. We are not specifying `zk` configuration so
+  // the `quorum` will default to "1".
+  MasterConfig masterOverlayConfig;
+  masterOverlayConfig
+    .set_replicated_log_dir("overlay_replicated_log");
+  masterOverlayConfig.mutable_network()->set_vtep_mtu(9000);
+
+  Try<Owned<Anonymous>> masterModule = startOverlayMaster(masterOverlayConfig);
+  ASSERT_SOME(masterModule);
+
+  // Master `Anonymous` module created successfully.
+  UPID overlayMaster = UPID(
+      MASTER_MANAGER_PROCESS_ID,
+      master.get()->pid.address);
+
+  AgentConfig agentOverlayConfig;
+  agentOverlayConfig.set_master(stringify(overlayMaster.address));
+  // Set number of times the agent will attempt to configure virtual
+  // networks by re-registering with the master.
+  agentOverlayConfig.set_max_configuration_attempts(1);
+
+  // Setup futures to notify the test that Agent overlay module has
+  // registered.
+  Future<AgentRegisteredAcknowledgement> agentRegisteredAcknowledgement =
+    FUTURE_PROTOBUF(AgentRegisteredAcknowledgement(), _, _);
+
+  Try<Owned<overlayAgent::ManagerProcess>> agentModule = startOverlayAgent(
+      agentOverlayConfig);
+
+  AWAIT_READY(agentRegisteredAcknowledgement);
+
+  ASSERT_SOME(agentModule);
+
+  // Check the agent is allowed to progress.
+  AWAIT_READY(agentModule.get()->ready());
+
+  // Hit the `overlay` endpoint of the agent to check that
+  // there it got a custom mtu configuration
+  UPID overlayAgent = UPID(master.get()->pid);
+  overlayAgent.id = AGENT_MANAGER_PROCESS_ID;
+
+  Future<Response> agentResponse = process::http::get(
+      overlayAgent,
+      "overlay");
+
+  AWAIT_EXPECT_RESPONSE_STATUS_EQ(OK().status, agentResponse);
+  AWAIT_EXPECT_RESPONSE_HEADER_EQ(
+      APPLICATION_JSON,
+      "Content-Type",
+      agentResponse);
+
+  Try<AgentInfo> info = parseAgentOverlay(agentResponse->body);
+  ASSERT_SOME(info);
+
+  // MTU should be equal to the value in master configuration
+  ASSERT_EQ(9000, info->overlays(0).backend().vxlan().vtep_mtu());
+}
+
 } // namespace tests {
 } // namespace overlay {
 } // namespace mesos {
