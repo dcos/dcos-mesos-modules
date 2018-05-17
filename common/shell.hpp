@@ -30,58 +30,65 @@ inline process::Future<std::string> runCommand(
 
   if (s.isError()) {
     return process::Failure(
-      "Unable to execute '" + command + "': " + s.error());
+        "Unable to execute '" + command + "': " + s.error());
   }
   pid_t pid = s->pid();
 
   typedef std::tuple<
-    process::Future<Option<int>>,
-    process::Future<std::string>,
-    process::Future<std::string>> ProcessTuple;
+      process::Future<Option<int>>,
+      process::Future<std::string>,
+      process::Future<std::string>> ProcessTuple;
 
   return await(
       s->status(),
       process::io::read(s->out().get()),
       process::io::read(s->err().get()))
-    .after(timeout,
-                [=](const process::Future<ProcessTuple> &t) ->
-                    process::Future<ProcessTuple> {
-        // NOTE: Discarding this future has no effect on the subprocess
-        os::killtree(pid, SIGKILL);
-        return std::make_tuple(-1, "", "timeout after " + stringify(timeout));
+    .after(timeout, [=](const process::Future<ProcessTuple> &future) ->
+        process::Future<ProcessTuple> {
+      // Kill the process explicitly and wait for the reaper to reap
+      // the process before returning.
+      // NOTE: Discarding this future has no effect on the subprocess.
+      os::killtree(pid, SIGKILL);
+      return future.then(
+          [=](const ProcessTuple& t) -> process::Future<ProcessTuple> {
+            return std::make_tuple(
+                -1,
+                "",
+                "timeout after " + stringify(timeout));
+          });
     })
     .then([command](const ProcessTuple& t) -> process::Future<std::string> {
-        process::Future<Option<int>> status = std::get<0>(t);
-        if (!status.isReady()) {
+      process::Future<Option<int>> status = std::get<0>(t);
+      if (!status.isReady()) {
         return process::Failure(
-          "Failed to get the exit status of '" + command +"': " +
-          (status.isFailed() ? status.failure() : "discarded"));
-        }
+            "Failed to get the exit status of '" + command + "': " +
+            (status.isFailed() ? status.failure() : "discarded"));
+      }
 
-        if (status->isNone()) {
+      if (status->isNone()) {
         return process::Failure("Failed to reap the subprocess");
-        }
+      }
 
-        process::Future<std::string> out = std::get<1>(t);
-        if (!out.isReady()) {
+      process::Future<std::string> out = std::get<1>(t);
+      if (!out.isReady()) {
         return process::Failure(
-          "Failed to read stderr from the subprocess: " +
-          (out.isFailed() ? out.failure() : "discarded"));
-        }
+            "Failed to read stderr from the subprocess: " +
+            (out.isFailed() ? out.failure() : "discarded"));
+      }
 
-        process::Future<std::string> err = std::get<2>(t);
-        if (!err.isReady()) {
-          return process::Failure(
-              "Failed to read stderr from the subprocess: " +
-              (err.isFailed() ? err.failure() : "discarded"));
-        }
+      process::Future<std::string> err = std::get<2>(t);
+      if (!err.isReady()) {
+        return process::Failure(
+            "Failed to read stderr from the subprocess: " +
+            (err.isFailed() ? err.failure() : "discarded"));
+      }
 
-        if (status.get() != 0) {
-          return process::Failure(
-              "Failed to execute '" + command + "': " + err.get());
-        }
+      if (status.get() != 0) {
+        return process::Failure(
+            "Failed to execute '" + command + "': " + err.get());
+      }
 
-        return out.get();
+      return out.get();
     });
 };
 
