@@ -3,6 +3,7 @@
 #include <vector>
 
 #include <mesos/mesos.hpp>
+#include <mesos/type_utils.hpp>
 
 #include <mesos/module/container_logger.hpp>
 
@@ -70,7 +71,9 @@ public:
 
   // Spawns two subprocesses that read from their stdin and write to
   // journald along with labels to disambiguate the logs from other containers.
-  Future<ContainerIO> prepare(const ContainerConfig& containerConfig)
+  Future<ContainerIO> prepare(
+      const ContainerID& containerId,
+      const ContainerConfig& containerConfig)
   {
     // Prepare the environment for the container logger subprocess.
     // We inherit agent environment variables except for those
@@ -197,14 +200,9 @@ public:
       strings::tokenize(containerConfig.directory(), "/");
 
     Option<string> agentId = None();
-    Option<string> containerId = None();
     for (int i = sandboxTokens.size() - 2; i >= 0; i -= 2) {
       if (sandboxTokens[i] == "slaves") {
         agentId = sandboxTokens[i + 1];
-      } else if (sandboxTokens[i] == "runs" ||
-                 sandboxTokens[i] == "containers") {
-        containerId = sandboxTokens[i + 1] +
-          (containerId.isSome() ? "." + containerId.get(): "");
       }
     }
 
@@ -219,11 +217,9 @@ public:
 
     // NOTE: ContainerID isn't passed into the container logger.
     // However, it can be retrieved from the sandbox directory.
-    if (containerId.isSome()) {
-      label.set_key("CONTAINER_ID");
-      label.set_value(containerId.get());
-      labels.add_labels()->CopyFrom(label);
-    }
+    label.set_key("CONTAINER_ID");
+    label.set_value(stringify(containerId));
+    labels.add_labels()->CopyFrom(label);
 
     // If the container is part of an executor (both nested or top
     // level containers) , and the executor is named, use that name to
@@ -404,11 +400,13 @@ Try<Nothing> JournaldContainerLogger::initialize()
 }
 
 Future<ContainerIO> JournaldContainerLogger::prepare(
+    const ContainerID& containerId,
     const ContainerConfig& containerConfig)
 {
   return dispatch(
       process.get(),
       &JournaldContainerLoggerProcess::prepare,
+      containerId,
       containerConfig);
 }
 
