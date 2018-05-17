@@ -253,14 +253,19 @@ TEST_F(JournaldLoggerTest, ROOT_LogToJournaldWithBigLabel)
   variable->set_name("CONTAINER_LOGGER_DESTINATION_TYPE");
   variable->set_value("journald");
 
+  Future<TaskStatus> statusStarting;
   Future<TaskStatus> statusRunning;
   Future<TaskStatus> statusFinished;
   EXPECT_CALL(sched, statusUpdate(&driver, _))
+    .WillOnce(FutureArg<1>(&statusStarting))
     .WillOnce(FutureArg<1>(&statusRunning))
     .WillOnce(FutureArg<1>(&statusFinished))
     .WillRepeatedly(Return());       // Ignore subsequent updates.
 
   driver.launchTasks(offers.get()[0].id(), {task});
+
+  AWAIT_READY(statusStarting);
+  EXPECT_EQ(TASK_STARTING, statusStarting.get().state());
 
   AWAIT_READY(statusRunning);
   EXPECT_EQ(TASK_RUNNING, statusRunning.get().state());
@@ -294,9 +299,10 @@ TEST_F(JournaldLoggerTest, ROOT_LogToJournaldWithBigLabel)
 }
 
 
-// This checks a specific case where the arguments passed into the
-// ContainerLogger will differ if the Mesos agent restarts before
-// launching a nested container.
+// This test verfies that the executor information will be passed to
+// the container logger the same way before and after an agent
+// restart. Note that this is different than the behavior before Mesos
+// 1.5, at which time we don't checkout ContainerConfig.
 TEST_F(JournaldLoggerTest, ROOT_CGROUPS_LaunchThenRecoverThenLaunchNested)
 {
   mesos::internal::slave::Flags flags = CreateSlaveFlags();
@@ -430,7 +436,6 @@ TEST_F(JournaldLoggerTest, ROOT_CGROUPS_LaunchThenRecoverThenLaunchNested)
 
   AWAIT_ASSERT_EQ(Containerizer::LaunchResult::SUCCESS, launch);
 
-
   status = containerizer->status(nestedContainerId);
   AWAIT_READY(status);
   ASSERT_TRUE(status->has_executor_pid());
@@ -474,7 +479,7 @@ TEST_F(JournaldLoggerTest, ROOT_CGROUPS_LaunchThenRecoverThenLaunchNested)
 
   AWAIT_READY(secondQuery);
   EXPECT_TRUE(strings::contains(secondQuery.get(), specialParentString));
-  EXPECT_FALSE(strings::contains(secondQuery.get(), specialChildString));
+  EXPECT_TRUE(strings::contains(secondQuery.get(), specialChildString));
 }
 
 
@@ -546,14 +551,19 @@ TEST_P(JournaldLoggerTest, ROOT_LogToJournald)
   variable->set_name("CONTAINER_LOGGER_DESTINATION_TYPE");
   variable->set_value(GetParam());
 
+  Future<TaskStatus> statusStarting;
   Future<TaskStatus> statusRunning;
   Future<TaskStatus> statusFinished;
   EXPECT_CALL(sched, statusUpdate(&driver, _))
+    .WillOnce(FutureArg<1>(&statusStarting))
     .WillOnce(FutureArg<1>(&statusRunning))
     .WillOnce(FutureArg<1>(&statusFinished))
     .WillRepeatedly(Return());       // Ignore subsequent updates.
 
   driver.launchTasks(offers.get()[0].id(), {task});
+
+  AWAIT_READY(statusStarting);
+  EXPECT_EQ(TASK_STARTING, statusStarting.get().state());
 
   AWAIT_READY(statusRunning);
   EXPECT_EQ(TASK_RUNNING, statusRunning.get().state());
@@ -633,9 +643,6 @@ TEST_P(JournaldLoggerTest, ROOT_LogToJournald)
 class JournaldLoggerDockerTest : public JournaldLoggerTest {};
 
 
-// Parameterized based on the suffix of the TaskID.
-// This test is needed due to the workaround introduced in:
-// https://issues.apache.org/jira/browse/MESOS-1833
 INSTANTIATE_TEST_CASE_P(
     TaskIDSuffix,
     JournaldLoggerDockerTest,
@@ -644,7 +651,6 @@ INSTANTIATE_TEST_CASE_P(
         std::string(":something")));
 
 
-// Loads the journald ContainerLogger module and runs a docker task.
 // Then queries journald for the associated logs.
 TEST_P(JournaldLoggerDockerTest, ROOT_DOCKER_LogToJournald)
 {
@@ -708,14 +714,19 @@ TEST_P(JournaldLoggerDockerTest, ROOT_DOCKER_LogToJournald)
 
   task.mutable_container()->CopyFrom(containerInfo);
 
+  Future<TaskStatus> statusStarting;
   Future<TaskStatus> statusRunning;
   Future<TaskStatus> statusFinished;
   EXPECT_CALL(sched, statusUpdate(&driver, _))
+    .WillOnce(FutureArg<1>(&statusStarting))
     .WillOnce(FutureArg<1>(&statusRunning))
     .WillOnce(FutureArg<1>(&statusFinished))
     .WillRepeatedly(Return());       // Ignore subsequent updates.
 
   driver.launchTasks(offers.get()[0].id(), {task});
+
+  AWAIT_READY(statusStarting);
+  EXPECT_EQ(TASK_STARTING, statusStarting.get().state());
 
   AWAIT_READY(statusRunning);
   EXPECT_EQ(TASK_RUNNING, statusRunning.get().state());
@@ -746,13 +757,8 @@ TEST_P(JournaldLoggerDockerTest, ROOT_DOCKER_LogToJournald)
   AWAIT_READY(frameworkQuery);
   ASSERT_TRUE(strings::contains(frameworkQuery.get(), specialString));
 
-  // When the TaskID is not suffixed with a colon, the journald query should
-  // return some result. When the suffix is present, the query should return
-  // an empty result.
   AWAIT_READY(agentQuery);
-  ASSERT_EQ(
-      GetParam().empty(),
-      strings::contains(agentQuery.get(), specialString));
+  EXPECT_TRUE(strings::contains(agentQuery.get(), specialString));
 
   AWAIT_READY(executorQuery);
   ASSERT_TRUE(strings::contains(executorQuery.get(), specialString));
