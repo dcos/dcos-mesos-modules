@@ -36,6 +36,7 @@ using namespace process;
 using std::string;
 using std::vector;
 
+using mesos::slave::ContainerConfig;
 using mesos::slave::ContainerLogger;
 using mesos::slave::ContainerIO;
 
@@ -69,10 +70,7 @@ public:
 
   // Spawns two subprocesses that read from their stdin and write to
   // journald along with labels to disambiguate the logs from other containers.
-  Future<ContainerIO> prepare(
-      const ExecutorInfo& executorInfo,
-      const std::string& sandboxDirectory,
-      const Option<std::string>& user)
+  Future<ContainerIO> prepare(const ContainerConfig& containerConfig)
   {
     // Prepare the environment for the container logger subprocess.
     // We inherit agent environment variables except for those
@@ -99,7 +97,7 @@ public:
       stringify(flags.libprocess_num_worker_threads);
 
     // Copy the global logger flags.
-    // These will act as the defaults in case the executor environment
+    // These will act as the defaults in case the container environment
     // overrides a subset of them.
     LoggerFlags overriddenFlags;
     overriddenFlags.destination_type = flags.destination_type;
@@ -109,30 +107,29 @@ public:
     overriddenFlags.logrotate_stderr_options = flags.logrotate_stderr_options;
 
     // Check for overrides of the logger settings in the
-    // `ExecutorInfo`s environment variables.
-    if (executorInfo.has_command() &&
-        executorInfo.command().has_environment()) {
+    // containers environment variables.
+    if (containerConfig.command_info().has_environment()) {
       // Search the environment for prefixed environment variables.
       // We un-prefix those variables before parsing the flag values.
-      std::map<std::string, std::string> executorEnvironment;
+      std::map<std::string, std::string> containerEnvironment;
       foreach (const Environment::Variable variable,
-               executorInfo.command().environment().variables()) {
+               containerConfig.command_info().environment().variables()) {
         if (strings::startsWith(
               variable.name(), flags.environment_variable_prefix)) {
           std::string unprefixed = strings::lower(strings::remove(
               variable.name(),
               flags.environment_variable_prefix,
               strings::PREFIX));
-          executorEnvironment[unprefixed] = variable.value();
+          containerEnvironment[unprefixed] = variable.value();
         }
       }
 
       // We will error out if there are unknown flags with the same prefix.
-      Try<flags::Warnings> load = overriddenFlags.load(executorEnvironment);
+      Try<flags::Warnings> load = overriddenFlags.load(containerEnvironment);
 
       if (load.isError()) {
         return Failure(
-            "Failed to load executor logger settings: " + load.error());
+            "Failed to load container logger settings: " + load.error());
       }
 
       // Log any flag warnings.
@@ -141,13 +138,18 @@ public:
       }
     }
 
+    Option<ExecutorInfo> executorInfo;
+    if (containerConfig.has_executor_info()) {
+      executorInfo = containerConfig.executor_info();
+    }
+
     // Pass in the FrameworkID, ExecutorID, and ContainerID as labels.
     // And include all labels inside the `ExecutorInfo`.
     Label label;
     Labels labels;
-    if (executorInfo.has_labels()) {
+    if (executorInfo.isSome() && executorInfo->has_labels()) {
       Bytes totalSize;
-      foreach (const Label executorLabel, executorInfo.labels().labels()) {
+      foreach (const Label executorLabel, executorInfo->labels().labels()) {
         totalSize += LABEL_PADDING_SIZE +
           executorLabel.key().size() +
           executorLabel.value().size();
@@ -168,15 +170,17 @@ public:
     // a nested container is launched after restarting the Mesos agent.
     // This is because the agent does not need to keep the ExecutorInfo
     // checkpointed after it has already launched the executor.
-    if (executorInfo.has_framework_id()) {
+    if (executorInfo.isSome() && executorInfo->has_framework_id()) {
       label.set_key("FRAMEWORK_ID");
-      label.set_value(executorInfo.framework_id().value());
+      label.set_value(executorInfo->framework_id().value());
       labels.add_labels()->CopyFrom(label);
     }
 
-    label.set_key("EXECUTOR_ID");
-    label.set_value(executorInfo.executor_id().value());
-    labels.add_labels()->CopyFrom(label);
+    if (executorInfo.isSome()) {
+      label.set_key("EXECUTOR_ID");
+      label.set_value(executorInfo->executor_id().value());
+      labels.add_labels()->CopyFrom(label);
+    }
 
     // Derive the AgentID and ContainerID from the sandbox directory.
     // See: src/slave/paths.hpp in the Mesos codebase for more info.
@@ -189,7 +193,9 @@ public:
     // when it is given the sandbox symlink from this Docker workaround:
     // https://issues.apache.org/jira/browse/MESOS-1833
     // When this happens, we simply skip these labels.
-    vector<string> sandboxTokens = strings::tokenize(sandboxDirectory, "/");
+    vector<string> sandboxTokens =
+      strings::tokenize(containerConfig.directory(), "/");
+
     Option<string> agentId = None();
     Option<string> containerId = None();
     for (int i = sandboxTokens.size() - 2; i >= 0; i -= 2) {
@@ -204,30 +210,33 @@ public:
 
     // NOTE: AgentID is generally unknown/irrelevant to the containerizer.
     // However, because we expect some degree of log aggregation,
-    // we derive the AgentID based on the `sandboxDirectory`.
+    // we derive the AgentID based on the sandbox directory.
     if (agentId.isSome()) {
       label.set_key("AGENT_ID");
       label.set_value(agentId.get());
       labels.add_labels()->CopyFrom(label);
     }
 
-    // NOTE: ContainerID isn't passed into the container logger as part of
-    // ExecutorInfo.  It can be retrieved from the `sandboxDirectory`.
+    // NOTE: ContainerID isn't passed into the container logger.
+    // However, it can be retrieved from the sandbox directory.
     if (containerId.isSome()) {
       label.set_key("CONTAINER_ID");
       label.set_value(containerId.get());
       labels.add_labels()->CopyFrom(label);
     }
 
-    // If the executor is named, use that name to present the logs.
-    // Otherwise, default to the ExecutorID.
+    // If the container is part of an executor (both nested or top
+    // level containers) , and the executor is named, use that name to
+    // present the logs. Otherwise, default to the ExecutorID.
     // This is the value that shows up in the typical journald view.
-    label.set_key("SYSLOG_IDENTIFIER");
-    label.set_value(
-        executorInfo.has_name() ?
-        executorInfo.name() :
-        executorInfo.executor_id().value());
-    labels.add_labels()->CopyFrom(label);
+    if (executorInfo.isSome()) {
+      label.set_key("SYSLOG_IDENTIFIER");
+      label.set_value(
+          executorInfo->has_name() ?
+          executorInfo->name() :
+          executorInfo->executor_id().value());
+      labels.add_labels()->CopyFrom(label);
+    }
 
     // NOTE: We manually construct a pipe here instead of using
     // `Subprocess::PIPE` so that the ownership of the FDs is properly
@@ -265,9 +274,12 @@ public:
 
     outFlags.logrotate_max_size = overriddenFlags.logrotate_max_stdout_size;
     outFlags.logrotate_options = overriddenFlags.logrotate_stdout_options;
-    outFlags.logrotate_filename = path::join(sandboxDirectory, "stdout");
+    outFlags.logrotate_filename =
+      path::join(containerConfig.directory(), "stdout");
     outFlags.logrotate_path = flags.logrotate_path;
-    outFlags.user = user;
+    outFlags.user = containerConfig.has_user()
+      ? Option<string>(containerConfig.user())
+      : Option<string>::none();
 
     // If we are on systemd, then extend the life of the process as we
     // do with the executor. Any grandchildren's lives will also be
@@ -331,9 +343,12 @@ public:
 
     errFlags.logrotate_max_size = overriddenFlags.logrotate_max_stderr_size;
     errFlags.logrotate_options = overriddenFlags.logrotate_stderr_options;
-    errFlags.logrotate_filename = path::join(sandboxDirectory, "stderr");
+    errFlags.logrotate_filename =
+      path::join(containerConfig.directory(), "stderr");
     errFlags.logrotate_path = flags.logrotate_path;
-    errFlags.user = user;
+    errFlags.user = containerConfig.has_user()
+      ? Option<string>(containerConfig.user())
+      : Option<string>::none();
 
     // Spawn a process to handle stderr.
     Try<Subprocess> errProcess = subprocess(
@@ -389,16 +404,12 @@ Try<Nothing> JournaldContainerLogger::initialize()
 }
 
 Future<ContainerIO> JournaldContainerLogger::prepare(
-    const ExecutorInfo& executorInfo,
-    const std::string& sandboxDirectory,
-    const Option<std::string>& user)
+    const ContainerConfig& containerConfig)
 {
   return dispatch(
       process.get(),
       &JournaldContainerLoggerProcess::prepare,
-      executorInfo,
-      sandboxDirectory,
-      user);
+      containerConfig);
 }
 
 } // namespace journald {
@@ -412,7 +423,7 @@ com_mesosphere_mesos_JournaldLogger(
     "Mesosphere",
     "help@mesosphere.io",
     "Journald Container Logger module.",
-    NULL,
+    nullptr,
     [](const Parameters& parameters) -> ContainerLogger* {
       // Convert `parameters` into a map.
       std::map<std::string, std::string> values;

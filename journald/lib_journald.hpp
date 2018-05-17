@@ -226,10 +226,7 @@ public:
   virtual Try<Nothing> initialize();
 
   virtual process::Future<mesos::slave::ContainerIO>
-  prepare(
-      const ExecutorInfo& executorInfo,
-      const std::string& sandboxDirectory,
-      const Option<std::string>& user);
+  prepare(const mesos::slave::ContainerConfig& containerConfig);
 
 protected:
   Flags flags;
