@@ -683,6 +683,18 @@ public:
     }
   }
 
+  BackendInfo getBackendInfo() const
+  {
+    return backend.get();
+  }
+
+  void setBackendInfo(Option<BackendInfo> backendInfo)
+  {
+      if (backendInfo.isSome()) {
+          backend = backendInfo.get();
+      }
+  }
+
   AgentInfo getAgentInfo() const
   {
     AgentInfo info;
@@ -1277,14 +1289,30 @@ protected:
     if (agents.contains(agentIP.get())) {
       LOG(INFO) << "Agent " << pid << " re-registering.";
 
+      Agent* agent = &(agents.at(agentIP.get()));
+      // Check if IPv6 address is added to a vtep interface
+      // and it is not present on the agent vtep
+      BackendInfo backendInfo = agent->getBackendInfo();
+      if (vtep.network6.isSome() &&
+           !backendInfo.vxlan().has_vtep_ip6()) {
+        Try<Network> vtepIP6 = vtep.allocateIP6();
+        if (vtepIP6.isError()) {
+          LOG(ERROR)
+            << "Unable to get VTEP IPv6 for Agent: " << vtepIP6.error()
+            << "Cannot fulfill re-registration for Agent: " << pid;
+          return;
+        }
+
+        backendInfo.mutable_vxlan()->set_vtep_ip6(stringify(vtepIP6.get()));
+        agent->setBackendInfo(backendInfo);
+      }
+
       // Check if any new overlay need to be installed on the
       // agent.
-      if (agents.at(agentIP.get()).addOverlays(
-            overlays,
-            registerMessage.network_config())) {
+      if (agent->addOverlays(overlays, registerMessage.network_config())) {
         // We installed a new overlay on this agent.
         update(Owned<Operation>(
-               new ModifyAgent(agents.at(agentIP.get()).getAgentInfo())))
+               new ModifyAgent(agent->getAgentInfo())))
           .onAny(defer(self(),
                  &ManagerProcess::_registerAgent,
                  pid,
@@ -1574,6 +1602,9 @@ protected:
               << network6.error();
             abort();
           }
+
+          // We should already have this particular overlay at bootup.
+          CHECK(overlays.contains(overlay.info().name()));
 
           LOG(INFO) << "reserving IPv6 " << stringify(network6.get());
           Try<Nothing> result = overlays.at(overlay.info().name())->reserve6(network6.get());
