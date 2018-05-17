@@ -44,7 +44,7 @@ inline process::Future<std::string> runCommand(
       process::io::read(s->out().get()),
       process::io::read(s->err().get()))
     .after(timeout,
-                [&](const process::Future<ProcessTuple> &t) ->
+                [=](const process::Future<ProcessTuple> &t) ->
                     process::Future<ProcessTuple> {
         // NOTE: Discarding this future has no effect on the subprocess
         os::killtree(pid, SIGKILL);
