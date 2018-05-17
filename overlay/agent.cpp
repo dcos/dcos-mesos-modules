@@ -862,7 +862,7 @@ Future<Nothing> ManagerProcess::_configureDockerNetwork(
     subnet = _subnet.get();
   }
 
-  if (overlay.docker_bridge().has_ip6()) {
+  if (overlay.docker_bridge().has_ip6() && networkConfig.enable_ipv6()) {
     Try<Network> _subnet6 = Network::parse(
         overlay.docker_bridge().ip6(),
         AF_INET6);
@@ -871,6 +871,11 @@ Future<Nothing> ManagerProcess::_configureDockerNetwork(
       return Failure("Failed to parse bridge ipv6: " + _subnet6.error());
     }
     subnet6 = _subnet6.get();
+  }
+
+  if (!subnet.isSome() && !subnet6.isSome()) {
+      // nothing to configure
+      return Nothing();
   }
 
   Try<string> dockerCommand = strings::format(

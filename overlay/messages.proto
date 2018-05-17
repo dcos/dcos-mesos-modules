@@ -61,6 +61,7 @@ message AgentNetworkConfig {
 
   // Timeout for calls to docker deamon and networking tools, ms
   optional uint32 command_timeout = 5 [default = 15000];
+  optional bool enable_ipv6 = 6 [default = true];
 }
 
 
