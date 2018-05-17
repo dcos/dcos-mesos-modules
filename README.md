@@ -1,4 +1,4 @@
-[![Build Status](https://jenkins.mesosphere.com/service/jenkins/buildStatus/icon?job=dcos-mesos-modules)](https://jenkins.mesosphere.com/service/jenkins/job/dcos-mesos-modules)
+[![Build Status](https://jenkins.mesosphere.com/service/jenkins/buildStatus/icon?job=mesos/modules/DCOS_Mesos_Modules-nightly)](https://jenkins.mesosphere.com/service/jenkins/job/mesos/job/modules/job/DCOS_Mesos_Modules-nightly/)
 
 # DC/OS Mesos Modules
 
