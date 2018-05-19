@@ -109,6 +109,10 @@ public:
     overriddenFlags.logrotate_max_stderr_size = flags.logrotate_max_stderr_size;
     overriddenFlags.logrotate_stderr_options = flags.logrotate_stderr_options;
 
+    // TODO(jieyu): Consider merge labels with container specific
+    // extra labels from the environment, instead of overwriting.
+    overriddenFlags.extra_labels = flags.extra_labels;
+
     // Check for overrides of the logger settings in the
     // containers environment variables.
     if (containerConfig.command_info().has_environment()) {
@@ -150,8 +154,10 @@ public:
     // And include all labels inside the `ExecutorInfo`.
     Label label;
     Labels labels;
+
+    Bytes totalSize;
+
     if (executorInfo.isSome() && executorInfo->has_labels()) {
-      Bytes totalSize;
       foreach (const Label executorLabel, executorInfo->labels().labels()) {
         totalSize += LABEL_PADDING_SIZE +
           executorLabel.key().size() +
@@ -166,13 +172,35 @@ public:
       }
     }
 
-    // NOTE: This field is required by the master/agent, but the protobuf
-    // is optional for backwards compatibility.
-    //
-    // NOTE: It is possible for the ExecutorInfo object to be blank if
-    // a nested container is launched after restarting the Mesos agent.
-    // This is because the agent does not need to keep the ExecutorInfo
-    // checkpointed after it has already launched the executor.
+    foreachpair (const string& key,
+                 const JSON::Value& value,
+                 overriddenFlags.extra_labels.values) {
+      // Skip invalid labels.
+      if (!value.is<JSON::String>()) {
+        continue;
+      }
+
+      string _value = value.as<JSON::String>().value;
+
+      totalSize += LABEL_PADDING_SIZE + key.size() + _value.size();
+
+      // Stop copying arbitrary labels once we hit a size limit.
+      if (totalSize > flags.max_label_payload_size) {
+        break;
+      }
+
+      label.set_key(key);
+      label.set_value(_value);
+      labels.add_labels()->CopyFrom(label);
+    }
+
+    // NOTE: It is possible for the ExecutorInfo object to be blank in
+    // the following cases:
+    //   * Prior to Mesos 1.5.0, the ContainerConfig object is not
+    //     checkpointed and hence, any containers recovered from earlier
+    //     versions will be missing some metadata.
+    //     See: https://issues.apache.org/jira/browse/MESOS-6894
+    //   * Standalone containers naturally do not have this field set.
     if (executorInfo.isSome() && executorInfo->has_framework_id()) {
       label.set_key("FRAMEWORK_ID");
       label.set_value(executorInfo->framework_id().value());
@@ -185,17 +213,9 @@ public:
       labels.add_labels()->CopyFrom(label);
     }
 
-    // Derive the AgentID and ContainerID from the sandbox directory.
+    // Derive the AgentID from the sandbox directory, which always
+    // occurs after the `slaves` directory.
     // See: src/slave/paths.hpp in the Mesos codebase for more info.
-    //
-    // * The AgentID always occurs after the `slaves` directory.
-    // * The ContainerID deals with nested containers by concatenating the
-    //   top-level and sub-container IDs with a `.` separator.
-    //
-    // NOTE: This parsing logic will fail to find the AgentID/ContainerID
-    // when it is given the sandbox symlink from this Docker workaround:
-    // https://issues.apache.org/jira/browse/MESOS-1833
-    // When this happens, we simply skip these labels.
     vector<string> sandboxTokens =
       strings::tokenize(containerConfig.directory(), "/");
 
@@ -215,24 +235,24 @@ public:
       labels.add_labels()->CopyFrom(label);
     }
 
-    // NOTE: ContainerID isn't passed into the container logger.
-    // However, it can be retrieved from the sandbox directory.
     label.set_key("CONTAINER_ID");
     label.set_value(stringify(containerId));
     labels.add_labels()->CopyFrom(label);
 
     // If the container is part of an executor (both nested or top
-    // level containers) , and the executor is named, use that name to
+    // level containers), and the executor is named, use that name to
     // present the logs. Otherwise, default to the ExecutorID.
     // This is the value that shows up in the typical journald view.
+    label.set_key("SYSLOG_IDENTIFIER");
     if (executorInfo.isSome()) {
-      label.set_key("SYSLOG_IDENTIFIER");
       label.set_value(
           executorInfo->has_name() ?
           executorInfo->name() :
           executorInfo->executor_id().value());
-      labels.add_labels()->CopyFrom(label);
+    } else {
+      label.set_value("mesos-container");
     }
+    labels.add_labels()->CopyFrom(label);
 
     // NOTE: We manually construct a pipe here instead of using
     // `Subprocess::PIPE` so that the ownership of the FDs is properly
