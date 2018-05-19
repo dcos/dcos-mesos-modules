@@ -8,6 +8,9 @@
 
 #include <stout/bytes.hpp>
 #include <stout/flags.hpp>
+#include <stout/foreach.hpp>
+#include <stout/hashmap.hpp>
+#include <stout/json.hpp>
 #include <stout/option.hpp>
 
 #include <stout/os/exists.hpp>
@@ -80,6 +83,16 @@ struct LoggerFlags : public virtual flags::FlagsBase
         "    size <logrotate_max_stderr_size>\n"
         "  }\n"
         "NOTE: The 'size' option will be overridden by this module.");
+
+    add(&LoggerFlags::extra_labels,
+        "extra_labels",
+        "Extra key value pairs (in JSON object format) that will be set\n"
+        "for the journald entry. Both the keys and the values need to be\n"
+        "strings. Note, this field is meant for cases where ExecutorInfo\n"
+        "labels are not applicable (e.g., standalone containers).\n"
+        "For example:\n"
+        "  {\"key\":\"value\"}",
+        JSON::Object());
   }
 
   static Option<Error> validateSize(const Bytes& value)
@@ -100,6 +113,8 @@ struct LoggerFlags : public virtual flags::FlagsBase
 
   Bytes logrotate_max_stderr_size;
   Option<std::string> logrotate_stderr_options;
+
+  JSON::Object extra_labels;
 };
 
 

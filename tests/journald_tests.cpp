@@ -551,6 +551,14 @@ TEST_P(JournaldLoggerTest, ROOT_LogToJournald)
   variable->set_name("CONTAINER_LOGGER_DESTINATION_TYPE");
   variable->set_value(GetParam());
 
+  variable = task.mutable_command()->mutable_environment()->add_variables();
+  variable->set_name("CONTAINER_LOGGER_EXTRA_LABELS");
+  variable->set_value(
+      "{"
+      "  \"EXTRA_LABEL\":\"extra_label\","
+      "  \"EXTRA_LABEL_INVALID\":10"
+      "}");
+
   Future<TaskStatus> statusStarting;
   Future<TaskStatus> statusRunning;
   Future<TaskStatus> statusFinished;
@@ -593,6 +601,18 @@ TEST_P(JournaldLoggerTest, ROOT_LogToJournald)
         {"journalctl",
          "EXECUTOR_ID=" + statusRunning->executor_id().value()});
 
+    Future<std::string> extraLabelQuery = runCommand(
+        "journalctl",
+        {"journalctl",
+         "FRAMEWORK_ID=" + frameworkId.get().value(),
+         "EXTRA_LABEL=extra_label"});
+
+    Future<std::string> extraLabelInvalidQuery = runCommand(
+        "journalctl",
+        {"journalctl",
+         "FRAMEWORK_ID=" + frameworkId.get().value(),
+         "EXTRA_LABEL_INVALID=10"});
+
     AWAIT_READY(frameworkQuery);
     ASSERT_TRUE(strings::contains(frameworkQuery.get(), specialString));
 
@@ -601,6 +621,14 @@ TEST_P(JournaldLoggerTest, ROOT_LogToJournald)
 
     AWAIT_READY(executorQuery);
     ASSERT_TRUE(strings::contains(executorQuery.get(), specialString));
+
+    AWAIT_READY(extraLabelQuery);
+    ASSERT_TRUE(strings::contains(extraLabelQuery.get(), specialString));
+
+    AWAIT_READY(extraLabelInvalidQuery);
+    ASSERT_FALSE(strings::contains(
+        extraLabelInvalidQuery.get(),
+        specialString));
   }
 
   std::string sandboxDirectory = path::join(
