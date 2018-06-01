@@ -1,4 +1,3 @@
-#include <list>
 #include <sstream>
 #include <set>
 #include <vector>
@@ -51,7 +50,6 @@ namespace network = process::network;
 
 typedef mesos::modules::overlay::AgentOverlayInfo::State OverlayState;
 
-using std::list;
 using std::string;
 using std::tuple;
 using std::vector;
@@ -292,7 +290,7 @@ void ManagerProcess::updateAgentOverlays(
     return;
   }
 
-  list<Future<Nothing>> futures;
+  vector<Future<Nothing>> futures;
   foreach (const AgentOverlayInfo& overlay, message.overlays()) {
     const string name = overlay.info().name();
 
@@ -362,7 +360,7 @@ void ManagerProcess::updateAgentOverlays(
 
 
 void ManagerProcess::_updateAgentOverlays(
-    const Future<list<Future<Nothing>>>& results)
+    const Future<vector<Future<Nothing>>>& results)
 {
   if (!results.isReady()) {
     LOG(ERROR) << "Unable to configure any overlay: "

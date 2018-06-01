@@ -66,7 +66,7 @@ protected:
       const overlay::internal::UpdateAgentOverlaysMessage& message);
 
   void _updateAgentOverlays(
-      const process::Future<std::list<process::Future<Nothing>>>& results);
+      const process::Future<std::vector<process::Future<Nothing>>>& results);
 
 private:
   enum State
