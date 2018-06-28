@@ -344,7 +344,7 @@ AC_CHECK_HEADERS([boost/lexical_cast.hpp boost/functional/hash.hpp],
                 [AC_MSG_ERROR([boost is not installed.])])
 
 AC_CHECK_HEADER([picojson.h],
-                [MESOS_CPPFLAGS+=" -DPICOJSON_USE_INT64 -D__STDC_FORMAT_MACROS"],
+                [MESOS_CPPFLAGS+=" -D__STDC_FORMAT_MACROS"],
                 [AC_MSG_ERROR([picojson is not installed.])])
 
 # Check for the systemd journal header.
