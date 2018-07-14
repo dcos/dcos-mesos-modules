@@ -195,9 +195,15 @@ Try<Owned<ManagerProcess>> ManagerProcess::create(
     }
   }
 
+  Option<string> cniDataDir;
+  if (agentConfig.has_cni_data_dir()) {
+    cniDataDir = agentConfig.cni_data_dir();
+  }
+
   return Owned<ManagerProcess>(
       new ManagerProcess(
         agentConfig.cni_dir(),
+        cniDataDir,
         networkConfig,
         agentConfig.max_configuration_attempts(),
         Owned<MasterDetector>(detector.get())));
@@ -682,7 +688,9 @@ Future<Nothing> ManagerProcess::configureMesosNetwork(const string& name)
   AgentNetworkConfig _networkConfig;
   _networkConfig.CopyFrom(networkConfig);
 
-  auto config = [name, subnet, overlay, _networkConfig](
+  Option<string> _cniDataDir = cniDataDir;
+
+  auto config = [name, subnet, overlay, _cniDataDir, _networkConfig](
       JSON::ObjectWriter* writer) {
     writer->field("name", name);
     writer->field("type", "mesos-cni-port-mapper");
@@ -691,16 +699,19 @@ Future<Nothing> ManagerProcess::configureMesosNetwork(const string& name)
         writer->element(overlay.mesos_bridge().name());
     });
     writer->field("chain", strings::upper(overlay.mesos_bridge().name())),
-    writer->field("delegate", 
-      [subnet, overlay, _networkConfig](JSON::ObjectWriter* writer) {
+    writer->field("delegate",
+      [subnet, overlay, _cniDataDir, _networkConfig](JSON::ObjectWriter* writer) {
         writer->field("type", "bridge");
         writer->field("bridge", overlay.mesos_bridge().name());
         writer->field("isGateway", true);
         writer->field("ipMasq", false);
         writer->field("mtu", _networkConfig.overlay_mtu());
 
-        writer->field("ipam", [subnet](JSON::ObjectWriter* writer) {
+        writer->field("ipam", [subnet, _cniDataDir](JSON::ObjectWriter* writer) {
           writer->field("type", "host-local");
+          if (_cniDataDir.isSome()) {
+            writer->field("dataDir", _cniDataDir.get());
+          }
           writer->field("subnet", stringify(subnet.get()));
 
           writer->field("routes", [](JSON::ArrayWriter* writer) {
@@ -858,11 +869,13 @@ Future<Nothing> ManagerProcess::__configureDockerNetwork(
 
 ManagerProcess::ManagerProcess(
     const string& _cniDir,
+    Option<string> _cniDataDir,
     const AgentNetworkConfig _networkConfig,
     const uint32_t _maxConfigAttempts,
     Owned<MasterDetector> _detector)
 : ProcessBase(AGENT_MANAGER_PROCESS_ID),
   cniDir(_cniDir),
+  cniDataDir(_cniDataDir),
   networkConfig(_networkConfig),
   maxConfigAttempts(_maxConfigAttempts),
   detector(_detector)
