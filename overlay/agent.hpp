@@ -74,11 +74,14 @@ private:
 
   ManagerProcess(
       const std::string& _cniDir,
+      Option<std::string> _cniDataDir,
       const overlay::internal::AgentNetworkConfig _networkConfig,
       const uint32_t _maxConfigAttempts,
       process::Owned<master::detector::MasterDetector> _detector);
 
   const std::string cniDir;
+
+  Option<std::string> cniDataDir;
 
   const overlay::internal::AgentNetworkConfig networkConfig;
 
