@@ -751,6 +751,7 @@ Future<Nothing> ManagerProcess::configureMesosNetwork(const string& name)
         writer->field("bridge", overlay.mesos_bridge().name());
         writer->field("isGateway", true);
         writer->field("ipMasq", false);
+        writer->field("hairpinMode", true);
         writer->field("mtu", _networkConfig.overlay_mtu());
 
         writer->field("ipam", [subnet, _cniDataDir](JSON::ObjectWriter* writer) {
