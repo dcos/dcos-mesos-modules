@@ -100,6 +100,7 @@ namespace overlay {
 namespace tests {
 
 constexpr char AGENT_CNI_DIR[] = "cni/";
+constexpr char AGENT_CNI_DATA_DIR[] = "cni_data/";
 constexpr char AGENT_JSON_CONFIG[] = "agent.json";
 constexpr char OVERLAY_SUBNET[] = "192.168.0.0/16";
 constexpr char OVERLAY_SUBNET6[] = "fd02::/64";
@@ -188,6 +189,7 @@ protected:
     // For the agents, by default, the Docker and Mesos networks are
     // disabled.
     agentOverlayConfig.set_cni_dir(AGENT_CNI_DIR);
+    agentOverlayConfig.set_cni_conf_dir(AGENT_CNI_CONF_DIR);
     agentOverlayConfig.mutable_network_config()->set_allocate_subnet(true);
     agentOverlayConfig.mutable_network_config()->set_mesos_bridge(false);
     agentOverlayConfig.mutable_network_config()->set_docker_bridge(false);
