@@ -801,7 +801,8 @@ Future<Nothing> ManagerProcess::_configureDockerNetwork(
 {
   if (exists) {
     LOG(INFO) << "Docker network '" << name << "' already exists";
-    return Nothing();
+    // we still need to fix the iptables rule
+    return __configureDockerNetwork(name, "");
   }
 
   CHECK(overlays.contains(name));
