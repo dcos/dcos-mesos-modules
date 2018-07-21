@@ -105,6 +105,7 @@ constexpr char AGENT_JSON_CONFIG[] = "agent.json";
 constexpr char OVERLAY_SUBNET[] = "192.168.0.0/16";
 constexpr char OVERLAY_SUBNET6[] = "fd02::/64";
 constexpr char OVERLAY_NAME[] = "mz-overlay";
+constexpr char OVERLAY_NAME_2[] = "mz-overlay-2";
 constexpr char MASTER_JSON_CONFIG[] = "master.json";
 constexpr char MASTER_OVERLAY_MODULE_NAME[] =
   "com_mesosphere_mesos_OverlayMasterManager";
@@ -189,7 +190,7 @@ protected:
     // For the agents, by default, the Docker and Mesos networks are
     // disabled.
     agentOverlayConfig.set_cni_dir(AGENT_CNI_DIR);
-    agentOverlayConfig.set_cni_conf_dir(AGENT_CNI_CONF_DIR);
+    agentOverlayConfig.set_cni_data_dir(AGENT_CNI_DATA_DIR);
     agentOverlayConfig.mutable_network_config()->set_allocate_subnet(true);
     agentOverlayConfig.mutable_network_config()->set_mesos_bridge(false);
     agentOverlayConfig.mutable_network_config()->set_docker_bridge(false);
@@ -202,12 +203,15 @@ protected:
         "iptables -t nat -D POSTROUTING -s %s "
         "-m set --match-set %s dst "
         "-j MASQUERADE; "
+        "iptables -t filter -D DOCKER-ISOLATION "
+        "-j RETURN; "
         "ipset destroy %s; "
-        "docker network rm %s",
+        "docker network rm %s %s",
         OVERLAY_SUBNET,
         stringify(IPSET_OVERLAY),
         stringify(IPSET_OVERLAY),
-        OVERLAY_NAME);
+        OVERLAY_NAME,
+        OVERLAY_NAME_2);
 
     ASSERT_SOME(cleanup);
 
@@ -265,7 +269,8 @@ protected:
           {"docker",
            "network",
            "rm",
-           OVERLAY_NAME});
+           OVERLAY_NAME, 
+           OVERLAY_NAME_2});
       AWAIT_READY(docker);
     }
 
@@ -935,7 +940,7 @@ TEST_F(OverlayTest, ROOT_checkAgentRecovery)
       info->overlays(0).subnet(), AF_INET);
 
   ASSERT_SOME(agentNetwork);
-  EXPECT_EQ(24, agentNetwork->prefix());
+  EXPECT_EQ(OVERLAY_PREFIX, agentNetwork->prefix());
 
   Try<net::IP::Network> allocatedSubnet = net::IP::Network::parse(
       "192.168.0.0/24", AF_INET);
@@ -1261,7 +1266,7 @@ TEST_F(OverlayTest, ROOT_checkAddVirtualNetworks)
   // delcared in the `masterOverlayConfig` object being passed into
   // `startOverlayMaster`.
   OverlayInfo overlay;
-  overlay.set_name("mz-test-add");
+  overlay.set_name(OVERLAY_NAME_2);
   overlay.set_subnet("11.0.0.0/8");
   overlay.set_subnet6("fd04::/64");
   overlay.set_prefix(OVERLAY_PREFIX);
@@ -1298,7 +1303,7 @@ TEST_F(OverlayTest, ROOT_checkAddVirtualNetworks)
 
   Option<OverlayInfo> _overlay;
   foreach(const OverlayInfo& __overlay, state->network().overlays()) {
-    if (__overlay.name() == "mz-test-add") {
+    if (__overlay.name() == OVERLAY_NAME_2) {
       _overlay = __overlay;
       break;
     }
@@ -1336,7 +1341,7 @@ TEST_F(OverlayTest, ROOT_checkAddVirtualNetworks)
   Option<AgentOverlayInfo> agentOverlay;
 
   foreach(const AgentOverlayInfo& _agentOverlay, info->overlays()) {
-    if (_agentOverlay.info().name() == "mz-test-add") {
+    if (_agentOverlay.info().name() == OVERLAY_NAME_2) {
       agentOverlay = _agentOverlay;
       break;
     }
@@ -1347,6 +1352,7 @@ TEST_F(OverlayTest, ROOT_checkAddVirtualNetworks)
   ASSERT_EQ(agentOverlay->info().subnet(), "11.0.0.0/8");
   ASSERT_EQ(agentOverlay->subnet6(), "fd04::/80");
   ASSERT_EQ(agentOverlay->info().subnet6(), "fd04::/64");
+
 }
 
 
@@ -1729,6 +1735,71 @@ TEST_F(OverlayTest, checkIPv6Configuration)
   ASSERT_FALSE(agentOverlay->has_subnet());
   ASSERT_EQ(agentOverlay->subnet6(), "fd04::/80");
   ASSERT_EQ(agentOverlay->backend().vxlan().vtep_ip6(), "fd03::1/64");
+}
+
+
+// Test bypass of Docker Isolation
+TEST_F(OverlayTest, ROOT_checkDockerIsolation)
+{
+  Try<Owned<cluster::Master>> master = StartMaster();
+  ASSERT_SOME(master);
+
+  LOG(INFO) << "Master PID: " << master.get()->pid;
+
+  Try<Owned<Anonymous>> masterModule = startOverlayMaster();
+  ASSERT_SOME(masterModule);
+
+  // Master `Anonymous` module created successfully. Lets see if we
+  // can hit the `state` endpoint of the Master.
+  UPID overlayMaster = UPID(
+      MASTER_MANAGER_PROCESS_ID,
+      master.get()->pid.address);
+
+  AgentConfig agentOverlayConfig;
+  agentOverlayConfig.set_master(stringify(overlayMaster.address));
+  // Enable Docker network.
+  agentOverlayConfig.mutable_network_config()->set_docker_bridge(true);
+
+  // Setup a future to notify the test that Agent overlay module has
+  // registered.
+  Future<AgentRegisteredMessage> agentRegisteredMessage =
+      FUTURE_PROTOBUF(AgentRegisteredMessage(), _, _);
+
+  // Before starting the agent create docker network
+  Future<string> docker = runCommand("docker",
+      {"docker",
+       "network",
+       "create",
+       OVERLAY_NAME});
+
+  AWAIT_READY(docker);
+
+  Try<Owned<overlayAgent::ManagerProcess>> agentModule = startOverlayAgent(
+      agentOverlayConfig);
+
+  ASSERT_SOME(agentModule);
+
+  AWAIT_READY(agentRegisteredMessage);
+
+  // Check the agent is allowed to progress.
+  AWAIT_READY(agentModule.get()->ready());
+
+  // Verify the Docker isolation bypass iptable rule
+  Future<string> iptables = runCommand("iptables",
+      {"iptables",
+       "-C", "DOCKER-ISOLATION",
+       "-j", "RETURN"
+      });
+
+  AWAIT_READY(iptables);
+
+  // Verify that iptables rule is the first one in the chain
+  iptables = runCommand("iptables",
+      {"iptables",
+       "-D", "DOCKER-ISOLATION",
+       "1"});
+
+  AWAIT_READY(iptables);
 }
 
 } // namespace tests {
