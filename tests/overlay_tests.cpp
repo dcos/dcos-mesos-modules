@@ -99,9 +99,11 @@ namespace overlay {
 namespace tests {
 
 constexpr char AGENT_CNI_DIR[] = "cni/";
+constexpr char AGENT_CNI_DATA_DIR[] = "cni_data/";
 constexpr char AGENT_JSON_CONFIG[] = "agent.json";
 constexpr char OVERLAY_SUBNET[] = "192.168.0.0/16";
 constexpr char OVERLAY_NAME[] = "mz-overlay";
+constexpr char OVERLAY_NAME_2[] = "mz-overlay-2";
 constexpr char MASTER_JSON_CONFIG[] = "master.json";
 constexpr char MASTER_OVERLAY_MODULE_NAME[] =
   "com_mesosphere_mesos_OverlayMasterManager";
@@ -180,6 +182,7 @@ protected:
     // For the agents, by default, the Docker and Mesos networks are
     // disabled.
     agentOverlayConfig.set_cni_dir(AGENT_CNI_DIR);
+    agentOverlayConfig.set_cni_data_dir(AGENT_CNI_DATA_DIR);
     agentOverlayConfig.mutable_network_config()->set_allocate_subnet(true);
     agentOverlayConfig.mutable_network_config()->set_mesos_bridge(false);
     agentOverlayConfig.mutable_network_config()->set_docker_bridge(false);
@@ -192,12 +195,15 @@ protected:
         "iptables -t nat -D POSTROUTING -s %s "
         "-m set --match-set %s dst "
         "-j MASQUERADE; "
+        "iptables -t filter -D DOCKER-ISOLATION "
+        "-j RETURN; "
         "ipset destroy %s; "
-        "docker network rm %s",
+        "docker network rm %s %s",
         OVERLAY_SUBNET,
         stringify(IPSET_OVERLAY),
         stringify(IPSET_OVERLAY),
-        OVERLAY_NAME);
+        OVERLAY_NAME,
+        OVERLAY_NAME_2);
 
     ASSERT_SOME(cleanup);
 
@@ -255,7 +261,8 @@ protected:
           {"docker",
            "network",
            "rm",
-           OVERLAY_NAME});
+           OVERLAY_NAME, 
+           OVERLAY_NAME_2});
       AWAIT_READY(docker);
     }
 
@@ -884,7 +891,7 @@ TEST_F(OverlayTest, ROOT_checkAgentRecovery)
       info->overlays(0).subnet(), AF_INET);
 
   ASSERT_SOME(agentNetwork);
-  EXPECT_EQ(24, agentNetwork->prefix());
+  EXPECT_EQ(OVERLAY_PREFIX, agentNetwork->prefix());
 
   Try<net::IP::Network> allocatedSubnet = net::IP::Network::parse(
       "192.168.0.0/24", AF_INET);
@@ -1184,7 +1191,7 @@ TEST_F(OverlayTest, ROOT_checkAddVirtualNetworks)
   // delcared in the `masterOverlayConfig` object being passed into
   // `startOverlayMaster`.
   OverlayInfo overlay;
-  overlay.set_name("mz-test-add");
+  overlay.set_name(OVERLAY_NAME_2);
   overlay.set_subnet("11.0.0.0/8");
   overlay.set_prefix(24);
 
@@ -1219,7 +1226,7 @@ TEST_F(OverlayTest, ROOT_checkAddVirtualNetworks)
 
   Option<OverlayInfo> _overlay;
   foreach(const OverlayInfo& __overlay, state->network().overlays()) {
-    if (__overlay.name() == "mz-test-add") {
+    if (__overlay.name() == OVERLAY_NAME_2) {
       _overlay = __overlay;
       break;
     }
@@ -1256,7 +1263,7 @@ TEST_F(OverlayTest, ROOT_checkAddVirtualNetworks)
   Option<AgentOverlayInfo> agentOverlay;
 
   foreach(const AgentOverlayInfo& _agentOverlay, info->overlays()) {
-    if (_agentOverlay.info().name() == "mz-test-add") {
+    if (_agentOverlay.info().name() == OVERLAY_NAME_2) {
       agentOverlay = _agentOverlay;
       break;
     }
@@ -1265,6 +1272,459 @@ TEST_F(OverlayTest, ROOT_checkAddVirtualNetworks)
   ASSERT_SOME(agentOverlay);
   ASSERT_EQ(agentOverlay->subnet(), "11.0.0.0/24");
   ASSERT_EQ(agentOverlay->info().subnet(), "11.0.0.0/8");
+<<<<<<< HEAD
+=======
+  ASSERT_EQ(agentOverlay->subnet6(), "fd04::/80");
+  ASSERT_EQ(agentOverlay->info().subnet6(), "fd04::/64");
+
+}
+
+
+// Tests the ability of the `Agent overlay module` to be registered
+// when master failover happens
+TEST_F(OverlayTest, checkAgentResetConfigurationAttempts)
+{
+  Try<Owned<cluster::Master>> master = StartMaster();
+  ASSERT_SOME(master);
+  StandaloneMasterDetector *detector =
+    new StandaloneMasterDetector(master.get()->pid);
+
+  LOG(INFO) << "Master PID: " << master.get()->pid;
+
+  // Ask overlay Master to use the replicated log by setting
+  // `replicated_log_dir`. We are not specifying `zk` configuration so
+  // the `quorum` will default to "1".
+  MasterConfig masterOverlayConfig;
+  masterOverlayConfig
+    .set_replicated_log_dir("overlay_replicated_log");
+
+  Try<Owned<Anonymous>> masterModule = startOverlayMaster(masterOverlayConfig);
+  ASSERT_SOME(masterModule);
+
+  // Master `Anonymous` module created successfully.
+  UPID overlayMaster = UPID(
+      MASTER_MANAGER_PROCESS_ID,
+      master.get()->pid.address);
+
+  AgentConfig agentOverlayConfig;
+  agentOverlayConfig.set_master(stringify(overlayMaster.address));
+  // Set number of times the agent will attempt to configure virtual
+  // networks by re-registering with the master.
+  agentOverlayConfig.set_max_configuration_attempts(1);
+
+  // Setup futures to notify the test that Agent overlay module has
+  // registered.
+  Future<AgentRegisteredAcknowledgement> agentRegisteredAcknowledgement =
+    FUTURE_PROTOBUF(AgentRegisteredAcknowledgement(), _, _);
+
+  Try<Owned<overlayAgent::ManagerProcess>> agentModule = startOverlayAgent(
+      agentOverlayConfig, detector);
+
+  AWAIT_READY(agentRegisteredAcknowledgement);
+
+  ASSERT_SOME(agentModule);
+
+  // Check the agent is allowed to progress.
+  AWAIT_READY(agentModule.get()->ready());
+
+  // Simulate a new master detected event to the agent module
+  // StandaloneMasterDetector detector(master.get()->pid);
+  detector->appoint(master.get()->pid);
+
+  // Wait for the agent module to (re-)register.
+  agentRegisteredAcknowledgement = FUTURE_PROTOBUF(
+    AgentRegisteredAcknowledgement(), _, _);
+  AWAIT_READY(agentRegisteredAcknowledgement);
+
+  // Hit the `overlay` endpoint of the agent to check that
+  // there was only one attempt.
+  UPID overlayAgent = UPID(master.get()->pid);
+  overlayAgent.id = AGENT_MANAGER_PROCESS_ID;
+
+  Future<Response> agentResponse = process::http::get(
+      overlayAgent,
+      "overlay");
+
+  AWAIT_EXPECT_RESPONSE_STATUS_EQ(OK().status, agentResponse);
+  AWAIT_EXPECT_RESPONSE_HEADER_EQ(
+      APPLICATION_JSON,
+      "Content-Type",
+      agentResponse);
+
+  Try<AgentInfo> info = parseAgentOverlay(agentResponse->body);
+  ASSERT_SOME(info);
+
+  // There should be only one attempt.
+  ASSERT_EQ(1, info->configuration_attempts());
+}
+
+
+// Tests the custom mtu configuration
+TEST_F(OverlayTest, checkMTUConfiguration)
+{
+  Try<Owned<cluster::Master>> master = StartMaster();
+  ASSERT_SOME(master);
+  LOG(INFO) << "Master PID: " << master.get()->pid;
+
+  // Ask overlay Master to use the replicated log by setting
+  // `replicated_log_dir`. We are not specifying `zk` configuration so
+  // the `quorum` will default to "1".
+  MasterConfig masterOverlayConfig;
+  masterOverlayConfig
+    .set_replicated_log_dir("overlay_replicated_log");
+  masterOverlayConfig.mutable_network()->set_vtep_mtu(9000);
+
+  Try<Owned<Anonymous>> masterModule = startOverlayMaster(masterOverlayConfig);
+  ASSERT_SOME(masterModule);
+
+  // Master `Anonymous` module created successfully.
+  UPID overlayMaster = UPID(
+      MASTER_MANAGER_PROCESS_ID,
+      master.get()->pid.address);
+
+  AgentConfig agentOverlayConfig;
+  agentOverlayConfig.set_master(stringify(overlayMaster.address));
+  // Set number of times the agent will attempt to configure virtual
+  // networks by re-registering with the master.
+  agentOverlayConfig.set_max_configuration_attempts(1);
+
+  // Setup futures to notify the test that Agent overlay module has
+  // registered.
+  Future<AgentRegisteredAcknowledgement> agentRegisteredAcknowledgement =
+    FUTURE_PROTOBUF(AgentRegisteredAcknowledgement(), _, _);
+
+  Try<Owned<overlayAgent::ManagerProcess>> agentModule = startOverlayAgent(
+      agentOverlayConfig);
+
+  AWAIT_READY(agentRegisteredAcknowledgement);
+
+  ASSERT_SOME(agentModule);
+
+  // Check the agent is allowed to progress.
+  AWAIT_READY(agentModule.get()->ready());
+
+  // Hit the `overlay` endpoint of the agent to check that
+  // there it got a custom mtu configuration
+  UPID overlayAgent = UPID(master.get()->pid);
+  overlayAgent.id = AGENT_MANAGER_PROCESS_ID;
+
+  Future<Response> agentResponse = process::http::get(
+      overlayAgent,
+      "overlay");
+
+  AWAIT_EXPECT_RESPONSE_STATUS_EQ(OK().status, agentResponse);
+  AWAIT_EXPECT_RESPONSE_HEADER_EQ(
+      APPLICATION_JSON,
+      "Content-Type",
+      agentResponse);
+
+  Try<AgentInfo> info = parseAgentOverlay(agentResponse->body);
+  ASSERT_SOME(info);
+
+  // MTU should be equal to the value in master configuration
+  ASSERT_EQ(9000, info->overlays(0).backend().vxlan().vtep_mtu());
+}
+
+
+//Test enable/disable IPv6 configuration
+TEST_F(OverlayTest, ROOT_checkEnableDisableIPv6Configuration)
+{
+  Try<Owned<cluster::Master>> master = StartMaster();
+  ASSERT_SOME(master);
+  LOG(INFO) << "Master PID: " << master.get()->pid;
+
+  Try<Owned<Anonymous>> masterModule = startOverlayMaster();
+  ASSERT_SOME(masterModule);
+
+  // Master `Anonymous` module created successfully.
+  UPID overlayMaster = UPID(
+      MASTER_MANAGER_PROCESS_ID,
+      master.get()->pid.address);
+
+  AgentConfig agentOverlayConfig;
+  agentOverlayConfig.set_master(stringify(overlayMaster.address));
+
+  // Enable docker bridge. IPv6 is enabled by default so
+  // this should create an IPv6 docker bridge
+  agentOverlayConfig.mutable_network_config()->set_docker_bridge(true);
+
+  // Setup futures to notify the test that Agent overlay module has
+  // registered.
+  Future<AgentRegisteredMessage> agentRegisteredMessage =
+    FUTURE_PROTOBUF(AgentRegisteredMessage(), _, _);
+
+  Try<Owned<overlayAgent::ManagerProcess>> agentModule = startOverlayAgent(
+      agentOverlayConfig);
+
+  ASSERT_SOME(agentModule);
+
+  AWAIT_READY(agentRegisteredMessage);
+
+  // Check the agent is allowed to progress.
+  AWAIT_READY(agentModule.get()->ready());
+
+  // Verify the docker network has been installed correctly.
+  Future<string> docker = runCommand("docker",
+      {"docker",
+       "network",
+       "inspect",
+       OVERLAY_NAME});
+
+  AWAIT_READY(docker);
+
+  Try<JSON::Array> json = JSON::parse<JSON::Array>(docker.get());
+  ASSERT_SOME(json);
+
+  // Verify that IPv6 is enabled on docker network
+  Result<JSON::Boolean> ipv6Flag =
+      json->values[0].as<JSON::Object>().find<JSON::Boolean>("EnableIPv6");
+  ASSERT_SOME(ipv6Flag);
+  EXPECT_EQ(ipv6Flag.get(), true);
+
+  // kill the agent
+  Try<Nothing> stop = stopOverlayAgent();
+  ASSERT_SOME(stop);
+
+  // Remove docker network
+  docker = runCommand(
+      "docker",
+      {"docker",
+       "network",
+       "rm",
+       OVERLAY_NAME});
+  AWAIT_READY(docker);
+
+  // Disable IPv6
+  agentOverlayConfig.mutable_network_config()->set_enable_ipv6(false);
+
+  // Re-start the agent and wait for the agent to re-register.
+  Future<AgentRegisteredMessage> agentReRegisteredMessage =
+    FUTURE_PROTOBUF(AgentRegisteredMessage(), _, _);
+
+  // re-start the agent.
+  agentModule  = startOverlayAgent(agentOverlayConfig);
+  ASSERT_SOME(agentModule);
+
+  AWAIT_READY(agentReRegisteredMessage);
+
+  // Check the agent is allowed to progress.
+  AWAIT_READY(agentModule.get()->ready());
+
+  // Verify the docker network has been installed correctly.
+  docker = runCommand("docker",
+      {"docker",
+       "network",
+       "inspect",
+       OVERLAY_NAME});
+
+  AWAIT_READY(docker);
+
+  json = JSON::parse<JSON::Array>(docker.get());
+  ASSERT_SOME(json);
+
+  // Verify that IPv6 is disabled in docker network
+  ipv6Flag = json->values[0].as<JSON::Object>().find<JSON::Boolean>("EnableIPv6");
+  ASSERT_SOME(ipv6Flag);
+  EXPECT_EQ(ipv6Flag.get(), false);
+}
+
+
+// Tests dynamic addition of IPv6 subnet
+TEST_F(OverlayTest, checkIPv6Configuration)
+{
+  Try<Owned<cluster::Master>> master = StartMaster();
+  ASSERT_SOME(master);
+  LOG(INFO) << "Master PID: " << master.get()->pid;
+
+  // Ask overlay Master to use the replicated log by setting
+  // `replicated_log_dir`. We are not specifying `zk` configuration so
+  // the `quorum` will default to "1".
+  MasterConfig masterOverlayConfig;
+  masterOverlayConfig
+    .set_replicated_log_dir("overlay_replicated_log");
+
+  // Create a IPv4 only Overlay
+  masterOverlayConfig.mutable_network()->set_vtep_subnet("44.128.0.0/16");
+  masterOverlayConfig.mutable_network()->set_vtep_mac_oui(
+      "70:B3:D5:00:00:00");
+
+  OverlayInfo overlay;
+  overlay.set_name(OVERLAY_NAME);
+  overlay.set_subnet(OVERLAY_SUBNET);
+  overlay.set_prefix(OVERLAY_PREFIX);
+
+  masterOverlayConfig.mutable_network()->add_overlays()->CopyFrom(overlay);
+
+  Try<Owned<Anonymous>> masterModule =
+      startOverlayMaster(masterOverlayConfig, false);
+  ASSERT_SOME(masterModule);
+
+  // Master `Anonymous` module created successfully.
+  UPID overlayMaster = UPID(
+      MASTER_MANAGER_PROCESS_ID,
+      master.get()->pid.address);
+
+  AgentConfig agentOverlayConfig;
+  agentOverlayConfig.set_master(stringify(overlayMaster.address));
+  // Set number of times the agent will attempt to configure virtual
+  // networks by re-registering with the master.
+  agentOverlayConfig.set_max_configuration_attempts(1);
+
+  // Setup futures to notify the test that Agent overlay module has
+  // registered.
+  Future<AgentRegisteredAcknowledgement> agentRegisteredAcknowledgement =
+    FUTURE_PROTOBUF(AgentRegisteredAcknowledgement(), _, _);
+
+  Try<Owned<overlayAgent::ManagerProcess>> agentModule = startOverlayAgent(
+      agentOverlayConfig);
+
+  AWAIT_READY(agentRegisteredAcknowledgement);
+
+  ASSERT_SOME(agentModule);
+
+  // Check the agent is allowed to progress.
+  AWAIT_READY(agentModule.get()->ready());
+
+  // Hit the `overlay` endpoint of the agent to check that
+  // there is no ipv6 subnet on vtep interface
+  UPID overlayAgent = UPID(master.get()->pid);
+  overlayAgent.id = AGENT_MANAGER_PROCESS_ID;
+
+  Future<Response> agentResponse = process::http::get(
+      overlayAgent,
+      "overlay");
+
+  AWAIT_EXPECT_RESPONSE_STATUS_EQ(OK().status, agentResponse);
+  AWAIT_EXPECT_RESPONSE_HEADER_EQ(
+      APPLICATION_JSON,
+      "Content-Type",
+      agentResponse);
+
+  Try<AgentInfo> info = parseAgentOverlay(agentResponse->body);
+  ASSERT_SOME(info);
+
+  // Verify that vtep_ip6 is not present
+  ASSERT_FALSE(info.get().overlays(0).backend().vxlan().has_vtep_ip6());
+
+  // kill the master
+  masterModule->reset();
+
+  // setup ipv6 address on vtep
+  masterOverlayConfig.mutable_network()->set_vtep_subnet6("fd03::/64");
+
+  // Add an overlay network with IPv6 configuration
+  overlay.clear_subnet();
+  overlay.clear_prefix();
+  overlay.set_name("mz-test-ip6");
+  overlay.set_subnet6("fd04::/64");
+  overlay.set_prefix6(OVERLAY_PREFIX6);
+
+  masterOverlayConfig.mutable_network()->add_overlays()->CopyFrom(overlay);
+
+  masterModule = startOverlayMaster(masterOverlayConfig, false);
+  ASSERT_SOME(masterModule);
+
+  // Re-start the master and wait for the Agent to re-register
+  agentRegisteredAcknowledgement = FUTURE_PROTOBUF(
+      AgentRegisteredAcknowledgement(), _, _);
+
+  AWAIT_READY(agentRegisteredAcknowledgement);
+
+  // Hit the `overlay` endpoint of the agent to check that module is
+  // up and responding
+  agentResponse = process::http::get(overlayAgent, "overlay");
+
+  AWAIT_EXPECT_RESPONSE_STATUS_EQ(OK().status, agentResponse);
+  AWAIT_EXPECT_RESPONSE_HEADER_EQ(
+      APPLICATION_JSON,
+      "Content-Type",
+      agentResponse);
+
+  // parse the agent config
+  info = parseAgentOverlay(agentResponse->body);
+  ASSERT_SOME(info);
+
+  // There should be 2 overlays.
+  ASSERT_EQ(2, info->overlays_size());
+
+  Option<AgentOverlayInfo> agentOverlay;
+  foreach(const AgentOverlayInfo& _agentOverlay, info->overlays()) {
+    if (_agentOverlay.info().name() == "mz-test-ip6") {
+      agentOverlay = _agentOverlay;
+      break;
+    }
+  }
+
+  ASSERT_SOME(agentOverlay);
+  ASSERT_FALSE(agentOverlay->has_subnet());
+  ASSERT_EQ(agentOverlay->subnet6(), "fd04::/80");
+  ASSERT_EQ(agentOverlay->backend().vxlan().vtep_ip6(), "fd03::1/64");
+>>>>>>> 26d11da... Adds a test case for testing bypass of Docker isolation iptables rule
+}
+
+
+// Test bypass of Docker Isolation
+TEST_F(OverlayTest, ROOT_checkDockerIsolation)
+{
+  Try<Owned<cluster::Master>> master = StartMaster();
+  ASSERT_SOME(master);
+
+  LOG(INFO) << "Master PID: " << master.get()->pid;
+
+  Try<Owned<Anonymous>> masterModule = startOverlayMaster();
+  ASSERT_SOME(masterModule);
+
+  // Master `Anonymous` module created successfully. Lets see if we
+  // can hit the `state` endpoint of the Master.
+  UPID overlayMaster = UPID(
+      MASTER_MANAGER_PROCESS_ID,
+      master.get()->pid.address);
+
+  AgentConfig agentOverlayConfig;
+  agentOverlayConfig.set_master(stringify(overlayMaster.address));
+  // Enable Docker network.
+  agentOverlayConfig.mutable_network_config()->set_docker_bridge(true);
+
+  // Setup a future to notify the test that Agent overlay module has
+  // registered.
+  Future<AgentRegisteredMessage> agentRegisteredMessage =
+      FUTURE_PROTOBUF(AgentRegisteredMessage(), _, _);
+
+  // Before starting the agent create docker network
+  Future<string> docker = runCommand("docker",
+      {"docker",
+       "network",
+       "create",
+       OVERLAY_NAME});
+
+  AWAIT_READY(docker);
+
+  Try<Owned<overlayAgent::ManagerProcess>> agentModule = startOverlayAgent(
+      agentOverlayConfig);
+
+  ASSERT_SOME(agentModule);
+
+  AWAIT_READY(agentRegisteredMessage);
+
+  // Check the agent is allowed to progress.
+  AWAIT_READY(agentModule.get()->ready());
+
+  // Verify the Docker isolation bypass iptable rule
+  Future<string> iptables = runCommand("iptables",
+      {"iptables",
+       "-C", "DOCKER-ISOLATION",
+       "-j", "RETURN"
+      });
+
+  AWAIT_READY(iptables);
+
+  // Verify that iptables rule is the first one in the chain
+  iptables = runCommand("iptables",
+      {"iptables",
+       "-D", "DOCKER-ISOLATION",
+       "1"});
+
+  AWAIT_READY(iptables);
 }
 
 } // namespace tests {
