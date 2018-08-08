@@ -95,6 +95,20 @@ liblogsink_la_LDFLAGS =					\
   -shared $(MESOS_LDFLAGS)
 
 ###############################################################################
+# Mesos Isolator Module.
+###############################################################################
+
+# Library with the MetricsIsolator module.
+pkglib_LTLIBRARIES += libmetrics-module.la
+libmetrics_module_la_SOURCES =				\
+  metrics/isolator.hpp					\
+  metrics/isolator.cpp
+
+libmetrics_module_la_LDFLAGS =				\
+  -release $(PACKAGE_VERSION)				\
+  -shared $(MESOS_LDFLAGS)
+
+###############################################################################
 # Overlay Modules.
 ###############################################################################
 
