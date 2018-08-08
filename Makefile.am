@@ -95,6 +95,20 @@ liblogsink_la_LDFLAGS =					\
   -shared $(MESOS_LDFLAGS)
 
 ###############################################################################
+# Mesos Isolator Module.
+###############################################################################
+
+# Library with the MetricsIsolator module.
+pkglib_LTLIBRARIES += libmetrics-module.la
+libmetrics_module_la_SOURCES =				\
+  metrics/isolator.hpp					\
+  metrics/isolator.cpp
+
+libmetrics_module_la_LDFLAGS =				\
+  -release $(PACKAGE_VERSION)				\
+  -shared $(MESOS_LDFLAGS)
+
+###############################################################################
 # Overlay Modules.
 ###############################################################################
 
@@ -216,6 +230,22 @@ test_logsink_LDADD =					\
   libmesos_tests.la					\
   liblogsink.la
 
+# Test (make check) binary for the Metrics module.
+check_PROGRAMS += test-metrics
+
+test_metrics_SOURCES =					\
+  tests/metrics_tests.cpp
+
+test_metrics_CPPFLAGS =					\
+  $(libmesos_tests_la_CPPFLAGS)
+
+test_metrics_LDADD =					\
+  $(MESOS_LDFLAGS)					\
+  $(MESOS_BUILD_DIR)/$(BUNDLE_SUBDIR)/.libs/libgmock.la	\
+  $(MESOS_BUILD_DIR)/src/.libs/libmesos.la		\
+  libmesos_tests.la					\
+  libmetrics-module.la
+
 # Test (make check) binary for the overlay modules.
 check_PROGRAMS += test-overlay
 
@@ -253,4 +283,5 @@ check-local: $(check_PROGRAMS)
 	./test-dockercfg
 	./test-journald --verbose
 	./test-logsink --verbose
+	./test-metrics --verbose
 	LIBPROCESS_IP=127.0.0.1 LIBPROCESS_PORT=5050 ./test-overlay --verbose
