@@ -40,6 +40,7 @@ using std::map;
 using std::string;
 using std::vector;
 
+using mesos::slave::ContainerClass;
 using mesos::slave::ContainerLaunchInfo;
 using mesos::slave::ContainerState;
 using mesos::slave::Isolator;
@@ -117,13 +118,76 @@ public:
       const ContainerID& containerId,
       const slave::ContainerConfig& containerConfig)
   {
-    // Let the metrics service know about the container being
-    // launched via an HTTP request. In the response, grab the
-    // STATSD_UDP_HOST and STATSD_UDP_PORT pair being returned and set
-    // it in the environment of the `ContainerLaunchInfo` returned
-    // from this function. On any errors, return a `Failure()`.
-    ContainerLaunchInfo launchInfo;
-    return launchInfo;
+    // For debug containers, we do not make API requests or inject new
+    // environment variables. They will inherit the environment of their
+    // parent container.
+    if (containerConfig.container_class() == ContainerClass::DEBUG) {
+      return None();
+    }
+
+    ContainerStartRequest containerStartRequest;
+    containerStartRequest.set_container_id(containerId.value());
+
+    return send(containerStartRequest)
+      .onAny(defer(
+        self(),
+        [=](const Future<http::Response>& response) -> Future<http::Response> {
+          if (!response.isReady()) {
+            return Failure("Error posting 'ContainerStartRequest' for"
+                           " container '" + containerId.value() + "': " +
+                           (response.isFailed() ?
+                               response.failure() : "Future discarded"));
+          }
+
+          return response;
+        }))
+      .then(defer(
+        self(),
+        [=](const http::Response& response)
+          -> Future<Option<ContainerLaunchInfo>> {
+          if (response.code == http::Status::NO_CONTENT) {
+            return None();
+          }
+
+          if (response.code != http::Status::CREATED) {
+            return Failure("Received unexpected response code "
+                           " '" + stringify(response.code) + "' when"
+                           " posting 'ContainerStartRequest' for container"
+                           " '" + containerId.value() + "'");
+          }
+
+          Try<ContainerStartResponse> containerStartResponse =
+            parse<ContainerStartResponse>(response.body);
+          if (containerStartResponse.isError()) {
+            return Failure("Error parsing the 'ContainerStartResponse' body for"
+                           " container '" + containerId.value() + "': " +
+                           containerStartResponse.error());
+          }
+
+          // TODO(klueska): For now, we require both `statsd_host` and
+          // `statsd_port` to be set. This may not be true in the future.
+          // We need to revisit this if/when this changes.
+          if (!containerStartResponse->has_statsd_host() ||
+              !containerStartResponse->has_statsd_port()) {
+            return Failure("Missing 'statsd_host' or 'statsd_port' field in"
+                           " 'ContainerStartResponse' for container"
+                           " '" + containerId.value() + "'");
+          }
+
+          Environment environment;
+          Environment::Variable* variable;
+          variable = environment.add_variables();
+          variable->set_name("STATSD_UDP_HOST");
+          variable->set_value(containerStartResponse->statsd_host());
+          variable = environment.add_variables();
+          variable->set_name("STATSD_UDP_PORT");
+          variable->set_value(stringify(containerStartResponse->statsd_port()));
+
+          ContainerLaunchInfo launchInfo;
+          launchInfo.mutable_environment()->CopyFrom(environment);
+
+          return launchInfo;
+        }));
   }
 
   virtual Future<Nothing> cleanup(
