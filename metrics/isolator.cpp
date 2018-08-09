@@ -286,9 +286,22 @@ public:
   virtual Future<Nothing> cleanup(
       const ContainerID& containerId)
   {
-    // Let the metrics service know about the container being
-    // destroyed via an HTTP request. On any errors, return an
-    // `Failure()`.
+    ContainerStopRequest containerStopRequest;
+    containerStopRequest.set_container_id(containerId.value());
+
+    Try<http::Response> response = send(containerStopRequest);
+    if (response.isError()) {
+      return Failure("Error posting 'containerStopRequest' for container"
+                     " '" + containerId.value() + "': " + response.error());
+    }
+
+    if (response->code != http::Status::ACCEPTED) {
+      return Failure("Received unexpected response code "
+                     " '" + stringify(response->code) + "' when"
+                     " posting 'containerStartRequest' for container"
+                     " '" + containerId.value() + "'");
+    }
+
     return Nothing();
   }
 
