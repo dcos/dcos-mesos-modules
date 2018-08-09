@@ -10,6 +10,7 @@
 #include <mesos/module/module.hpp>
 
 #include <process/address.hpp>
+#include <process/collect.hpp>
 #include <process/defer.hpp>
 #include <process/future.hpp>
 #include <process/process.hpp>
@@ -190,13 +191,34 @@ public:
         }));
   }
 
-  virtual Future<Nothing> cleanup(
-      const ContainerID& containerId)
+  virtual Future<Nothing> cleanup(const ContainerID& containerId)
   {
-    // Let the metrics service know about the container being
-    // destroyed via an HTTP request. On any errors, return an
-    // `Failure()`.
-    return Nothing();
+    // If a failed future is returned at any point during the sending of the
+    // DELETE request, we do not want to surface that failure to the
+    // containerizer, since it would prevent other isolators from cleaning up
+    // subsequently. We use `process::await()` to attain a future that becomes
+    // ready no matter what state the future associated with the request
+    // transitions to.
+    return process::await(sendContainerStop(containerId))
+      .then(defer(
+          self(),
+          [=](const Future<Future<http::Response>>& response) {
+            if (!response->isReady()) {
+              LOG(ERROR)
+                << "Failed posting container DELETE request for"
+                << " container '" << containerId.value() << "': "
+                << (response->isFailed() ?
+                      response->failure() : "Future discarded");
+            } else if (response.get()->code != http::Status::ACCEPTED) {
+              LOG(ERROR)
+                << "Received unexpected response code"
+                << " '" << stringify(response.get()->code) << "' when"
+                << " posting 'ContainerStartRequest' for container"
+                << " '" << containerId.value() << "'";
+            }
+
+            return Nothing();
+          }));
   }
 
   Future<http::Connection> connect()
