@@ -7,17 +7,27 @@
 
 #include <mesos/module/isolator.hpp>
 
+#include <process/address.hpp>
 #include <process/future.hpp>
 #include <process/process.hpp>
 
+#include <stout/assert.hpp>
 #include <stout/hashset.hpp>
+#include <stout/ip.hpp>
 #include <stout/nothing.hpp>
+#include <stout/numify.hpp>
 #include <stout/option.hpp>
+#include <stout/os.hpp>
+#include <stout/path.hpp>
+#include <stout/strings.hpp>
 #include <stout/try.hpp>
 
 #include "isolator.hpp"
 
 #include "metrics/messages.pb.h"
+
+namespace inet = process::network::inet;
+namespace unix = process::network::unix;
 
 using namespace mesos;
 using namespace process;
@@ -44,7 +54,67 @@ class MetricsIsolatorProcess
   : public process::Process<MetricsIsolatorProcess>
 {
 public:
-  MetricsIsolatorProcess(const isolator::Flags& flags_) : flags(flags_) {}
+  MetricsIsolatorProcess(const isolator::Flags& _flags) : flags(_flags)
+  {
+    // Set `serviceScheme` based on flags.
+    ASSERT(flags.service_scheme.isSome());
+    ASSERT(flags.service_scheme.get() == "http" ||
+           flags.service_scheme.get() == "https");
+    serviceScheme = flags.service_scheme.get();
+
+    // Set `service*Address` based on flags.
+    ASSERT(flags.service_address.isSome());
+
+    ASSERT(flags.service_network.isSome());
+    ASSERT(flags.service_network.get() == "inet" ||
+           flags.service_network.get() == "unix");
+
+    if (flags.service_network.get() == "inet") {
+      vector<string> hostport = strings::split(
+          flags.service_address.get(), ":");
+      if (hostport.size() != 2) {
+        LOG(FATAL) << "Unable to split'" << flags.service_address.get() << "'"
+                   << " into valid 'host:port' combination";
+      }
+
+      Try<net::IP> ip = net::IP::parse(hostport[0]);
+      if (ip.isError()) {
+        LOG(FATAL) << "Unable to parse '" << hostport[0] << "'"
+                   << " as a valid IP address: " << ip.error();
+      }
+
+      Try<uint16_t> port = numify<uint16_t>(hostport[1]);
+      if (port.isError()) {
+        LOG(FATAL) << "Unable parse '" + hostport[1] + "'"
+                   << " as a valid port of type 'uint16_t': " + port.error();
+      }
+
+      serviceInetAddress = inet::Address(ip.get(), port.get());
+    }
+
+    if (flags.service_network.get() == "unix") {
+      Try<unix::Address> address =
+          unix::Address::create(flags.service_address.get());
+      if (address.isError()) {
+        LOG(FATAL) << "Unable to convert '" + flags.service_address.get() + "'"
+                   << " to valid 'unix' address: " + address.error();
+      }
+
+      serviceUnixAddress = address.get();
+    }
+
+    // Set `serviceEndpoint` based on flags.
+    ASSERT(flags.service_endpoint.isSome());
+    serviceEndpoint = flags.service_endpoint.get();
+
+    // Set `legacyStateDir` based on flags.
+    ASSERT(flags.legacy_state_path_dir.isSome());
+
+    string path = path::join(flags.legacy_state_path_dir.get(), "containers");
+    if (os::exists(path)) {
+      legacyStateDir = path;
+    }
+  }
 
   virtual Future<Nothing> recover(
       const vector<ContainerState>& states,
@@ -87,6 +157,11 @@ public:
 
 private:
   const isolator::Flags flags;
+  string serviceScheme;
+  string serviceEndpoint;
+  Option<inet::Address> serviceInetAddress;
+  Option<unix::Address> serviceUnixAddress;
+  Option<string> legacyStateDir;
 };
 
 
