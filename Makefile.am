@@ -98,11 +98,23 @@ liblogsink_la_LDFLAGS =					\
 # Mesos Isolator Module.
 ###############################################################################
 
+METRICS_PROTOS =					\
+  metrics/messages.pb.cc				\
+  metrics/messages.pb.h
+
+# Targets for generating C++ protocol buffer code.
+metrics/%.pb.cc metrics/%.pb.h: $(top_srcdir)/metrics/%.proto
+	$(PROTOC) $(PROTOCFLAGS) --cpp_out=. $^
+
+BUILT_SOURCES += $(METRICS_PROTOS)
+CLEANFILES += $(METRICS_PROTOS)
+
 # Library with the MetricsIsolator module.
 pkglib_LTLIBRARIES += libmetrics-module.la
 libmetrics_module_la_SOURCES =				\
   metrics/isolator.hpp					\
-  metrics/isolator.cpp
+  metrics/isolator.cpp					\
+  ${METRICS_PROTOS}
 
 libmetrics_module_la_LDFLAGS =				\
   -release $(PACKAGE_VERSION)				\
