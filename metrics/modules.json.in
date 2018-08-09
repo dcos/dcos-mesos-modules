@@ -4,10 +4,10 @@
         "modules": [ {
             "name": "com_mesosphere_dcos_MetricsIsolatorModule",
             "parameters": [
-                {"key": "service_scheme", "value": "https"},
-                {"key": "service_network", "value": "inet"},
-                {"key": "service_address", "value": "127.0.0.1:8124"},
-                {"key": "service_endpoint", "value": "/containers"},
+                {"key": "dcos_metrics_service_scheme", "value": "http"},
+                {"key": "dcos_metrics_service_network", "value": "inet"},
+                {"key": "dcos_metrics_service_address", "value": "127.0.0.1:8124"},
+                {"key": "dcos_metrics_service_endpoint", "value": "/container"},
                 {"key": "legacy_state_path_dir",
                  "value": "/run/dcos/mesos/isolators/com_mesosphere_MetricsIsolatorModule/"}
             ]
