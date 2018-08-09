@@ -17,16 +17,14 @@
 #include <stout/assert.hpp>
 #include <stout/hashset.hpp>
 #include <stout/ip.hpp>
-#include <stout/json.hpp>
 #include <stout/nothing.hpp>
 #include <stout/numify.hpp>
 #include <stout/option.hpp>
 #include <stout/os.hpp>
 #include <stout/path.hpp>
+#include <stout/protobuf.hpp>
 #include <stout/strings.hpp>
 #include <stout/try.hpp>
-
-#include <stout/flags/parse.hpp>
 
 #include "isolator.hpp"
 
