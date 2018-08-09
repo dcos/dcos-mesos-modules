@@ -21,6 +21,7 @@
 #include <stout/option.hpp>
 #include <stout/os.hpp>
 #include <stout/path.hpp>
+#include <stout/protobuf.hpp>
 #include <stout/strings.hpp>
 #include <stout/try.hpp>
 
@@ -239,6 +240,23 @@ public:
         containerStopRequest);
 
     return send(body, "DELETE");
+  }
+
+  template<typename T>
+  Try<T> parse(const string& body)
+  {
+    Try<JSON::Object> json = flags::parse<JSON::Object>(body);
+    if (json.isError()) {
+      return Error("Error parsing input as JSON: " + json.error());
+    }
+
+    Try<T> response = ::protobuf::parse<T>(json.get());
+    if (response.isError()) {
+      return Error(
+          "Error parsing JSON into protobuf: " + response.error());
+    }
+
+    return response.get();
   }
 
 private:
