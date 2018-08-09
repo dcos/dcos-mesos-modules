@@ -2,6 +2,7 @@
 #include <string>
 #include <vector>
 
+#include <mesos/http.hpp>
 #include <mesos/mesos.hpp>
 #include <mesos/module.hpp>
 
@@ -16,6 +17,7 @@
 #include <stout/assert.hpp>
 #include <stout/hashset.hpp>
 #include <stout/ip.hpp>
+#include <stout/json.hpp>
 #include <stout/nothing.hpp>
 #include <stout/numify.hpp>
 #include <stout/option.hpp>
@@ -23,6 +25,8 @@
 #include <stout/path.hpp>
 #include <stout/strings.hpp>
 #include <stout/try.hpp>
+
+#include <stout/flags/parse.hpp>
 
 #include "isolator.hpp"
 
@@ -44,7 +48,6 @@ using mesos::slave::Isolator;
 
 using mesos::modules::metrics::ContainerStartRequest;
 using mesos::modules::metrics::ContainerStartResponse;
-using mesos::modules::metrics::LegacyState;
 
 namespace mesosphere {
 namespace dcos {
@@ -132,6 +135,85 @@ public:
     // destroyed via an HTTP request. On any errors, return an
     // `Failure()`.
     return Nothing();
+  }
+
+  Future<http::Connection> connect()
+  {
+    if (serviceInetAddress.isSome()) {
+      if (flags.service_scheme.get() == "http") {
+        return http::connect(serviceInetAddress.get(), http::Scheme::HTTP);
+      }
+      return http::connect(serviceInetAddress.get(), http::Scheme::HTTPS);
+    }
+
+    if (serviceUnixAddress.isSome()) {
+      if (flags.service_scheme.get() == "http") {
+        return http::connect(serviceUnixAddress.get(), http::Scheme::HTTP);
+      }
+      return http::connect(serviceUnixAddress.get(), http::Scheme::HTTPS);
+    }
+
+    UNREACHABLE();
+  }
+
+  Future<http::Response> send(
+      const string& endpoint,
+      const Option<string>& body,
+      const string& method)
+  {
+    return connect()
+      .then(defer(
+          self(),
+          [=](http::Connection connection) -> Future<http::Response> {
+            // Capture a reference to the connection to ensure that it remains
+            // open long enough to receive the response.
+            connection.disconnected()
+              .onAny([connection]() {});
+
+            http::Request request;
+            request.method = method;
+            request.keepAlive = true;
+            request.headers = {
+              {"Accept", APPLICATION_JSON},
+              {"Content-Type", APPLICATION_JSON}};
+
+            if (body.isSome()) {
+              request.body = body.get();
+            }
+
+            if (serviceInetAddress.isSome()) {
+              request.url = http::URL(
+                  serviceScheme,
+                  serviceInetAddress->ip,
+                  serviceInetAddress->port,
+                  endpoint);
+            }
+
+            if (serviceUnixAddress.isSome()) {
+              request.url.scheme = serviceScheme;
+              request.url.domain = "";
+              request.url.path = endpoint;
+            }
+
+            return connection.send(request);
+          }))
+      .after(
+          flags.request_timeout,
+          [](const Future<http::Response>&) {
+            return Failure("Request timed out");
+          });
+  }
+
+  Future<http::Response> send(const ContainerStartRequest& containerStartRequest)
+  {
+    string body = jsonify(JSON::Protobuf(containerStartRequest));
+
+    return send(serviceEndpoint, body, "POST");
+  }
+
+  Future<http::Response> sendContainerStop(const ContainerID& containerId)
+  {
+    return send(serviceEndpoint + "/" + containerId.value(), None(), "DELETE");
   }
 
 private:
