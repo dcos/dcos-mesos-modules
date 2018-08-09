@@ -123,20 +123,101 @@ public:
     }
   }
 
+  // Search through `legacyStateDir` and let the DC/OS metrics service
+  // know about any recovered containers that still have state in there.
   virtual Future<Nothing> recover(
       const vector<ContainerState>& states,
       const hashset<ContainerID>& orphans)
   {
-    // Search through `flags.legacy_state_path_dir` and compare the
-    // containers tracked in there with the vector holding the
-    // `ContainerState`. For any containers still active, let the
-    // metrics service know about them (via an HTTP request) along
-    // with the host/port it should listen on for metrics from them.
-    // After receiving a successful ACK, delete the state directory
-    // for the container.  For any containers no longer active, delete
-    // its state directory immediately. Once we've gone through all
-    // the containers, assert that `flags.legacy_state_path_dir` is
-    // empty and then remove it.
+    // If there is no `legacyStateDir`, we are done.
+    if (legacyStateDir.isNone()) {
+      return Nothing();
+    }
+
+    // Otherwise collect all containers known by either the agent
+    // (states) or the containerizer (orphans).
+    vector<ContainerID> containers;
+
+    foreach(const ContainerState& state, states) {
+      containers.push_back(state.container_id());
+    }
+
+    foreach(const ContainerID& container, orphans) {
+      containers.push_back(container);
+    }
+
+    // Look through all of the recovered containers and see if legacy
+    // metrics state for it exists. If it does, send the DC/OS metrics
+    // service a `ContainerStart` message containing the existing
+    // StatsD UDP host:port pair for the container.
+    foreach(const ContainerID& container, containers) {
+      string statePath = path::join(legacyStateDir.get(), container.value());
+      if (!os::exists(statePath)) {
+        continue;
+      }
+
+      Try<std::string> read = os::read(statePath);
+      if (read.isError()) {
+        LOG(ERROR) << "Error reading the legacy state path"
+                   << " '" << statePath << "': " << read.error();
+        continue;
+      }
+
+      Try<LegacyState> legacyState = parse<LegacyState>(read.get());
+      if (legacyState.isError()) {
+        LOG(ERROR) << "Error parsing the legacy state at"
+                   << " '" << statePath << "': " << legacyState.error();
+        continue;
+      }
+
+      ContainerStartRequest containerStartRequest;
+      containerStartRequest.set_container_id(container.value());
+      containerStartRequest.set_statsd_host(legacyState->statsd_host());
+      containerStartRequest.set_statsd_port(legacyState->statsd_port());
+
+      Try<http::Response> response = send(containerStartRequest);
+      if (response.isError()) {
+        LOG(ERROR) << "Error posting 'containerStartRequest' for container"
+                   << " '" << container.value() << "': " << response.error();
+        continue;
+      }
+
+      if (response->code != http::Status::CREATED) {
+        LOG(ERROR) << "Received unexpected response code "
+                   << " '" << response->code << "' when"
+                   << " posting 'containerStartRequest' for container"
+                   << " '" << container.value() << "'";
+        continue;
+      }
+
+      Try<ContainerStartResponse> containerStartResponse =
+        parse<ContainerStartResponse>(response->body);
+      if (containerStartResponse.isError()) {
+        LOG(ERROR) << "Error parsing the 'ContainerStartResponse' body for"
+                   << " container '" << container.value() << "': "
+                   << containerStartResponse.error();
+        continue;
+      }
+
+      LOG(INFO) << "Successfully recovered StatsD metrics gathering for"
+                << " container '" << container.value() << "' on"
+                << " '" << containerStartResponse->statsd_host() << ":"
+                << containerStartResponse->statsd_port() << "'";
+    }
+
+    // Once all state has been recovered, move the legacy state
+    // directory to a new location so that it isn't touched again on
+    // the next recovery. We don't delete it, just in case there is a
+    // bug and we need to get at the state again manually.
+    string newLegacyStateDir = path::join(legacyStateDir.get(), ".recovered");
+    Try<Nothing> rename = os::rename(legacyStateDir.get(), newLegacyStateDir);
+    if (rename.isError()) {
+      LOG(ERROR) << "Error renaming 'legacyStateDir'"
+                 << " '" << legacyStateDir.get() << "': " << rename.error();
+    }
+
+    legacyStateDir = None();
+
     return Nothing();
   }
 
