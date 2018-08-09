@@ -1,0 +1,27 @@
+syntax = "proto2";
+
+package mesos.modules.metrics;
+
+message ContainerStartRequest {
+  // The ContainerID of the container to
+  // start listening for metrics from.
+  required string container_id = 1;
+}
+
+message ContainerStartResponse {
+  // The fields below are optional because in the future we want the
+  // metrics service to only create StatsD listeners for containers
+  // corresponding to tasks that are labeled with
+  // `DCOS_METRICS_FORMAT=statsd`. For DC/OS 1.12, however, these will
+  // always be filled in.
+  optional string statsd_host = 1;
+  optional int32 statsd_port = 2;
+}
+
+message ContainerStopRequest {
+  // The ContainerID of the container to
+  // stop listening for metrics from.
+  required string container_id = 1;
+}
+
+message ContainerStopResponse {}
