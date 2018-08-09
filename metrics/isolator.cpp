@@ -2,6 +2,7 @@
 #include <string>
 #include <vector>
 
+#include <mesos/http.hpp>
 #include <mesos/mesos.hpp>
 #include <mesos/module.hpp>
 
@@ -14,6 +15,7 @@
 #include <stout/assert.hpp>
 #include <stout/hashset.hpp>
 #include <stout/ip.hpp>
+#include <stout/json.hpp>
 #include <stout/nothing.hpp>
 #include <stout/numify.hpp>
 #include <stout/option.hpp>
@@ -22,7 +24,11 @@
 #include <stout/strings.hpp>
 #include <stout/try.hpp>
 
+#include <stout/flags/parse.hpp>
+
 #include "isolator.hpp"
+
+#include "common/http.hpp"
 
 #include "metrics/messages.pb.h"
 
@@ -153,6 +159,86 @@ public:
     // destroyed via an HTTP request. On any errors, return an
     // `Failure()`.
     return Nothing();
+  }
+
+  Future<http::Connection> connect() {
+    if (serviceInetAddress.isSome()) {
+      if (flags.service_scheme.get() == "http") {
+        return http::connect(serviceInetAddress.get(), http::Scheme::HTTP);
+      }
+      return http::connect(serviceInetAddress.get(), http::Scheme::HTTPS);
+    }
+
+    if (serviceUnixAddress.isSome()) {
+      if (flags.service_scheme.get() == "http") {
+        return http::connect(serviceUnixAddress.get(), http::Scheme::HTTP);
+      }
+      return http::connect(serviceUnixAddress.get(), http::Scheme::HTTPS);
+    }
+
+    UNREACHABLE();
+  }
+
+  Try<http::Response> send(const string& body, const string& method)
+  {
+    Future<http::Connection> _connection = connect();
+    _connection.await();
+    if (!_connection.isReady()) {
+      string error = _connection.isFailed() ? _connection.failure() : "Unknown";
+      return Error("Unable to establish connection: " + error);
+    }
+
+    http::Connection connection = _connection.get();
+
+    http::Request request;
+    request.method = method;
+    request.keepAlive = true;
+    request.headers = {
+      {"Accept", APPLICATION_JSON},
+      {"Content-Type", APPLICATION_JSON}};
+    request.body = body;
+
+    if (serviceInetAddress.isSome()) {
+        request.url = http::URL(
+            serviceScheme,
+            serviceInetAddress->ip,
+            serviceInetAddress->port,
+            serviceEndpoint);
+    }
+
+    if (serviceUnixAddress.isSome()) {
+        request.url.scheme = serviceScheme;
+        request.url.domain = "";
+        request.url.path = serviceEndpoint;
+    }
+
+    Future<http::Response> response = connection.send(request);
+    response.await();
+    if (!response.isReady()) {
+      string error = response.isFailed() ? response.failure() : "Unknown";
+      return Error("Unable to send request: " + error);
+    }
+
+    return response.get();
+  }
+
+  Try<http::Response> send(const ContainerStartRequest& containerStartRequest)
+  {
+    string body = mesos::internal::serialize(
+        ContentType::JSON,
+        containerStartRequest);
+
+    return send(body, "POST");
+  }
+
+
+  Try<http::Response> send(const ContainerStopRequest& containerStopRequest)
+  {
+    string body = mesos::internal::serialize(
+        ContentType::JSON,
+        containerStopRequest);
+
+    return send(body, "DELETE");
   }
 
 private:
