@@ -9,6 +9,8 @@
 #include <mesos/module/isolator.hpp>
 
 #include <process/address.hpp>
+#include <process/collect.hpp>
+#include <process/defer.hpp>
 #include <process/future.hpp>
 #include <process/process.hpp>
 
@@ -150,6 +152,8 @@ public:
     // metrics state for it exists. If it does, send the DC/OS metrics
     // service a `ContainerStart` message containing the existing
     // StatsD UDP host:port pair for the container.
+    vector<Future<Nothing>> futures;
+
     foreach(const ContainerID& container, containers) {
       string statePath = path::join(legacyStateDir.get(), container.value());
       if (!os::exists(statePath)) {
@@ -175,50 +179,75 @@ public:
       containerStartRequest.set_statsd_host(legacyState->statsd_host());
       containerStartRequest.set_statsd_port(legacyState->statsd_port());
 
-      Try<http::Response> response = send(containerStartRequest);
-      if (response.isError()) {
-        LOG(ERROR) << "Error posting 'containerStartRequest' for container"
-                   << " '" << container.value() << "': " << response.error();
-        continue;
-      }
+      Future<Nothing> future = send(containerStartRequest)
+        .onAny(defer(
+          self(),
+          [=](const Future<http::Response>& response) -> Future<http::Response> {
+            if (!response.isReady()) {
+              return Failure("Error posting 'containerStartRequest' for"
+                             " container '" + container.value() + "': " +
+                             (response.isFailed() ?
+                                 response.failure() : "Unknown"));
+            }
 
-      if (response->code != http::Status::CREATED) {
-        LOG(ERROR) << "Received unexpected response code "
-                   << " '" << response->code << "' when"
-                   << " posting 'containerStartRequest' for container"
-                   << " '" << container.value() << "'";
-        continue;
-      }
+            return response.get();
+          }))
+        .then(defer(
+          self(),
+          [=](const http::Response& response) -> Future<Nothing> {
+            if (response.code != http::Status::CREATED) {
+              return Failure("Received unexpected response code "
+                             " '" + stringify(response.code) + "' when"
+                             " posting 'containerStartRequest' for container"
+                             " '" + container.value() + "'");
+            }
 
-      Try<ContainerStartResponse> containerStartResponse =
-        parse<ContainerStartResponse>(response->body);
-      if (containerStartResponse.isError()) {
-        LOG(ERROR) << "Error parsing the 'ContainerStartResponse' body for"
-                   << " container '" << container.value() << "': "
-                   << containerStartResponse.error();
-        continue;
-      }
+            Try<ContainerStartResponse> containerStartResponse =
+              parse<ContainerStartResponse>(response.body);
+            if (containerStartResponse.isError()) {
+              return Failure("Error parsing the 'ContainerStartResponse' body"
+                             " for container '" + container.value() + "': " +
+                             containerStartResponse.error());
+            }
 
-      LOG(INFO) << "Successfully recovered StatsD metrics gathering for"
-                << " container '" << container.value() << "' on"
-                << " '" << containerStartResponse->statsd_host() << ":"
-                << containerStartResponse->statsd_port() << "'";
+            LOG(INFO) << "Successfully recovered StatsD metrics gathering for"
+                      << " container '" << container.value() << "' on"
+                      << " '" << containerStartResponse->statsd_host() << ":"
+                      << containerStartResponse->statsd_port() << "'";
+
+            return Nothing();
+          }));
+
+      futures.push_back(future);
     }
 
-    // Once all state has been recovered, move the legacy state
-    // directory to a new location so that it isn't touched again on
-    // the next recovery. We don't delete it, just in case there is a
-    // bug and we need to get at the state again manually.
-    string newLegacyStateDir = path::join(legacyStateDir.get(), ".recovered");
-    Try<Nothing> rename = os::rename(legacyStateDir.get(), newLegacyStateDir);
-    if (rename.isError()) {
-      LOG(ERROR) << "Error renaming 'legacyStateDir'"
-                 << " '" << legacyStateDir.get() << "': " << rename.error();
-    }
+    return await(futures)
+      .then(defer(
+          self(),
+          [=](const vector<Future<Nothing>>& futures) {
+            // Log any errors that occurred while recovering the
+            // legacy state of each container.
+            foreach(const Future<Nothing>& future, futures) {
+              if (future.isFailed()) {
+                LOG(ERROR) << future.failure();
+              }
+            }
 
-    legacyStateDir = None();
+            // Once all state has been recovered, move the legacy state
+            // directory to a new location so that it isn't touched again on
+            // the next recovery. We don't delete it, just in case there is a
+            // bug and we need to get at the state again manually.
+            string newLegacyStateDir = path::join(legacyStateDir.get(), ".recovered");
+            Try<Nothing> rename = os::rename(legacyStateDir.get(), newLegacyStateDir);
+            if (rename.isError()) {
+              LOG(ERROR) << "Error renaming 'legacyStateDir'"
+                         << " '" << legacyStateDir.get() << "': " << rename.error();
+            }
 
-    return Nothing();
+            legacyStateDir = None();
+
+            return Nothing();
+          }));
   }
 
   // Let the metrics service know about the container being launched.
@@ -232,55 +261,67 @@ public:
     ContainerStartRequest containerStartRequest;
     containerStartRequest.set_container_id(containerId.value());
 
-    Try<http::Response> response = send(containerStartRequest);
-    if (response.isError()) {
-      return Failure("Error posting 'containerStartRequest' for container"
-                     " '" + containerId.value() + "': " + response.error());
-    }
+    return send(containerStartRequest)
+      .onAny(defer(
+        self(),
+        [=](const Future<http::Response>& response) -> Future<http::Response> {
+          if (!response.isReady()) {
+            return Failure("Error posting 'containerStartRequest' for"
+                           " container '" + containerId.value() + "': " +
+                           (response.isFailed() ?
+                               response.failure() : "Unknown"));
+          }
 
-    if (response->code == http::Status::NO_CONTENT) {
-        return ContainerLaunchInfo();
-    }
+          return response.get();
+        }))
+      .then(defer(
+        self(),
+        [=](const http::Response& response)
+          -> Future<Option<ContainerLaunchInfo>> {
+          if (response.code == http::Status::NO_CONTENT) {
+              return ContainerLaunchInfo();
+          }
 
-    if (response->code != http::Status::CREATED) {
-      return Failure("Received unexpected response code "
-                     " '" + stringify(response->code) + "' when"
-                     " posting 'containerStartRequest' for container"
-                     " '" + containerId.value() + "'");
-    }
+          if (response.code != http::Status::CREATED) {
+            return Failure("Received unexpected response code "
+                           " '" + stringify(response.code) + "' when"
+                           " posting 'containerStartRequest' for container"
+                           " '" + containerId.value() + "'");
+          }
 
-    Try<ContainerStartResponse> containerStartResponse =
-      parse<ContainerStartResponse>(response->body);
-    if (containerStartResponse.isError()) {
-      return Failure("Error parsing the 'ContainerStartResponse' body for"
-                     " container '" + containerId.value() + "': " +
-                     containerStartResponse.error());
-    }
+          Try<ContainerStartResponse> containerStartResponse =
+            parse<ContainerStartResponse>(response.body);
+          if (containerStartResponse.isError()) {
+            return Failure("Error parsing the 'ContainerStartResponse' body for"
+                           " container '" + containerId.value() + "': " +
+                           containerStartResponse.error());
+          }
 
-    // TODO(klueska): For now, we require both `statsd_host` and
-    // `statsd_port` to be set. This may not be true in the future.
-    // We need to revisit this if/when this changes.
-    if (!containerStartResponse->has_statsd_host() ||
-        !containerStartResponse->has_statsd_port()) {
-      return Failure("Missing 'statsd_host' or 'statsd_port' field in"
-                     " 'containerStartResponse' for container"
-                     " '" + containerId.value() + "': " +
-                     containerStartResponse.error());
-    }
+          // TODO(klueska): For now, we require both `statsd_host` and
+          // `statsd_port` to be set. This may not be true in the future.
+          // We need to revisit this if/when this changes.
+          if (!containerStartResponse->has_statsd_host() ||
+              !containerStartResponse->has_statsd_port()) {
+            return Failure("Missing 'statsd_host' or 'statsd_port' field in"
+                           " 'containerStartResponse' for container"
+                           " '" + containerId.value() + "': " +
+                           containerStartResponse.error());
+          }
 
-    Environment environment;
-    Environment::Variable* variable;
-    variable = environment.add_variables();
-    variable->set_name("STATSD_UDP_HOST");
-    variable->set_value(containerStartResponse->statsd_host());
-    variable = environment.add_variables();
-    variable->set_name("STATSD_UDP_PORT");
-    variable->set_value(stringify(containerStartResponse->statsd_port()));
+          Environment environment;
+          Environment::Variable* variable;
+          variable = environment.add_variables();
+          variable->set_name("STATSD_UDP_HOST");
+          variable->set_value(containerStartResponse->statsd_host());
+          variable = environment.add_variables();
+          variable->set_name("STATSD_UDP_PORT");
+          variable->set_value(stringify(containerStartResponse->statsd_port()));
 
-    ContainerLaunchInfo launchInfo;
-    launchInfo.mutable_task_environment()->CopyFrom(environment);
+          ContainerLaunchInfo launchInfo;
+          launchInfo.mutable_task_environment()->CopyFrom(environment);
 
-    return launchInfo;
+          return launchInfo;
+        }));
   }
 
   virtual Future<Nothing> cleanup(
@@ -289,20 +330,31 @@ public:
     ContainerStopRequest containerStopRequest;
     containerStopRequest.set_container_id(containerId.value());
 
-    Try<http::Response> response = send(containerStopRequest);
-    if (response.isError()) {
-      return Failure("Error posting 'containerStopRequest' for container"
-                     " '" + containerId.value() + "': " + response.error());
-    }
+    return send(containerStopRequest)
+      .onAny(defer(
+          self(),
+          [=](const Future<http::Response>& response) -> Future<http::Response> {
+            if (!response.isReady()) {
+              return Failure("Failed posting 'containerStopRequest' for"
+                             " container '" + containerId.value() + "': " +
+                             (response.isFailed() ?
+                                 response.failure() : "Unknown"));
+            }
 
-    if (response->code != http::Status::ACCEPTED) {
-      return Failure("Received unexpected response code "
-                     " '" + stringify(response->code) + "' when"
-                     " posting 'containerStartRequest' for container"
-                     " '" + containerId.value() + "'");
-    }
+            return response.get();
+          }))
+      .then(defer(
+          self(),
+          [=](const http::Response& response) -> Future<Nothing> {
+            if (response.code != http::Status::ACCEPTED) {
+              return Failure("Received unexpected response code "
+                             " '" + stringify(response.code) + "' when"
+                             " posting 'containerStartRequest' for container"
+                             " '" + containerId.value() + "'");
+            }
 
-    return Nothing();
+            return Nothing();
+          }));
   }
 
   Future<http::Connection> connect() {
@@ -323,50 +375,39 @@ public:
     UNREACHABLE();
   }
 
-  Try<http::Response> send(const string& body, const string& method)
+  Future<http::Response> send(const string& body, const string& method)
   {
-    Future<http::Connection> _connection = connect();
-    _connection.await();
-    if (!_connection.isReady()) {
-      string error = _connection.isFailed() ? _connection.failure() : "Unknown";
-      return Error("Unable to establish connection: " + error);
-    }
+    return connect()
+      .then(defer(
+          self(),
+          [=](http::Connection connection) -> Future<http::Response> {
+            http::Request request;
+            request.method = method;
+            request.keepAlive = true;
+            request.headers = {
+              {"Accept", APPLICATION_JSON},
+              {"Content-Type", APPLICATION_JSON}};
+            request.body = body;
 
-    http::Connection connection = _connection.get();
+            if (serviceInetAddress.isSome()) {
+                request.url = http::URL(
+                    serviceScheme,
+                    serviceInetAddress->ip,
+                    serviceInetAddress->port,
+                    serviceEndpoint);
+            }
 
-    http::Request request;
-    request.method = method;
-    request.keepAlive = true;
-    request.headers = {
-      {"Accept", APPLICATION_JSON},
-      {"Content-Type", APPLICATION_JSON}};
-    request.body = body;
+            if (serviceUnixAddress.isSome()) {
+                request.url.scheme = serviceScheme;
+                request.url.domain = "";
+                request.url.path = serviceEndpoint;
+            }
 
-    if (serviceInetAddress.isSome()) {
-        request.url = http::URL(
-            serviceScheme,
-            serviceInetAddress->ip,
-            serviceInetAddress->port,
-            serviceEndpoint);
-    }
-
-    if (serviceUnixAddress.isSome()) {
-        request.url.scheme = serviceScheme;
-        request.url.domain = "";
-        request.url.path = serviceEndpoint;
-    }
-
-    Future<http::Response> response = connection.send(request);
-    response.await();
-    if (!response.isReady()) {
-      string error = response.isFailed() ? response.failure() : "Unknown";
-      return Error("Unable to send request: " + error);
-    }
-
-    return response.get();
+            return connection.send(request);
+          }));
   }
 
-  Try<http::Response> send(const ContainerStartRequest& containerStartRequest)
+  Future<http::Response> send(const ContainerStartRequest& containerStartRequest)
   {
     string body = mesos::internal::serialize(
         ContentType::JSON,
@@ -376,7 +417,7 @@ public:
   }
 
 
-  Try<http::Response> send(const ContainerStopRequest& containerStopRequest)
+  Future<http::Response> send(const ContainerStopRequest& containerStopRequest)
   {
     string body = mesos::internal::serialize(
         ContentType::JSON,
