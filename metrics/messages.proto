@@ -1,0 +1,48 @@
+syntax = "proto2";
+
+package mesos.modules.metrics;
+
+message ContainerStartRequest {
+  // The ContainerID of the container to
+  // start listening for metrics from.
+  required string container_id = 1;
+
+  // Optional fields to inform the metrics service which host:port
+  // pair it should listen on for StatsD formatted metrics from this
+  // container. This is required to support upgrading from a 1.11 to a
+  // 1.12 DC/OS cluster because the 1.11 module used to persist this
+  // data. It will only be included in this message during `recovery`
+  // aftr an upgrade to inform the DC/OS metrics service about
+  // already-running containers that push metrics to a specific
+  // host:port pair. After `recovery` from the upgrade is complete,
+  // the new metrics service will own the perisistence of this
+  // information, and these fields will not be used for new
+  // containers.
+  optional string statsd_host = 2;
+  optional int32 statsd_port = 3;
+}
+
+message ContainerStartResponse {
+  // The fields below are optional because in the future we want the
+  // metrics service to only create StatsD listeners for containers
+  // corresponding to tasks that are labeled with
+  // `DCOS_METRICS_FORMAT=statsd`. For DC/OS 1.12, however, these will
+  // always be filled in.
+  optional string statsd_host = 1;
+  optional int32 statsd_port = 2;
+}
+
+message ContainerStopRequest {
+  // The ContainerID of the container to
+  // stop listening for metrics from.
+  required string container_id = 1;
+}
+
+message ContainerStopResponse {}
+
+// The format of the legacy state stored by the pre DC/OS 1.12 module.
+message LegacyState {
+  required string container_id = 1;
+  required string statsd_host = 2;
+  required int32 statsd_port = 3;
+}
