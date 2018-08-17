@@ -138,6 +138,8 @@ protected:
       }
     }
 
+    delete isolator;
+
     MesosTest::TearDown();
   }
 
@@ -222,8 +224,6 @@ TEST_F(MetricsTest, PrepareSuccess)
 
   ASSERT_SOME(requestBody);
   ASSERT_EQ(request->method, "POST");
-  ASSERT_FALSE(requestBody->has_statsd_host());
-  ASSERT_FALSE(requestBody->has_statsd_port());
   ASSERT_EQ(requestBody->container_id(), CONTAINER_ID);
 
   AWAIT_READY(prepared);
@@ -387,8 +387,9 @@ TEST_F(MetricsTest, CleanupSuccess)
 
 // When the isolator's `cleanup()` method is called and the module receives an
 // unexpected response code from the metrics service, the isolator should return
-// a failed future.
-TEST_F(MetricsTest, CleanupFailureUnexpectedStatusCode)
+// a ready future. In this case, we log an error but do not fail the cleanup so
+// that other isolators will have a chance to cleanup as well.
+TEST_F(MetricsTest, CleanupSuccessUnexpectedStatusCode)
 {
   MockMetricsService metricsService;
 
@@ -404,273 +405,41 @@ TEST_F(MetricsTest, CleanupFailureUnexpectedStatusCode)
 
   Future<Nothing> cleanedup = isolator->cleanup(containerId);
 
-  AWAIT_FAILED(cleanedup);
+  AWAIT_READY(cleanedup);
 }
 
 
-// When the isolator's `recover()` method is called and it finds legacy state
-// on disk, it should make API requests to the metrics service to transfer
-// ownership of the checkpointed container metrics state.
-TEST_F(MetricsTest, RecoverSuccessWithLegacyState)
-{
-  MockMetricsService metricsService;
-
-  const hashmap<string, int> containers =
-    {{"container1", 1234}, {"container2", 5678}};
-
-  LegacyStateStore stateStore(containers, statePath);
-
-  // Check that the container state directory exists. We will confirm that it
-  // has been moved after recovery.
-  ASSERT_TRUE(os::exists(path::join(statePath, "containers")));
-
-  // In the recovery case, the metrics module doesn't use the returned host and
-  // port for anything. We inject some dummy values here to avoid addressing the
-  // fact that the order in which the requests is made is not certain.
-  ContainerStartResponse responseBody;
-  responseBody.set_statsd_host("127.0.0.1");
-  responseBody.set_statsd_port(1234);
-
-  process::http::Response response(
-      string(jsonify(JSON::Protobuf(responseBody))),
-      process::http::Status::CREATED,
-      "application/json");
-
-  Future<process::http::Request> request1;
-  Future<process::http::Request> request2;
-  EXPECT_CALL(*metricsService.mock, container(_))
-    .WillOnce(DoAll(FutureArg<0>(&request1),
-                    Return(response)))
-    .WillOnce(DoAll(FutureArg<0>(&request2),
-                    Return(response)));
-
-  // Construct the agent's recovered state, which is passed
-  // into the module's `recover()` method.
-  vector<mesos::slave::ContainerState> agentState;
-
-  foreachkey (const string& containerId_, containers) {
-    ContainerID containerId;
-    containerId.set_value(containerId_);
-
-    mesos::slave::ContainerState containerState;
-
-    containerState.mutable_container_id()->CopyFrom(containerId);
-    containerState.set_pid(0);
-    containerState.set_directory(os::getcwd());
-
-    agentState.push_back(containerState);
-  }
-
-  Future<Nothing> recovered = isolator->recover(agentState, {});
-
-  // Verify the contents of the module's requests.
-  vector<Future<process::http::Request>> requests{request1, request2};
-  foreach (const Future<process::http::Request>& request, requests) {
-    AWAIT_READY(request);
-
-    Try<ContainerStartRequest> requestBody =
-      parse<ContainerStartRequest>(request->body);
-
-    ASSERT_SOME(requestBody);
-    ASSERT_EQ(request->method, "POST");
-
-    ASSERT_TRUE(requestBody->has_statsd_host());
-    ASSERT_EQ(requestBody->statsd_host(), LEGACY_HOST);
-
-    ASSERT_TRUE(requestBody->has_statsd_port());
-    ASSERT_TRUE(containers.contains(requestBody->container_id()));
-    ASSERT_EQ(
-        requestBody->statsd_port(),
-        containers.at(requestBody->container_id()));
-  }
-
-  AWAIT_READY(recovered);
-
-  ASSERT_FALSE(os::exists(statePath));
-}
-
-
-// When the isolator's `recover()` method is called, the legacy state directory
-// has been set in the module configuration, but the state directory does not
-// exist, then the module should return a ready future.
-TEST_F(MetricsTest, RecoverSuccessWithoutLegacyDirectory)
+// When the isolator's `cleanup()` method is called and the module's HTTP
+// request to the metrics service times out, the isolator should return a ready
+// future. In this case, we log an error but do not fail the cleanup so that
+// other isolators will have a chance to cleanup as well.
+TEST_F(MetricsTest, CleanupSuccessRequestTimeout)
 {
   Clock::pause();
 
   MockMetricsService metricsService;
 
-  os::rm(statePath);
+  process::Promise<process::http::Response> promise;
 
+  Future<Nothing> deleteRequest;
   EXPECT_CALL(*metricsService.mock, container(_))
-    .Times(0);
+    .WillOnce(DoAll(FutureSatisfy(&deleteRequest),
+              Return(promise.future())));
 
-  vector<mesos::slave::ContainerState> agentState;
-
-  Future<Nothing> recovered = isolator->recover(agentState, {});
-
-  AWAIT_READY(recovered);
-
-  // Settle the clock to ensure that the metrics API is not called.
-  Clock::settle();
-
-  Clock::resume();
-}
-
-
-// When the isolator's `recover()` method is called, the legacy state directory
-// has been set in the module configuration, the state directory exists, no
-// recovered containers are passed to the module, and the state directory is
-// empty as expected, then the module should return a ready future.
-TEST_F(MetricsTest, RecoverSuccessNoLegacyState)
-{
-  MockMetricsService metricsService;
-
-  EXPECT_CALL(*metricsService.mock, container(_))
-    .Times(0);
-
-  vector<mesos::slave::ContainerState> agentState;
-
-  Future<Nothing> recovered = isolator->recover(agentState, {});
-
-  AWAIT_READY(recovered);
-}
-
-
-// When the isolator's `recover()` method is called, the legacy state directory
-// has been set in the module configuration, the state directory exists,
-// recovered containers are passed to the module by the agent, but the state
-// directory is unexpectedly empty, the module should return a failed future.
-TEST_F(MetricsTest, RecoverFailureMissingLegacyState)
-{
-  Clock::pause();
-
-  MockMetricsService metricsService;
-
-  EXPECT_CALL(*metricsService.mock, container(_))
-    .Times(0);
-
-  vector<mesos::slave::ContainerState> agentState;
+  const string CONTAINER_ID = "new-container";
 
   ContainerID containerId;
-  containerId.set_value("recovered-container");
+  containerId.set_value(CONTAINER_ID);
 
-  mesos::slave::ContainerState containerState;
+  Future<Nothing> cleanedup = isolator->cleanup(containerId);
 
-  containerState.mutable_container_id()->CopyFrom(containerId);
-  containerState.set_pid(0);
-  containerState.set_directory(os::getcwd());
+  AWAIT_READY(deleteRequest);
 
-  agentState.push_back(containerState);
+  Clock::advance(REQUEST_TIMEOUT);
 
-  Future<Nothing> recovered = isolator->recover(agentState, {});
-
-  AWAIT_FAILED(recovered);
-
-  // Settle the clock to ensure that the metrics API is not called.
-  Clock::settle();
+  AWAIT_READY(cleanedup);
 
   Clock::resume();
-}
-
-
-// When the isolator's `recover()` method is called and it finds legacy state
-// on disk and subsequent requests to the metrics API return an unexpected
-// status code, it should return a failed future.
-TEST_F(MetricsTest, RecoverFailureUnexpectedStatusCode)
-{
-  MockMetricsService metricsService;
-
-  const hashmap<string, int> containers = {{"container1", 1234}};
-
-  LegacyStateStore stateStore(containers, statePath);
-
-  // Check that the container state directory exists. We will confirm that it
-  // still exists after recovery fails.
-  ASSERT_TRUE(os::exists(path::join(statePath, "containers")));
-
-  process::http::Response response(process::http::Status::OK);
-
-  ContainerStartResponse responseBody;
-  response.body = string(jsonify(JSON::Protobuf(responseBody)));
-
-  Future<process::http::Request> request;
-  EXPECT_CALL(*metricsService.mock, container(_))
-    .WillOnce(DoAll(FutureArg<0>(&request),
-                    Return(response)));
-
-  // Construct the agent's recovered state, which is passed
-  // into the module's `recover()` method.
-  vector<mesos::slave::ContainerState> agentState;
-
-  foreachkey (const string& containerId_, containers) {
-    ContainerID containerId;
-    containerId.set_value(containerId_);
-
-    mesos::slave::ContainerState containerState;
-
-    containerState.mutable_container_id()->CopyFrom(containerId);
-    containerState.set_pid(0);
-    containerState.set_directory(os::getcwd());
-
-    agentState.push_back(containerState);
-  }
-
-  Future<Nothing> recovered = isolator->recover(agentState, {});
-
-  AWAIT_FAILED(recovered);
-
-  ASSERT_TRUE(os::exists(path::join(statePath, "containers")));
-}
-
-
-// When the isolator's `prepare()` method is called and the metrics service
-// returns a 409 CONFLICT response, the isolator should return a failed future
-// with an error message that notifies the operator that the recovered port is
-// not available.
-TEST_F(MetricsTest, RecoverFailurePortNotAvailable)
-{
-  MockMetricsService metricsService;
-
-  const int port = 1234;
-  const hashmap<string, int> containers = {{"container1", port}};
-
-  LegacyStateStore stateStore(containers, statePath);
-
-  // Check that the container state directory exists. We will confirm that it
-  // still exists after recovery fails.
-  ASSERT_TRUE(os::exists(path::join(statePath, "containers")));
-
-  process::http::Response response(process::http::Status::CONFLICT);
-
-  Future<process::http::Request> request;
-  EXPECT_CALL(*metricsService.mock, container(_))
-    .WillOnce(DoAll(FutureArg<0>(&request),
-                    Return(response)));
-
-  // Construct the agent's recovered state, which is passed
-  // into the module's `recover()` method.
-  vector<mesos::slave::ContainerState> agentState;
-
-  foreachkey (const string& containerId_, containers) {
-    ContainerID containerId;
-    containerId.set_value(containerId_);
-
-    mesos::slave::ContainerState containerState;
-
-    containerState.mutable_container_id()->CopyFrom(containerId);
-    containerState.set_pid(0);
-    containerState.set_directory(os::getcwd());
-
-    agentState.push_back(containerState);
-  }
-
-  Future<Nothing> recovered = isolator->recover(agentState, {});
-
-  AWAIT_FAILED(recovered);
-
-  ASSERT_TRUE(strings::contains(recovered.failure(), stringify(port)));
-
-  ASSERT_TRUE(os::exists(path::join(statePath, "containers")));
 }
 
 } // namespace tests {
