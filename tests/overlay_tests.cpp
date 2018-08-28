@@ -200,10 +200,10 @@ protected:
     // We don't need to worry about whether the commands were
     // successful since this is precautionary.
     Try<string> cleanup = strings::format(
-        "iptables -t nat -D POSTROUTING -s %s "
+        "iptables -w -t nat -D POSTROUTING -s %s "
         "-m set --match-set %s dst "
         "-j MASQUERADE; "
-        "iptables -t filter -D DOCKER-ISOLATION "
+        "iptables -w -t filter -D DOCKER-ISOLATION "
         "-j RETURN; "
         "ipset destroy %s; "
         "docker network rm %s %s",
@@ -244,7 +244,7 @@ protected:
               masterOverlayConfig.network().overlays()) {
         Future<string> iptables = runCommand(
             "iptables",
-            {"iptables",
+            {"iptables", "-w",
             "-t", "nat",
             "-D", "POSTROUTING",
             "-s", overlay.subnet(),
@@ -272,7 +272,9 @@ protected:
            "rm",
            OVERLAY_NAME, 
            OVERLAY_NAME_2});
-      AWAIT_READY(docker);
+      // cannot use AWAIT_READY as it would fail if one of the networks
+      // is absent
+      docker.await();
     }
 
     MesosTest::TearDown();
@@ -586,7 +588,7 @@ TEST_F(OverlayTest, ROOT_checkMesosNetwork)
 
   // Verify that the `IPMASQ` rules have been installed.
   Future<string> iptables = runCommand("iptables",
-      {"iptables",
+      {"iptables", "-w",
       "-t", "nat",
       "-C", "POSTROUTING",
       "-s", OVERLAY_SUBNET,
@@ -680,7 +682,7 @@ TEST_F(OverlayTest, ROOT_checkDockerNetwork)
 
   // Verify that the `IPMASQ` rules have been installed.
   Future<string> iptables = runCommand("iptables",
-      {"iptables",
+      {"iptables", "-w",
       "-t", "nat",
       "-C", "POSTROUTING",
       "-s", OVERLAY_SUBNET,
@@ -1100,7 +1102,7 @@ TEST_F(OverlayTest, ROOT_checkAgentNetworkConfigChange)
 
   // Verify that the `IPMASQ` rules have been installed.
   Future<string> iptables = runCommand("iptables",
-      {"iptables",
+      {"iptables", "-w",
       "-t", "nat",
       "-C", "POSTROUTING",
       "-s", OVERLAY_SUBNET,
@@ -1113,7 +1115,7 @@ TEST_F(OverlayTest, ROOT_checkAgentNetworkConfigChange)
 
   // Delete the IPMASQ rules.
   iptables = runCommand("iptables",
-      {"iptables",
+      {"iptables", "-w",
       "-t", "nat",
       "-D", "POSTROUTING",
       "-s", OVERLAY_SUBNET,
@@ -1145,7 +1147,7 @@ TEST_F(OverlayTest, ROOT_checkAgentNetworkConfigChange)
   // With the `mesos_bridge` and the `docker_bridge` disabled there
   // should be no IPMASQ rules installed. Check IPMASQ rules don't exist.
   iptables = runCommand("iptables",
-      {"iptables",
+      {"iptables", "-w",
       "-t", "nat",
       "-C", "POSTROUTING",
       "-s", OVERLAY_SUBNET,
@@ -1641,7 +1643,7 @@ TEST_F(OverlayTest, ROOT_checkDockerIsolation)
 
   // Verify the Docker isolation bypass iptable rule
   Future<string> iptables = runCommand("iptables",
-      {"iptables",
+      {"iptables", "-w",
        "-C", "DOCKER-ISOLATION",
        "-j", "RETURN"
       });
@@ -1650,7 +1652,7 @@ TEST_F(OverlayTest, ROOT_checkDockerIsolation)
 
   // Verify that iptables rule is the first one in the chain
   iptables = runCommand("iptables",
-      {"iptables",
+      {"iptables", "-w",
        "-D", "DOCKER-ISOLATION",
        "1"});
 
