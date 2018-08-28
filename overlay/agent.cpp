@@ -648,9 +648,9 @@ Future<Nothing> ManagerProcess::_configure(
 
       command = strings::format(
           "ipset add -exist %s %s" " nomatch &&"
-          " iptables -t nat -C POSTROUTING -s %s -m set"
+          " iptables -w -t nat -C POSTROUTING -s %s -m set"
           " --match-set %s dst -j MASQUERADE ||"
-          " iptables -t nat -A POSTROUTING -s %s -m"
+          " iptables -w -t nat -A POSTROUTING -s %s -m"
           " set --match-set %s dst -j MASQUERADE",
           IPSET_OVERLAY,
           overlaySubnet,
@@ -933,8 +933,8 @@ Future<Nothing> ManagerProcess::__configureDockerNetwork(
   // However, Docker disallows this. So we will install a de-funct
   // rule in the DOCKER-ISOLATION chain to bypass any isolation
   // docker might be trying to enforce.
-  const string iptablesCommand = "iptables -D DOCKER-ISOLATION -j RETURN; "
-    "iptables -I DOCKER-ISOLATION 1 -j RETURN";
+  const string iptablesCommand = "iptables -w -D DOCKER-ISOLATION -j RETURN; "
+    "iptables -w -I DOCKER-ISOLATION 1 -j RETURN";
 
   Duration timeout = Milliseconds(networkConfig.command_timeout());
   return runScriptCommand(iptablesCommand, timeout)
