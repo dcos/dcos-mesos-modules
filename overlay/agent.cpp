@@ -859,13 +859,21 @@ Future<Nothing> ManagerProcess::__configureDockerNetwork(
   // However, Docker disallows this. So we will install a de-funct
   // rule in the DOCKER-ISOLATION chain to bypass any isolation
   // docker might be trying to enforce.
-  const string iptablesCommand = "iptables -D DOCKER-ISOLATION -j RETURN; "
-    "iptables -I DOCKER-ISOLATION 1 -j RETURN";
+  const string iptablesCommand = 
+      "iptables -w -D DOCKER-ISOLATION -j RETURN; "
+      "iptables -w -I DOCKER-ISOLATION 1 -j RETURN";
 
-  return runScriptCommand(iptablesCommand)
-    .then([]() -> Future<Nothing> {
-        return Nothing();
-        });
+  Duration timeout = Milliseconds(networkConfig.command_timeout());
+  return runScriptCommand(iptablesCommand, timeout)
+      .repair(defer(self(), [timeout](const Future<string>&) {
+          const string iptablesCommand =     
+              "iptables -w -D DOCKER-ISOLATION-STAGE-2 -j RETURN; "
+              "iptables -w -I DOCKER-ISOLATION-STAGE-2 1 -j RETURN";
+          return runScriptCommand(iptablesCommand, timeout);
+      }))
+      .then([]() -> Future<Nothing> {
+          return Nothing();
+      });
 }
 
 ManagerProcess::ManagerProcess(
