@@ -197,8 +197,8 @@ protected:
         "iptables -t nat -D POSTROUTING -s %s "
         "-m set --match-set %s dst "
         "-j MASQUERADE; "
-        "iptables -t filter -D DOCKER-ISOLATION "
-        "-j RETURN; "
+        "iptables -w -t filter -D DOCKER-ISOLATION -j RETURN; "
+        "iptables -w -t filter -D DOCKER-ISOLATION-STAGE-2 -j RETURN; "
         "ipset destroy %s; "
         "docker network rm %s %s",
         OVERLAY_SUBNET,
@@ -263,9 +263,9 @@ protected:
           {"docker",
            "network",
            "rm",
-           OVERLAY_NAME, 
+           OVERLAY_NAME,
            OVERLAY_NAME_2});
-      AWAIT_READY(docker);
+      docker.await();
     }
 
     MesosTest::TearDown();
@@ -582,15 +582,15 @@ TEST_F(OverlayTest, ROOT_checkMesosNetwork)
   ASSERT_SOME(network);
   EXPECT_EQ(network.get(), OVERLAY_NAME);
 
-  Result<JSON::Boolean> ipMasq = json->find<JSON::Boolean>("ipMasq");
+  Result<JSON::Boolean> ipMasq = json->find<JSON::Boolean>("delegate.ipMasq");
   ASSERT_SOME(ipMasq);
   EXPECT_EQ(ipMasq.get(), false);
 
-  Result<JSON::Number> mtu = json->find<JSON::Number>("mtu");
+  Result<JSON::Number> mtu = json->find<JSON::Number>("delegate.mtu");
   ASSERT_SOME(mtu);
   EXPECT_EQ(mtu.get(), 1420);
 
-  Result<JSON::Object> ipam = json->find<JSON::Object>("ipam");
+  Result<JSON::Object> ipam = json->find<JSON::Object>("delegate.ipam");
   ASSERT_SOME(ipam);
 
   Result<JSON::String> subnet = ipam->find<JSON::String>("subnet");
@@ -1274,6 +1274,85 @@ TEST_F(OverlayTest, ROOT_checkAddVirtualNetworks)
   ASSERT_SOME(agentOverlay);
   ASSERT_EQ(agentOverlay->subnet(), "11.0.0.0/24");
   ASSERT_EQ(agentOverlay->info().subnet(), "11.0.0.0/8");
+}
+
+
+// Test bypass of Docker Isolation
+TEST_F(OverlayTest, ROOT_checkDockerIsolation)
+{
+  Try<Owned<cluster::Master>> master = StartMaster();
+  ASSERT_SOME(master);
+
+  LOG(INFO) << "Master PID: " << master.get()->pid;
+
+  Try<Owned<Anonymous>> masterModule = startOverlayMaster();
+  ASSERT_SOME(masterModule);
+
+  // Master `Anonymous` module created successfully. Lets see if we
+  // can hit the `state` endpoint of the Master.
+  UPID overlayMaster = UPID(
+      MASTER_MANAGER_PROCESS_ID,
+      master.get()->pid.address);
+
+  AgentConfig agentOverlayConfig;
+  agentOverlayConfig.set_master(stringify(overlayMaster.address));
+  // Enable Docker network.
+  agentOverlayConfig.mutable_network_config()->set_docker_bridge(true);
+
+  // Setup a future to notify the test that Agent overlay module has
+  // registered.
+  Future<AgentRegisteredMessage> agentRegisteredMessage =
+      FUTURE_PROTOBUF(AgentRegisteredMessage(), _, _);
+
+  // Before starting the agent create docker network
+  Future<string> docker = runCommand("docker",
+      {"docker",
+       "network",
+       "create",
+       OVERLAY_NAME});
+
+  AWAIT_READY(docker);
+
+  Try<Owned<overlayAgent::ManagerProcess>> agentModule = startOverlayAgent(
+      agentOverlayConfig);
+
+  ASSERT_SOME(agentModule);
+
+  AWAIT_READY(agentRegisteredMessage);
+
+  // Check the agent is allowed to progress.
+  AWAIT_READY(agentModule.get()->ready());
+
+  std::string dockerChain = "DOCKER-ISOLATION";
+
+  // Check the docker chain
+  Future<string> iptables = runCommand("iptables",
+      {"iptables", "-w",
+       "-L", dockerChain
+      });
+
+  iptables.await();
+
+  if (iptables.isFailed()) {
+      dockerChain = "DOCKER-ISOLATION-STAGE-2";
+  }
+
+  // Verify the Docker isolation bypass iptable rule
+  iptables = runCommand("iptables",
+      {"iptables", "-w",
+       "-C", dockerChain,
+       "-j", "RETURN"
+      });
+
+  AWAIT_READY(iptables);
+
+  // Verify that iptables rule is the first one in the chain
+  iptables = runCommand("iptables",
+      {"iptables", "-w",
+       "-D", dockerChain,
+       "1"});
+
+  AWAIT_READY(iptables);
 }
 
 } // namespace tests {
