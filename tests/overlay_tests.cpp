@@ -203,8 +203,8 @@ protected:
         "iptables -w -t nat -D POSTROUTING -s %s "
         "-m set --match-set %s dst "
         "-j MASQUERADE; "
-        "iptables -w -t filter -D DOCKER-ISOLATION "
-        "-j RETURN; "
+        "iptables -w -t filter -D DOCKER-ISOLATION -j RETURN; "
+        "iptables -w -t filter -D DOCKER-ISOLATION-STAGE-2 -j RETURN; "
         "ipset destroy %s; "
         "docker network rm %s %s",
         OVERLAY_SUBNET,
@@ -1641,10 +1641,24 @@ TEST_F(OverlayTest, ROOT_checkDockerIsolation)
   // Check the agent is allowed to progress.
   AWAIT_READY(agentModule.get()->ready());
 
-  // Verify the Docker isolation bypass iptable rule
+  std::string dockerChain = "DOCKER-ISOLATION";
+
+  // Check the docker chain
   Future<string> iptables = runCommand("iptables",
       {"iptables", "-w",
-       "-C", "DOCKER-ISOLATION",
+       "-L", dockerChain
+      });
+
+  iptables.await();
+
+  if (iptables.isFailed()) {
+      dockerChain = "DOCKER-ISOLATION-STAGE-2";
+  }
+
+  // Verify the Docker isolation bypass iptable rule
+  iptables = runCommand("iptables",
+      {"iptables", "-w",
+       "-C", dockerChain,
        "-j", "RETURN"
       });
 
@@ -1653,7 +1667,7 @@ TEST_F(OverlayTest, ROOT_checkDockerIsolation)
   // Verify that iptables rule is the first one in the chain
   iptables = runCommand("iptables",
       {"iptables", "-w",
-       "-D", "DOCKER-ISOLATION",
+       "-D", dockerChain,
        "1"});
 
   AWAIT_READY(iptables);
