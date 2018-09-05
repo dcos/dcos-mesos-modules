@@ -214,7 +214,7 @@ public:
           [=](const Future<Future<http::Response>>& response) {
             if (!response->isReady()) {
               LOG(ERROR)
-                << "Failed posting container DELETE request for"
+                << "Failed sending container DELETE request for"
                 << " container '" << containerId.value() << "': "
                 << (response->isFailed() ?
                       response->failure() : "Future discarded");
@@ -222,7 +222,7 @@ public:
               LOG(ERROR)
                 << "Received unexpected response code"
                 << " '" << stringify(response.get()->code) << "' when"
-                << " posting 'ContainerStartRequest' for container"
+                << " sending DELETE request for container"
                 << " '" << containerId.value() << "'";
             }
 
