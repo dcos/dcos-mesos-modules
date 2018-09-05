@@ -17,11 +17,3 @@ message ContainerStartResponse {
   optional string statsd_host = 1;
   optional int32 statsd_port = 2;
 }
-
-message ContainerStopRequest {
-  // The ContainerID of the container to
-  // stop listening for metrics from.
-  required string container_id = 1;
-}
-
-message ContainerStopResponse {}
