@@ -442,6 +442,42 @@ TEST_F(MetricsTest, CleanupSuccessRequestTimeout)
   Clock::resume();
 }
 
+
+TEST_F(MetricsTest, PrepareAndCleanupSuccessDebugContainer)
+{
+  Clock::pause();
+
+  MockMetricsService metricsService;
+
+  // Since we're passing a DEBUG container to the isolator, we do not expect any
+  // requests to be made to the metrics service.
+  EXPECT_CALL(*metricsService.mock, container(_))
+    .Times(0);
+
+  const string CONTAINER_ID = "new-container";
+
+  ContainerID containerId;
+  containerId.set_value(CONTAINER_ID);
+
+  mesos::slave::ContainerConfig containerConfig;
+  containerConfig.set_container_class(mesos::slave::ContainerClass::DEBUG);
+
+  Future<Option<mesos::slave::ContainerLaunchInfo>> prepared =
+    isolator->prepare(containerId, containerConfig);
+
+  AWAIT_READY(prepared);
+
+  Future<Nothing> cleanedup = isolator->cleanup(containerId);
+
+  AWAIT_READY(cleanedup);
+
+  // Settle the clock to ensure that the metrics service
+  // does not receive any requests.
+  Clock::settle();
+
+  Clock::resume();
+}
+
 } // namespace tests {
 } // namespace metrics {
 } // namespace mesos {

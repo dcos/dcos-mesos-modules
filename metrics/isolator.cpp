@@ -123,6 +123,10 @@ public:
     // environment variables. They will inherit the environment of their
     // parent container.
     if (containerConfig.container_class() == ContainerClass::DEBUG) {
+      // Add this container ID to the set of debug containers so that we will
+      // not make a DELETE request for it during the cleanup phase.
+      debugContainers.emplace(containerId);
+
       return None();
     }
 
@@ -193,6 +197,11 @@ public:
 
   virtual Future<Nothing> cleanup(const ContainerID& containerId)
   {
+    if (debugContainers.contains(containerId)) {
+      debugContainers.erase(containerId);
+      return Nothing();
+    }
+
     // If a failed future is returned at any point during the sending of the
     // DELETE request, we do not want to surface that failure to the
     // containerizer, since it would prevent other isolators from cleaning up
@@ -306,6 +315,11 @@ private:
   string serviceEndpoint;
   Option<inet::Address> serviceInetAddress;
   Option<unix::Address> serviceUnixAddress;
+
+  // A set of all DEBUG containers the module has observed during `prepare()`.
+  // This is used to skip the DELETE request during the cleanup phase, since we
+  // do not set up metrics for DEBUG containers.
+  hashset<ContainerID> debugContainers;
 };
 
 
