@@ -1,3 +1,4 @@
+#include <array>
 #include <map>
 #include <string>
 #include <vector>
@@ -34,6 +35,7 @@
 using namespace mesos;
 using namespace process;
 
+using std::array;
 using std::string;
 using std::vector;
 
