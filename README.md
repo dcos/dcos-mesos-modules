@@ -71,6 +71,18 @@ make
 sudo make check
 ```
 
+If `make` fails complaining that there are some protobuf options that are
+unknown to `protoc`, it is likely that `configure` used `protoc` installed
+system-wide. In order to make it use the one from the Mesos build, please
+run:
+
+```
+../configure --with-mesos=/path/to/mesos/installation \
+             --with-protobuf=/path/to/mesos/installation/lib/mesos/3rdparty
+```
+
+And then execute `make` again.
+
 ## Using Modules
 
 See the `README.md` in each module folder for instructions.
