@@ -1,3 +1,5 @@
+# Just a test.
+
 AC_INIT([dcos-mesos-modules],[0.2])
 AC_PREREQ([2.69])
 
