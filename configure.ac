@@ -320,7 +320,7 @@ AC_CHECK_HEADER([google/protobuf/message.h],
                 [AC_MSG_ERROR([google protobuf is not installed.])])
 
 AC_CHECK_HEADERS([openssl/ssl.h],
-                 [],
+                 [MESOS_CPPFLAGS+=" -DUSE_SSL_SOCKET"],
                  [AC_MSG_ERROR([cannot find libssl headers])])
 
 AC_CHECK_HEADERS([boost/lexical_cast.hpp boost/functional/hash.hpp],
