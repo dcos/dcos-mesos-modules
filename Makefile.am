@@ -137,6 +137,7 @@ libmesos_tests_la_SOURCES =				\
   tests/mesos.cpp					\
   tests/module.cpp					\
   tests/mock_registrar.cpp				\
+  tests/mock_slave.cpp				\
   tests/script.cpp					\
   tests/utils.cpp					\
   tests/containerizer/launcher.cpp			\

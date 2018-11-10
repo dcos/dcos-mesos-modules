@@ -320,12 +320,12 @@ TEST_F(JournaldLoggerTest, ROOT_CGROUPS_LaunchThenRecoverThenLaunchNested)
   // Generate an AgentID to "recover" the MesosContainerizer with.
   mesos::internal::slave::state::SlaveState state;
   state.id = SlaveID();
-  state.id.set_value(UUID::random().toString());
+  state.id.set_value(id::UUID::random().toString());
 
   AWAIT_READY(containerizer->recover(state));
 
   ContainerID containerId;
-  containerId.set_value(UUID::random().toString());
+  containerId.set_value(id::UUID::random().toString());
 
   const std::string specialParentString = "special-parent-string";
 
@@ -336,7 +336,7 @@ TEST_F(JournaldLoggerTest, ROOT_CGROUPS_LaunchThenRecoverThenLaunchNested)
       "echo '" + specialParentString + "' && sleep 1000",
       "cpus:1");
 
-  executorInfo.mutable_framework_id()->set_value(UUID::random().toString());
+  executorInfo.mutable_framework_id()->set_value(id::UUID::random().toString());
 
   // Make a valid ExecutorRunPath, much like the
   // `slave::paths::getExecutorRunPath` helper (that we don't have access to).
@@ -415,7 +415,7 @@ TEST_F(JournaldLoggerTest, ROOT_CGROUPS_LaunchThenRecoverThenLaunchNested)
   // Now launch the nested container.
   ContainerID nestedContainerId;
   nestedContainerId.mutable_parent()->CopyFrom(containerId);
-  nestedContainerId.set_value(UUID::random().toString());
+  nestedContainerId.set_value(id::UUID::random().toString());
 
   const std::string specialChildString = "special-child-string";
 
