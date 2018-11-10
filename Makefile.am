@@ -31,7 +31,7 @@ AM_LIBS = $(PTHREAD_LIBS)
 MESOS_CPPFLAGS += -I$(top_srcdir)/include -I$(top_srcdir)/src -Iinclude -I$(top_srcdir)
 
 # Setup CPPFLAGS that are used for most source files.
-AM_CPPFLAGS = $(MESOS_CPPFLAGS) -Wall -Werror
+AM_CPPFLAGS = $(MESOS_CPPFLAGS)
 
 # Setup the protobuf compiler.
 PROTOC = @PROTOCOMPILER@
