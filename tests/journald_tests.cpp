@@ -253,14 +253,19 @@ TEST_F(JournaldLoggerTest, ROOT_LogToJournaldWithBigLabel)
   variable->set_name("CONTAINER_LOGGER_DESTINATION_TYPE");
   variable->set_value("journald");
 
+  Future<TaskStatus> statusStarting;
   Future<TaskStatus> statusRunning;
   Future<TaskStatus> statusFinished;
   EXPECT_CALL(sched, statusUpdate(&driver, _))
+    .WillOnce(FutureArg<1>(&statusStarting))
     .WillOnce(FutureArg<1>(&statusRunning))
     .WillOnce(FutureArg<1>(&statusFinished))
     .WillRepeatedly(Return());       // Ignore subsequent updates.
 
   driver.launchTasks(offers.get()[0].id(), {task});
+
+  AWAIT_READY(statusStarting);
+  EXPECT_EQ(TASK_STARTING, statusStarting.get().state());
 
   AWAIT_READY(statusRunning);
   EXPECT_EQ(TASK_RUNNING, statusRunning.get().state());
@@ -294,9 +299,10 @@ TEST_F(JournaldLoggerTest, ROOT_LogToJournaldWithBigLabel)
 }
 
 
-// This checks a specific case where the arguments passed into the
-// ContainerLogger will differ if the Mesos agent restarts before
-// launching a nested container.
+// This test verfies that the executor information will be passed to
+// the container logger the same way before and after an agent
+// restart. Note that this is different than the behavior before Mesos
+// 1.5, at which time we don't checkout ContainerConfig.
 TEST_F(JournaldLoggerTest, ROOT_CGROUPS_LaunchThenRecoverThenLaunchNested)
 {
   mesos::internal::slave::Flags flags = CreateSlaveFlags();
@@ -430,7 +436,6 @@ TEST_F(JournaldLoggerTest, ROOT_CGROUPS_LaunchThenRecoverThenLaunchNested)
 
   AWAIT_ASSERT_EQ(Containerizer::LaunchResult::SUCCESS, launch);
 
-
   status = containerizer->status(nestedContainerId);
   AWAIT_READY(status);
   ASSERT_TRUE(status->has_executor_pid());
@@ -546,14 +551,19 @@ TEST_P(JournaldLoggerTest, ROOT_LogToJournald)
   variable->set_name("CONTAINER_LOGGER_DESTINATION_TYPE");
   variable->set_value(GetParam());
 
+  Future<TaskStatus> statusStarting;
   Future<TaskStatus> statusRunning;
   Future<TaskStatus> statusFinished;
   EXPECT_CALL(sched, statusUpdate(&driver, _))
+    .WillOnce(FutureArg<1>(&statusStarting))
     .WillOnce(FutureArg<1>(&statusRunning))
     .WillOnce(FutureArg<1>(&statusFinished))
     .WillRepeatedly(Return());       // Ignore subsequent updates.
 
   driver.launchTasks(offers.get()[0].id(), {task});
+
+  AWAIT_READY(statusStarting);
+  EXPECT_EQ(TASK_STARTING, statusStarting.get().state());
 
   AWAIT_READY(statusRunning);
   EXPECT_EQ(TASK_RUNNING, statusRunning.get().state());
@@ -708,14 +718,19 @@ TEST_P(JournaldLoggerDockerTest, ROOT_DOCKER_LogToJournald)
 
   task.mutable_container()->CopyFrom(containerInfo);
 
+  Future<TaskStatus> statusStarting;
   Future<TaskStatus> statusRunning;
   Future<TaskStatus> statusFinished;
   EXPECT_CALL(sched, statusUpdate(&driver, _))
+    .WillOnce(FutureArg<1>(&statusStarting))
     .WillOnce(FutureArg<1>(&statusRunning))
     .WillOnce(FutureArg<1>(&statusFinished))
     .WillRepeatedly(Return());       // Ignore subsequent updates.
 
   driver.launchTasks(offers.get()[0].id(), {task});
+
+  AWAIT_READY(statusStarting);
+  EXPECT_EQ(TASK_STARTING, statusStarting.get().state());
 
   AWAIT_READY(statusRunning);
   EXPECT_EQ(TASK_RUNNING, statusRunning.get().state());
