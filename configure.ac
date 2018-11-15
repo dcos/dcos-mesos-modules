@@ -45,6 +45,9 @@ AC_ARG_ENABLE([optimize],
                              [Enable optimizing @<:@default=no@:>@]),
               [], [enable_optimize=yes])
 
+AC_ARG_ENABLE([werror],
+              AS_HELP_STRING([--disable-werror],
+                             [do not treat compiler warnings as fatal errors]))
 
 ###############################################################################
 # Optional packages.
@@ -94,6 +97,8 @@ AC_ARG_WITH([systemd],
 
 
 MESOS_CXXFLAGS=
+MESOS_CPPFLAGS="-Wall"
+
 
 ###############################################################################
 # Debug/Optimization checks.
@@ -110,6 +115,15 @@ if test "x$enable_optimize" = "xyes"; then
 fi
 
 MESOS_CXXFLAGS="${MESOS_CXXFLAGS} $debug_flags $optimize_flags"
+
+
+###############################################################################
+# Miscellaneous flags/library/tool checks.
+###############################################################################
+
+AS_IF([test "x$enable_werror" != "xno"],
+      [MESOS_CPPFLAGS="${MESOS_CPPFLAGS} -Werror"])
+
 
 ###############################################################################
 ###############################################################################
