@@ -746,7 +746,9 @@ Future<Nothing> ManagerProcess::configureMesosNetwork(const string& name)
     });
     writer->field("chain", strings::upper(overlay.mesos_bridge().name())),
     writer->field("delegate",
-      [subnet, overlay, _cniDataDir, _networkConfig](JSON::ObjectWriter* writer) {
+      [subnet, overlay, _cniDataDir, _networkConfig](
+          JSON::ObjectWriter* writer)
+      {
         writer->field("type", "bridge");
         writer->field("bridge", overlay.mesos_bridge().name());
         writer->field("isGateway", true);
@@ -754,7 +756,9 @@ Future<Nothing> ManagerProcess::configureMesosNetwork(const string& name)
         writer->field("hairpinMode", true);
         writer->field("mtu", _networkConfig.overlay_mtu());
 
-        writer->field("ipam", [subnet, _cniDataDir](JSON::ObjectWriter* writer) {
+        writer->field("ipam", [subnet, _cniDataDir](
+            JSON::ObjectWriter* writer)
+        {
           writer->field("type", "host-local");
           if (_cniDataDir.isSome()) {
             writer->field("dataDir", _cniDataDir.get());
@@ -933,14 +937,14 @@ Future<Nothing> ManagerProcess::__configureDockerNetwork(
   // However, Docker disallows this. So we will install a de-funct
   // rule in the DOCKER-ISOLATION chain to bypass any isolation
   // docker might be trying to enforce.
-  const string iptablesCommand = 
+  const string iptablesCommand =
       "iptables -w -D DOCKER-ISOLATION -j RETURN; "
       "iptables -w -I DOCKER-ISOLATION 1 -j RETURN";
 
   Duration timeout = Milliseconds(networkConfig.command_timeout());
   return runScriptCommand(iptablesCommand, timeout)
       .repair(defer(self(), [timeout](const Future<string>&) {
-          const string iptablesCommand =     
+          const string iptablesCommand =
               "iptables -w -D DOCKER-ISOLATION-STAGE-2 -j RETURN; "
               "iptables -w -I DOCKER-ISOLATION-STAGE-2 1 -j RETURN";
           return runScriptCommand(iptablesCommand, timeout);
