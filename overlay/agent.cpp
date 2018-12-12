@@ -332,7 +332,7 @@ void ManagerProcess::updateAgentOverlays(
   // duplicate update corresponding to one already in progress. We
   // should therefore not setup a response for acknowledging this
   // registration.
-  if (futures.empty()) {
+  if (message.overlays_size() > 0 && futures.empty()) {
     LOG(INFO) << "Looks like we received a duplicate config update from "
               << from << " dropping this message.";
     return;

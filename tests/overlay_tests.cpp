@@ -1593,6 +1593,129 @@ TEST_F(OverlayTest, checkIPv6Configuration)
 }
 
 
+// Test disabled/enabled IPV6 overlay network.
+TEST_F(OverlayTest, ROOT_checkDisabledIPV6OverlayNetwork)
+{
+  Try<Owned<cluster::Master>> master = StartMaster();
+  ASSERT_SOME(master);
+  LOG(INFO) << "Master PID: " << master.get()->pid;
+
+  // Ask overlay Master to use the replicated log by setting
+  // `replicated_log_dir`. We are not specifying `zk` configuration so
+  // the `quorum` will default to "1".
+  MasterConfig masterOverlayConfig;
+  masterOverlayConfig
+    .set_replicated_log_dir("overlay_replicated_log");
+
+  // Setup Master config.
+  masterOverlayConfig.mutable_network()->set_vtep_subnet("44.128.0.0/16");
+  masterOverlayConfig.mutable_network()->set_vtep_subnet6("fd03::/64");
+  masterOverlayConfig.mutable_network()->set_vtep_mac_oui(
+      "70:B3:D5:00:00:00");
+
+  // Add an IPv4 overlay network.
+  OverlayInfo overlay;
+  overlay.set_name(OVERLAY_NAME);
+  overlay.set_subnet(OVERLAY_SUBNET);
+  overlay.set_prefix(OVERLAY_PREFIX);
+  masterOverlayConfig.mutable_network()->add_overlays()->CopyFrom(overlay);
+
+  // Add a disabled IPv6 overlay network.
+  OverlayInfo overlay6;
+  overlay6.set_name(OVERLAY_NAME_2);
+  overlay6.set_subnet6(OVERLAY_SUBNET6);
+  overlay6.set_prefix6(OVERLAY_PREFIX6);
+  overlay6.set_enabled(false);
+  masterOverlayConfig.mutable_network()->add_overlays()->CopyFrom(overlay6);
+
+  Try<Owned<Anonymous>> masterModule =
+      startOverlayMaster(masterOverlayConfig, false);
+  ASSERT_SOME(masterModule);
+
+  // Master `Anonymous` module created successfully.
+  UPID overlayMaster = UPID(
+      MASTER_MANAGER_PROCESS_ID,
+      master.get()->pid.address);
+
+  AgentConfig agentOverlayConfig;
+  agentOverlayConfig.set_master(stringify(overlayMaster.address));
+
+  // Set number of times the agent will attempt to configure virtual
+  // networks by re-registering with the master.
+  agentOverlayConfig.set_max_configuration_attempts(1);
+
+  // Setup futures to notify the test that Agent overlay module has
+  // registered.
+  Future<AgentRegisteredAcknowledgement> agentRegisteredAcknowledgement =
+    FUTURE_PROTOBUF(AgentRegisteredAcknowledgement(), _, _);
+
+  Try<Owned<overlayAgent::ManagerProcess>> agentModule = startOverlayAgent(
+      agentOverlayConfig);
+
+  AWAIT_READY(agentRegisteredAcknowledgement);
+
+  ASSERT_SOME(agentModule);
+
+  // Check the agent is allowed to progress.
+  AWAIT_READY(agentModule.get()->ready());
+
+  UPID overlayAgent = UPID(master.get()->pid);
+  overlayAgent.id = AGENT_MANAGER_PROCESS_ID;
+
+  Future<Response> agentResponse = process::http::get(
+      overlayAgent,
+      "overlay");
+
+  AWAIT_EXPECT_RESPONSE_STATUS_EQ(OK().status, agentResponse);
+  AWAIT_EXPECT_RESPONSE_HEADER_EQ(
+      APPLICATION_JSON,
+      "Content-Type",
+      agentResponse);
+
+  Try<AgentInfo> info = parseAgentOverlay(agentResponse->body);
+  ASSERT_SOME(info);
+
+  // There should be only one enabled overlay network.
+  ASSERT_EQ(1, info->overlays_size());
+
+  // Kill the master.
+  masterModule->reset();
+
+  // Enable the IPv6 overlay network.
+  overlay6.clear_enabled();
+  masterOverlayConfig.mutable_network()->clear_overlays();
+  masterOverlayConfig.mutable_network()->add_overlays()->CopyFrom(overlay);
+  masterOverlayConfig.mutable_network()->add_overlays()->CopyFrom(overlay6);
+
+  // Start the master.
+  masterModule = startOverlayMaster(masterOverlayConfig, false);
+  ASSERT_SOME(masterModule);
+
+  // Re-start the master and wait for the Agent to re-register.
+  agentRegisteredAcknowledgement = FUTURE_PROTOBUF(
+      AgentRegisteredAcknowledgement(), _, _);
+
+  AWAIT_READY(agentRegisteredAcknowledgement);
+
+  // Hit the `overlay` endpoint of the agent to check that module is
+  // up and responding.
+  agentResponse = process::http::get(overlayAgent, "overlay");
+
+  AWAIT_EXPECT_RESPONSE_STATUS_EQ(OK().status, agentResponse);
+  AWAIT_EXPECT_RESPONSE_HEADER_EQ(
+      APPLICATION_JSON,
+      "Content-Type",
+      agentResponse);
+
+  // Parse the agent config.
+  info = parseAgentOverlay(agentResponse->body);
+  ASSERT_SOME(info);
+
+  // There should be 2 overlay network.
+  ASSERT_EQ(2, info->overlays_size());
+}
+
+
 // Test bypass of Docker Isolation
 TEST_F(OverlayTest, ROOT_checkDockerIsolation)
 {
