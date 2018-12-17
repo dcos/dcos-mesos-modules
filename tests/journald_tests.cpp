@@ -653,7 +653,8 @@ TEST_P(JournaldLoggerTest, ROOT_LogToJournald)
 
     Result<std::string> stdout = os::read(stdoutPath);
     ASSERT_SOME(stdout);
-    EXPECT_FALSE(strings::contains(stdout.get(), specialString));
+    EXPECT_FALSE(strings::contains(stdout.get(), specialString))
+      << "Expected " << specialString << " to appear in " << stdout.get();
   }
 
   if (GetParam() == "logrotate" ||
