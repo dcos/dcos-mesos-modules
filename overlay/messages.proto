@@ -92,4 +92,5 @@ message MasterConfig {
   optional ZookeeperConfig zk = 1;
   optional string replicated_log_dir = 2;
   required NetworkConfig network = 3;
+  optional string replicated_log_timeout = 4;
 }
