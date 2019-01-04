@@ -1214,6 +1214,17 @@ public:
           new mesos::state::protobuf::State(storage));
     }
 
+    // Parse replicatedLogTimeout.
+    Try<Duration> replicatedLogTimeout = Minutes(5);
+    if (masterConfig.has_replicated_log_timeout()) {
+      replicatedLogTimeout =
+        Duration::parse(masterConfig.replicated_log_timeout());
+      if (replicatedLogTimeout.isError()) {
+        return Error("Error parsing replicatedLogTimeout: " +
+                     replicatedLogTimeout.error());
+      }
+    }
+
     return Owned<ManagerProcess>(new ManagerProcess(
           overlays,
           vtepSubnet.get(),
@@ -1222,6 +1233,7 @@ public:
           vtepMTU,
           networkConfig,
           replicatedLog,
+          replicatedLogTimeout.get(),
           storage,
           log));
   }
@@ -1519,9 +1531,27 @@ protected:
     recovering = true;
 
     replicatedLog->fetch<overlay::State>(REPLICATED_LOG_STORE_KEY)
+      .after(replicatedLogTimeout,
+             defer(self(),
+                 &ManagerProcess::timeout,
+                 "fetch",
+                 replicatedLogTimeout,
+                 lambda::_1))
       .onAny(defer(self(),
                    &ManagerProcess::_recover,
                    lambda::_1));
+  }
+
+  Future<Variable<overlay::State>> timeout(
+      const string& operation,
+      const Duration& duration,
+      Future<Variable<overlay::State>> future)
+  {
+    // Helper for treating State operations that timeout as failures.
+    future.discard();
+
+    return Failure(
+        "Failed to perform " + operation + " within " + stringify(duration));
   }
 
   void _recover(Future<Variable<overlay::State>> variable)
@@ -1711,6 +1741,7 @@ private:
   hashmap<IP, Agent> agents;
 
   Owned<mesos::state::protobuf::State> replicatedLog;
+  Duration replicatedLogTimeout;
 
   Option<Variable<overlay::State>> storedState;
 
@@ -1736,6 +1767,7 @@ private:
       const Option<size_t>& vtepMTU,
       const NetworkConfig& _networkConfig,
       const Owned<mesos::state::protobuf::State> _replicatedLog,
+      const Duration _replicatedLogTimeout,
       Storage* _storage,
       Log* _log)
     : ProcessBase("overlay-master"),
@@ -1743,6 +1775,7 @@ private:
       storing(false),
       overlays(_overlays),
       replicatedLog(_replicatedLog),
+      replicatedLogTimeout(_replicatedLogTimeout),
       storedState(None()),
       storage(_storage),
       log(_log),
