@@ -51,6 +51,9 @@ message OverlayInfo {
 
   // The prefix length used to carve out IPv6 subnets for Agents
   optional uint32 prefix6 = 5;
+
+  // Enable/disable this overlay network.
+  optional bool enabled = 6 [default = true];
 }
 
 
