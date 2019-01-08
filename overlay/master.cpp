@@ -268,12 +268,14 @@ struct Overlay
       const Option<Network>& _network,
       const Option<Network>& _network6,
       const Option<uint8_t> _prefix,
-      const Option<uint8_t> _prefix6)
+      const Option<uint8_t> _prefix6,
+      const bool& _enabled)
     : name(_name),
     network(_network),
     network6(_network6),
     prefix(_prefix),
-    prefix6(_prefix6)
+    prefix6(_prefix6),
+    enabled(_enabled)
   {
     // IPv4
     if (network.isSome()) {
@@ -329,12 +331,17 @@ struct Overlay
       overlay.set_subnet6(stringify(network6.get()));
       overlay.set_prefix6(prefix6.get());
     }
+    overlay.set_enabled(enabled);
 
     return overlay;
   }
 
   Try<Network> allocate()
   {
+    if (!enabled) {
+      return Error("The " + name + "overlay is disabled");
+    }
+
     if (freeNetworks.empty()) {
       return Error("No free subnets available in the " + name + "overlay");
     }
@@ -347,6 +354,10 @@ struct Overlay
 
   Try<Network> allocate6()
   {
+    if (!enabled) {
+      return Error("The " + name + "overlay is disabled");
+    }
+
     if (freeNetworks6.empty()) {
       return Error("No free IPv6 subnets available in the " + name + "overlay");
     }
@@ -507,6 +518,9 @@ struct Overlay
 
   // Free IPv6 subnets
   IntervalSet<Network> freeNetworks6;
+
+  // Enalbed/Disabled this overlay network.
+  bool enabled;
 };
 
 
@@ -583,6 +597,11 @@ public:
     foreachpair (const string& name, const Owned<Overlay>& overlay, _overlays) {
       // Skip if the overlay is present
       if (overlays.contains(name)) {
+        continue;
+      }
+
+      // Skip if the overlay is disabled
+      if (!overlay->enabled) {
         continue;
       }
 
@@ -1089,7 +1108,8 @@ public:
             address,
             address6,
             prefix,
-            prefix6)));
+            prefix6,
+            overlay.enabled())));
     }
 
     if (overlays.empty()) {
