@@ -459,10 +459,6 @@ TEST_F(JournaldLoggerTest, ROOT_CGROUPS_LaunchThenRecoverThenLaunchNested)
   EXPECT_WTERMSIG_EQ(SIGKILL, wait.get()->status());
 
   // Now run two filters based on AGENT_ID and FRAMEWORK_ID.
-  // Normally, we would expect to get the same result from each filter.
-  // But in fact, we should *not* find the child string inside the
-  // query based on FRAMEWORK_ID because the MesosContainerizer
-  // will not persist that information after the emulated restart.
   Future<std::string> firstQuery = runCommand(
       "journalctl",
       {"journalctl",
@@ -479,7 +475,7 @@ TEST_F(JournaldLoggerTest, ROOT_CGROUPS_LaunchThenRecoverThenLaunchNested)
 
   AWAIT_READY(secondQuery);
   EXPECT_TRUE(strings::contains(secondQuery.get(), specialParentString));
-  EXPECT_FALSE(strings::contains(secondQuery.get(), specialChildString));
+  EXPECT_TRUE(strings::contains(secondQuery.get(), specialChildString));
 }
 
 
