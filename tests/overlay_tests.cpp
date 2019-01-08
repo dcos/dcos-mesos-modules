@@ -183,7 +183,6 @@ protected:
     overlay.set_subnet6(OVERLAY_SUBNET6);
     overlay.set_prefix(OVERLAY_PREFIX);
     overlay.set_prefix6(OVERLAY_PREFIX6);
-    
 
     masterOverlayConfig.mutable_network()->add_overlays()->CopyFrom(overlay);
 
@@ -218,7 +217,6 @@ protected:
     Future<string> cleanupResult = runScriptCommand(cleanup.get());
 
     cleanupResult.await();
-
   }
 
   virtual void TearDown()
@@ -270,7 +268,7 @@ protected:
           {"docker",
            "network",
            "rm",
-           OVERLAY_NAME, 
+           OVERLAY_NAME,
            OVERLAY_NAME_2});
       // cannot use AWAIT_READY as it would fail if one of the networks
       // is absent
@@ -1355,11 +1353,10 @@ TEST_F(OverlayTest, ROOT_checkAddVirtualNetworks)
   ASSERT_EQ(agentOverlay->info().subnet(), "11.0.0.0/8");
   ASSERT_EQ(agentOverlay->subnet6(), "fd04::/80");
   ASSERT_EQ(agentOverlay->info().subnet6(), "fd04::/64");
-
 }
 
 
-//Test enable/disable IPv6 configuration
+// Test enable/disable IPv6 configuration.
 TEST_F(OverlayTest, ROOT_checkEnableDisableIPv6Configuration)
 {
   Try<Owned<cluster::Master>> master = StartMaster();
@@ -1455,8 +1452,9 @@ TEST_F(OverlayTest, ROOT_checkEnableDisableIPv6Configuration)
   json = JSON::parse<JSON::Array>(docker.get());
   ASSERT_SOME(json);
 
-  // Verify that IPv6 is disabled in docker network
-  ipv6Flag = json->values[0].as<JSON::Object>().find<JSON::Boolean>("EnableIPv6");
+  // Verify that IPv6 is disabled in docker network.
+  ipv6Flag =
+      json->values[0].as<JSON::Object>().find<JSON::Boolean>("EnableIPv6");
   ASSERT_SOME(ipv6Flag);
   EXPECT_EQ(ipv6Flag.get(), false);
 }

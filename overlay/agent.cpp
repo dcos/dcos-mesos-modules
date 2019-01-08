@@ -713,37 +713,37 @@ Future<Nothing> ManagerProcess::configureMesosNetwork(const string& name)
 
   Option<string> _cniDataDir = cniDataDir;
 
-  auto config = [name, subnet, overlay, _cniDataDir, _networkConfig](
-      JSON::ObjectWriter* writer) {
+  auto config = [name, subnet, overlay, _cniDataDir,
+                 _networkConfig](JSON::ObjectWriter* writer) {
     writer->field("name", name);
     writer->field("type", "mesos-cni-port-mapper");
-    writer->field("excludeDevices",
-      [overlay](JSON::ArrayWriter* writer) {
-        writer->element(overlay.mesos_bridge().name());
+    writer->field("excludeDevices", [overlay](JSON::ArrayWriter* writer) {
+      writer->element(overlay.mesos_bridge().name());
     });
     writer->field("chain", strings::upper(overlay.mesos_bridge().name())),
-    writer->field("delegate",
-      [subnet, overlay, _cniDataDir, _networkConfig](JSON::ObjectWriter* writer) {
-        writer->field("type", "bridge");
-        writer->field("bridge", overlay.mesos_bridge().name());
-        writer->field("isGateway", true);
-        writer->field("ipMasq", false);
-        writer->field("mtu", _networkConfig.overlay_mtu());
+        writer->field("delegate", [subnet, overlay, _cniDataDir,
+                                   _networkConfig](JSON::ObjectWriter* writer) {
+          writer->field("type", "bridge");
+          writer->field("bridge", overlay.mesos_bridge().name());
+          writer->field("isGateway", true);
+          writer->field("ipMasq", false);
+          writer->field("mtu", _networkConfig.overlay_mtu());
 
-        writer->field("ipam", [subnet, _cniDataDir](JSON::ObjectWriter* writer) {
-          writer->field("type", "host-local");
-          if (_cniDataDir.isSome()) {
-            writer->field("dataDir", _cniDataDir.get());
-          }
-          writer->field("subnet", stringify(subnet.get()));
+          writer->field(
+              "ipam", [subnet, _cniDataDir](JSON::ObjectWriter* writer) {
+                writer->field("type", "host-local");
+                if (_cniDataDir.isSome()) {
+                  writer->field("dataDir", _cniDataDir.get());
+                }
+                writer->field("subnet", stringify(subnet.get()));
 
-          writer->field("routes", [](JSON::ArrayWriter* writer) {
-            writer->element([](JSON::ObjectWriter* writer) {
-              writer->field("dst", "0.0.0.0/0");
-            });
-          });
+                writer->field("routes", [](JSON::ArrayWriter* writer) {
+                  writer->element([](JSON::ObjectWriter* writer) {
+                    writer->field("dst", "0.0.0.0/0");
+                  });
+                });
+              });
         });
-      });
   };
 
   Try<Nothing> write = os::write(
@@ -908,20 +908,18 @@ Future<Nothing> ManagerProcess::__configureDockerNetwork(
   // However, Docker disallows this. So we will install a de-funct
   // rule in the DOCKER-ISOLATION chain to bypass any isolation
   // docker might be trying to enforce.
-  const string iptablesCommand = 
-      "iptables -w -D DOCKER-ISOLATION -j RETURN; "
-      "iptables -w -I DOCKER-ISOLATION 1 -j RETURN";
+  const string iptablesCommand = "iptables -w -D DOCKER-ISOLATION -j RETURN; "
+                                 "iptables -w -I DOCKER-ISOLATION 1 -j RETURN";
 
   return runScriptCommand(iptablesCommand)
-      .repair(defer(self(), [](const Future<string>&) {
-          const string iptablesCommand =     
-              "iptables -w -D DOCKER-ISOLATION-STAGE-2 -j RETURN; "
-              "iptables -w -I DOCKER-ISOLATION-STAGE-2 1 -j RETURN";
-          return runScriptCommand(iptablesCommand);
-      }))
-      .then([]() -> Future<Nothing> {
-          return Nothing();
-      });
+      .repair(defer(self(),
+                    [](const Future<string> &) {
+                      const string iptablesCommand =
+                          "iptables -w -D DOCKER-ISOLATION-STAGE-2 -j RETURN; "
+                          "iptables -w -I DOCKER-ISOLATION-STAGE-2 1 -j RETURN";
+                      return runScriptCommand(iptablesCommand);
+                    }))
+      .then([]() -> Future<Nothing> { return Nothing(); });
 }
 
 ManagerProcess::ManagerProcess(
