@@ -479,7 +479,7 @@ TEST_F(JournaldLoggerTest, ROOT_CGROUPS_LaunchThenRecoverThenLaunchNested)
 
   AWAIT_READY(secondQuery);
   EXPECT_TRUE(strings::contains(secondQuery.get(), specialParentString));
-  EXPECT_FALSE(strings::contains(secondQuery.get(), specialChildString));
+  EXPECT_TRUE(strings::contains(secondQuery.get(), specialChildString));
 }
 
 
