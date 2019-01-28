@@ -11,12 +11,15 @@
 #include <process/io.hpp>
 #include <process/process.hpp>
 
+#include <stout/check.hpp>
 #include <stout/error.hpp>
 #include <stout/exit.hpp>
 #include <stout/nothing.hpp>
+#include <stout/path.hpp>
 #include <stout/strings.hpp>
 #include <stout/try.hpp>
 
+#include <stout/os/chdir.hpp>
 #include <stout/os/pagesize.hpp>
 #include <stout/os/shell.hpp>
 #include <stout/os/su.hpp>
@@ -93,14 +96,15 @@ public:
       // because `logrotate` has slightly different size semantics.
       // `logrotate` will rotate when the max size is *exceeded*.
       // We rotate to keep files *under* the max size.
+      std::string basename = Path(flags.logrotate_filename.get()).basename();
+
       const std::string config =
-        "\"" + flags.logrotate_filename.get() + "\" {\n" +
+        "\"" + basename + "\" {\n" +
         flags.logrotate_options.getOrElse("") + "\n" +
         "size " + stringify(flags.logrotate_max_size.bytes() - length) + "\n" +
         "}";
 
-      Try<Nothing> result = os::write(
-          flags.logrotate_filename.get() + LOGROTATE_CONF_SUFFIX, config);
+      Try<Nothing> result = os::write(basename + LOGROTATE_CONF_SUFFIX, config);
 
       if (result.isError()) {
         return Failure(
@@ -201,15 +205,15 @@ public:
     // If the leading log file is not open, open it.
     // NOTE: We open the file in append-mode as `logrotate` may sometimes fail.
     if (leading.isNone()) {
+      std::string basename = Path(flags.logrotate_filename.get()).basename();
+
       Try<int> open = os::open(
-          flags.logrotate_filename.get(),
+          basename,
           O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC,
           S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
 
       if (open.isError()) {
-        return Error(
-            "Failed to open '" + flags.logrotate_filename.get() +
-            "': " + open.error());
+        return Error("Failed to open '" + basename + "': " + open.error());
       }
 
       leading = open.get();
@@ -244,10 +248,12 @@ public:
     // the error and continue logging.  In case the leading log file
     // is not renamed, we will continue appending to the existing
     // leading log file.
+    std::string basename = Path(flags.logrotate_filename.get()).basename();
+
     os::shell(
         flags.logrotate_path +
-        " --state \"" + flags.logrotate_filename.get() + LOGROTATE_STATE_SUFFIX +
-        "\" \"" + flags.logrotate_filename.get() + LOGROTATE_CONF_SUFFIX + "\"");
+        " --state \"" + basename + LOGROTATE_STATE_SUFFIX +
+        "\" \"" + basename + LOGROTATE_CONF_SUFFIX + "\"");
 
     // Reset the number of bytes written.
     bytesWritten = 0;
@@ -291,6 +297,22 @@ int main(int argc, char** argv)
   // Log any flag warnings.
   foreach (const flags::Warning& warning, load->warnings) {
     LOG(WARNING) << warning.message;
+  }
+
+  // Change the current working directory to the container's sandbox directory.
+  // This is to handle the case that the nested container's user is a non-root
+  // user and different from its parent container's user, in which case the
+  // nested container's user (i.e.,`flags.user`) has no permission to access
+  // `flags.logrotate_filename` since it has no permission to traverse its
+  // parent container's sandbox directory whose permissions is 0750.
+  CHECK_SOME(flags.logrotate_filename);
+
+  Try<Nothing> result =
+    os::chdir(Path(flags.logrotate_filename.get()).dirname());
+
+  if (result.isError()) {
+    EXIT(EXIT_FAILURE) << ErrnoError(
+        "Failed to switch working directory for journald logger").message;
   }
 
   // If the `--user` flag is set, change the UID of this process to that user.
