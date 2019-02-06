@@ -1584,6 +1584,7 @@ protected:
                    <<(variable.isDiscarded() ? "discarded"
                        : variable.failure());
 
+      demote();
       return;
     }
 
