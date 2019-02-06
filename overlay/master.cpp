@@ -1553,25 +1553,13 @@ protected:
     replicatedLog->fetch<overlay::State>(REPLICATED_LOG_STORE_KEY)
       .after(replicatedLogTimeout,
              defer(self(),
-                 &ManagerProcess::timeout,
+                 &ManagerProcess::timeout<Variable<overlay::State>>,
                  "fetch",
                  replicatedLogTimeout,
                  lambda::_1))
       .onAny(defer(self(),
                    &ManagerProcess::_recover,
                    lambda::_1));
-  }
-
-  Future<Variable<overlay::State>> timeout(
-      const string& operation,
-      const Duration& duration,
-      Future<Variable<overlay::State>> future)
-  {
-    // Helper for treating State operations that timeout as failures.
-    future.discard();
-
-    return Failure(
-        "Failed to perform " + operation + " within " + stringify(duration));
   }
 
   void _recover(Future<Variable<overlay::State>> variable)
@@ -1857,6 +1845,12 @@ private:
       stateVariable = stateVariable.mutate(_networkState);
 
       replicatedLog->store(stateVariable)
+        .after(replicatedLogTimeout,
+               defer(self(),
+                     &ManagerProcess::timeout<Option<Variable<overlay::State>>>,
+                     "store",
+                     replicatedLogTimeout,
+                     lambda::_1))
         .onAny(defer(self(), &ManagerProcess::_store, lambda::_1, operations));
 
       operations.clear();
@@ -1921,6 +1915,20 @@ private:
       store();
     }
   }
+
+  template <typename T>
+  Future<T> timeout(
+      const string& operation,
+      const Duration& duration,
+      Future<T> future)
+  {
+    // Helper for treating State operations that timeout as failures.
+    future.discard();
+
+    return Failure(
+        "Failed to perform " + operation + " within " + stringify(duration));
+  }
+
 
   void demote()
   {
