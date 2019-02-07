@@ -1605,7 +1605,8 @@ protected:
       Try<Agent> agent = Agent::create(agentInfo);
       if (agent.isError()) {
         LOG(ERROR) << "Could not recover Agent: "<< agent.error();
-        abort();
+        demote();
+        return;
       }
 
       agents.emplace(agent->getIP(), agent.get());
@@ -1628,7 +1629,8 @@ protected:
                        << overlay.subnet() << ": "
                        << network.error();
 
-            abort();
+            demote();
+            return;
           }
 
           // We should already have this particular overlay at bootup.
@@ -1641,7 +1643,8 @@ protected:
             LOG(ERROR) << "Unable to reserve the subnet " << network.get()
                        << ": " << result.error();
 
-            abort();
+            demote();
+            return;
           }
         }
 
@@ -1655,7 +1658,8 @@ protected:
             LOG(ERROR) << "Unable to parse the retrieved network: "
               << overlay.subnet6() << ": "
               << network6.error();
-            abort();
+            demote();
+            return;
           }
 
           // We should already have this particular overlay at bootup.
@@ -1667,7 +1671,8 @@ protected:
           if (result.isError()) {
             LOG(ERROR) << "Unable to reserve the IPv6 subnet " << network6.get()
                        << ": " << result.error();
-            abort();
+            demote();
+            return;
           }
         }
 
@@ -1684,7 +1689,8 @@ protected:
                        << overlay.backend().vxlan().vtep_ip() << ": "
                        << vtepIP.error();
 
-            abort();
+            demote();
+            return;
           }
 
           // NOTE: We only need to reserve the VTEP IP and not the
@@ -1697,7 +1703,8 @@ protected:
             LOG(ERROR) << "Unable to reserve VTEP IP: "
                        << vtepIP.get() << ": " << result.error();
 
-            abort();
+            demote();
+            return;
           }
 
           // IPv6
@@ -1709,7 +1716,8 @@ protected:
               LOG(ERROR) << "Unable to parse the retrieved `vtep IPv6`: "
                 << overlay.backend().vxlan().vtep_ip6() << ": "
                 << vtepIP6.error();
-              abort();
+              demote();
+              return;
             }
 
             LOG(INFO) << "Reserving VTEP IPv6: " << vtepIP6.get();
@@ -1717,7 +1725,8 @@ protected:
             if (result.isError()) {
               LOG(ERROR) << "Unable to reserve VTEP IPv6: "
                          << vtepIP6.get() << ": " << result.error();
-              abort();
+              demote();
+              return;
             }
           }
         }
