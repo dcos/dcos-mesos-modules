@@ -643,7 +643,8 @@ TEST_P(JournaldLoggerTest, ROOT_LogToJournald)
       "latest");
   ASSERT_TRUE(os::exists(sandboxDirectory));
 
-  std::string stdoutPath = path::join(sandboxDirectory, "stdout");
+  const std::string stdoutPath = path::join(sandboxDirectory, "stdout");
+  const std::string stderrPath = path::join(sandboxDirectory, "stderr");
 
   if (GetParam() == "journald") {
     // Check that the sandbox was *not* written to.
@@ -661,11 +662,17 @@ TEST_P(JournaldLoggerTest, ROOT_LogToJournald)
       GetParam() == "journald+logrotate") {
     // Check that the sandbox was written to as well.
     ASSERT_TRUE(os::exists(stdoutPath));
+    ASSERT_TRUE(os::exists(stderrPath));
 
     Result<std::string> stdout = os::read(stdoutPath);
     ASSERT_SOME(stdout);
+
+    Result<std::string> stderr = os::read(stderrPath);
+    ASSERT_SOME(stderr);
+
     EXPECT_TRUE(strings::contains(stdout.get(), specialString))
-      << "Expected " << specialString << " to appear in " << stdout.get();
+      << "Expected " << specialString << " to appear in " << stdout.get() << ";"
+      << " stderr: " << stderr.get();
   }
 }
 
