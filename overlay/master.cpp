@@ -1748,6 +1748,7 @@ protected:
     storedState = variable.get();
 
     LOG(INFO) << "Moving " << self() << " to `RECOVERED` state.";
+    recovering = false;
     return;
   }
 
