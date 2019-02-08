@@ -1942,6 +1942,8 @@ private:
 
   void demote()
   {
+    LOG(WARNING) << "Demoting " << self();
+
     // Reset state of the replicated log.
     recovering = false;
     storing = false;
