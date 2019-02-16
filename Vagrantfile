@@ -2,13 +2,13 @@
 # vi: set ft=ruby :
 
 Vagrant.configure(2) do |config|
-  config.vm.box = "ubuntu/xenial64"
+  config.vm.box = "ubuntu/bionic64"
 
   config.vm.synced_folder "..", "/work", type: "virtualbox"
 
   config.vm.provider "virtualbox" do |v|
     v.linked_clone = true
-    v.memory = 4096
+    v.memory = 8192
     v.cpus = 4
   end
 
@@ -16,7 +16,8 @@ Vagrant.configure(2) do |config|
     sudo apt-get update
 
     sudo apt-get install -y \
-        gcc- g++- g++-*- clang \
+        clang lld \
+        clang-format clang-tidy clang-tools \
         tar wget git \
         openjdk-8-jdk \
         autoconf libtool \
