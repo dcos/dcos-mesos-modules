@@ -33,6 +33,7 @@
 #include "messages.hpp"
 #include "network.hpp"
 #include "overlay.hpp"
+#include "supervisor.hpp"
 
 namespace http = process::http;
 
@@ -71,6 +72,7 @@ using mesos::modules::overlay::internal::AgentRegisteredMessage;
 using mesos::modules::overlay::internal::MasterConfig;
 using mesos::modules::overlay::internal::RegisterAgentMessage;
 using mesos::modules::overlay::internal::UpdateAgentOverlaysMessage;
+using mesos::modules::overlay::supervisor::ProcessSupervisor;
 using mesos::Parameters;
 using mesos::state::LogStorage;
 using mesos::state::protobuf::Variable;
@@ -1942,32 +1944,11 @@ private:
 
   void demote()
   {
-    LOG(WARNING) << "Demoting " << self();
+    LOG(WARNING) << "Demoting (terminating) " << self();
 
-    // Reset state of the replicated log.
-    recovering = false;
-    storing = false;
-    operations.clear();
-    storedState = None();
-
-    // We should forget all agents since when this master becomes
-    // the leader they will re-register and get added to the
-    // in-memory databse.
-    agents.clear();
-    networkState.clear_agents();
-
-
-    // While we should not clear all the overlays (since they are static) we
-    // need to de-allocate the address space of the overlays so that
-    // when this master becomes the leader it can reserve any
-    // addresses that were pending.
-    foreachvalue(Owned<Overlay>& overlay, overlays) {
-      overlay->reset();
-    }
-
-    // We need to de-allocate the VTEP MAC and VTEP addresses
-    // allocated to the Agent as well.
-    vtep.reset();
+    // To force re-election and agents re-registration, terminate the process.
+    // It will be re-started by the Supervisor with a clean state in 3 seconds.
+    terminate(self());
   }
 };
 
@@ -1977,13 +1958,13 @@ class Manager : public Anonymous
 public:
   static Try<Manager*> createManager(const MasterConfig& masterConfig)
   {
-    Try<Owned<ManagerProcess>> process =
-      ManagerProcess::createManagerProcess(masterConfig);
+    Try<Owned<ProcessSupervisor<ManagerProcess>>> process =
+      ProcessSupervisor<ManagerProcess>::create([=]() {
+        return ManagerProcess::createManagerProcess(masterConfig);
+      }, Seconds(3));
 
     if (process.isError()) {
-      return Error(
-          "Unable to create the `Manager` process: " +
-          process.error());
+      return Error(process.error());
     }
 
     return new Manager(process.get());
@@ -1996,13 +1977,13 @@ public:
   }
 
 private:
-  Manager(Owned<ManagerProcess> _process)
+  Manager(Owned<ProcessSupervisor<ManagerProcess>> _process)
   : process(_process)
   {
     spawn(process.get());
   }
 
-  Owned<ManagerProcess> process;
+  Owned<ProcessSupervisor<ManagerProcess>> process;
 };
 
 } // namespace master {
