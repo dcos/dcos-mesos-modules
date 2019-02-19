@@ -14,6 +14,7 @@
 
 #include <mesos/slave/isolator.hpp>
 
+#include <process/clock.hpp>
 #include <process/future.hpp>
 #include <process/gmock.hpp>
 #include <process/gtest.hpp>
@@ -44,7 +45,7 @@
 #include "overlay/messages.pb.h"
 #include "overlay/overlay.hpp"
 #include "overlay/overlay.pb.h"
-
+#include "overlay/supervisor.hpp"
 
 #include "slave/flags.hpp"
 
@@ -59,9 +60,11 @@ using std::cout;
 using std::endl;
 using std::string;
 
+using process::Clock;
 using process::Future;
 using process::Owned;
 using process::PID;
+using process::ProcessBase;
 using process::UPID;
 
 using process::http::OK;
@@ -94,6 +97,7 @@ using mesos::modules::overlay::internal::MasterConfig;
 using mesos::modules::overlay::OverlayInfo;
 using mesos::modules::overlay::State;
 using mesos::modules::overlay::agent::IPSET_OVERLAY;
+using mesos::modules::overlay::supervisor::ProcessSupervisor;
 
 namespace mesos {
 namespace overlay {
@@ -1939,6 +1943,42 @@ TEST_F(OverlayTest, ROOT_checkDockerIsolation)
        "1"});
 
   AWAIT_READY(iptables);
+}
+
+
+// Test the supervisor.
+TEST_F(OverlayTest, supervisor)
+{
+  const Duration delay = Seconds(3);
+
+  Try<Owned<ProcessSupervisor<ProcessBase>>> result =
+    ProcessSupervisor<ProcessBase>::create([]() {
+      return Owned<ProcessBase>(new ProcessBase());
+    }, delay);
+  ASSERT_SOME(result);
+
+  Owned<ProcessSupervisor<ProcessBase>> supervisor = result.get();
+
+  spawn(supervisor.get());
+
+  // Terminating the child process.
+  Future<UPID> pid1 = supervisor->child();
+  AWAIT_READY(pid1);
+  terminate(pid1.get());
+  wait(pid1.get());
+
+  Clock::pause();
+  Clock::settle();
+  Clock::advance(delay);
+  Clock::resume();
+
+  // Checking if the child process is restarted.
+  Future<UPID> pid2 = supervisor->child();
+  AWAIT_READY(pid2);
+  ASSERT_NE(pid1.get(), pid2.get());
+
+  terminate(supervisor.get());
+  wait(supervisor.get());
 }
 
 } // namespace tests {
