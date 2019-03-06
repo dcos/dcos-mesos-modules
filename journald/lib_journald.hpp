@@ -230,6 +230,10 @@ struct Flags : public virtual LoggerFlags
 // Logging to sandbox is approximately equivalent to using the
 // `LogrotateContainerLogger`, packaged with vanilla Mesos.
 // See `Flags` above.
+//
+// NOTE: The lack of `ContainerLogger::cleanup()` or similar prevents
+// synchronization on container termination, i.e., a terminal status update for
+// a container can be sent before logs are flushed.
 class JournaldContainerLogger : public mesos::slave::ContainerLogger
 {
 public:
