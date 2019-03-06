@@ -12,12 +12,15 @@
 
 #include <mesos/scheduler/scheduler.hpp>
 
+#include <process/clock.hpp>
 #include <process/future.hpp>
 #include <process/gmock.hpp>
 #include <process/gtest.hpp>
-#include <process/process.hpp>
 #include <process/owned.hpp>
+#include <process/process.hpp>
+#include <process/time.hpp>
 
+#include <stout/duration.hpp>
 #include <stout/gtest.hpp>
 #include <stout/json.hpp>
 #include <stout/option.hpp>
@@ -643,12 +646,15 @@ TEST_P(JournaldLoggerTest, ROOT_LogToJournald)
       "latest");
   ASSERT_TRUE(os::exists(sandboxDirectory));
 
-  std::string stdoutPath = path::join(sandboxDirectory, "stdout");
+  const std::string stdoutPath = path::join(sandboxDirectory, "stdout");
 
   if (GetParam() == "journald") {
-    // Check that the sandbox was *not* written to.
-    // TODO(josephw): This file exists as other parts of the agent will
-    // create it.  We should invert this assertion when we fix this in Mesos.
+    // Check that the sandbox was *not* written to. This is best-effort with
+    // the current container logger architecture: a write may occur *after* a
+    // terminal status update is sent.
+    //
+    // TODO(josephw): This file exists as other parts of the agent will create
+    // it. We should invert this assertion when we fix this in Mesos.
     ASSERT_TRUE(os::exists(stdoutPath));
 
     Result<std::string> stdout = os::read(stdoutPath);
@@ -662,9 +668,26 @@ TEST_P(JournaldLoggerTest, ROOT_LogToJournald)
     // Check that the sandbox was written to as well.
     ASSERT_TRUE(os::exists(stdoutPath));
 
-    Result<std::string> stdout = os::read(stdoutPath);
-    ASSERT_SOME(stdout);
-    EXPECT_TRUE(strings::contains(stdout.get(), specialString))
+    // We expect stdout to be updated by the container logger no later than 30s
+    // after a terminal status update has been sent.
+    bool containsSpecialString = false;
+    Result<std::string> stdout = None();
+    const Duration timeout = Seconds(30);
+    const Time start = Clock::now();
+
+    do {
+      stdout = os::read(stdoutPath);
+      ASSERT_SOME(stdout);
+
+      if (strings::contains(stdout.get(), specialString)) {
+        containsSpecialString = true;
+        break;
+      }
+
+      os::sleep(Milliseconds(100));
+    } while (Clock::now() - start < timeout);
+
+    EXPECT_TRUE(containsSpecialString)
       << "Expected " << specialString << " to appear in " << stdout.get();
   }
 }
