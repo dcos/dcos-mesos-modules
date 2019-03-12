@@ -30,21 +30,87 @@
 using namespace process;
 using namespace mesos::journald::logger;
 
+// Forward declare a helper found in `src/linux/memfd.hpp`.
+namespace mesos {
+namespace internal {
+namespace memfd {
+
+// Creates an anonymous in-memory file via `memfd_create`.
+Try<int_fd> create(const std::string& name, unsigned int flags);
+
+} // namespace memfd {
+} // namespace internal {
+} // namespace mesos {
 
 class JournaldLoggerProcess : public Process<JournaldLoggerProcess>
 {
 public:
-  JournaldLoggerProcess(const Flags& _flags)
-    : ProcessBase(process::ID::generate("journald-logger")),
-      flags(_flags)
+  static Try<JournaldLoggerProcess*> create(const Flags& flags)
   {
-    // Prepare a buffer for reading from the `incoming` pipe.
-    length = os::pagesize();
-    buffer = new char[length];
+    Option<int_fd> configMemFd;
+
+    // Calculate the size of the buffer that is used for reading from
+    // the `incoming` pipe.
+    const size_t bufferSize = os::pagesize();
+
+    if (flags.destination_type == "logrotate" ||
+        flags.destination_type == "journald+logrotate") {
+      // Populate the `logrotate` configuration file.
+      // See `Flags::logrotate_options` for the format.
+      //
+      // NOTE: We specify a size of `--max_size - bufferSize` because
+      // `logrotate` has slightly different size semantics. `logrotate`
+      // will rotate when the max size is *exceeded*. We rotate to keep
+      // files *under* the max size.
+      const std::string config =
+        "\"" + Path(flags.logrotate_filename.get()).basename() + "\" {\n" +
+        flags.logrotate_options.getOrElse("") + "\n" +
+        "size " + stringify(flags.logrotate_max_size.bytes() - bufferSize) +
+        "\n}";
+
+      // Create a temporary anonymous file, which can be accessed by a child
+      // process by opening a `/proc/self/fd/<FD of anonymous file>`.
+      // This file is automatically removed on process termination, so we don't
+      // need to garbage collect it.
+      // We use the `memfd` file to pass the configuration to `logrotate`.
+      Try<int_fd> memFd =
+        mesos::internal::memfd::create("mesos_logrotate", 0);
+
+      if (memFd.isError()) {
+        return Error(
+            "Failed to create memfd file '" +
+            flags.logrotate_filename.get() + "': " + memFd.error());
+      }
+
+      Try<Nothing> write = os::write(memFd.get(), config);
+      if (write.isError()) {
+        os::close(memFd.get());
+        return Error(
+            "Failed to write memfd file '" + flags.logrotate_filename.get() +
+            "': " + write.error());
+      }
+
+      // `logrotate` requires configuration file to have 0644 or 0444
+      // permissions.
+      if (fchmod(memFd.get(), S_IRUSR | S_IRGRP | S_IROTH) == -1) {
+        ErrnoError error("Failed to chmod memfd file '" +
+                         flags.logrotate_filename.get() + "'");
+        os::close(memFd.get());
+        return error;
+      }
+
+      configMemFd = memFd.get();
+    }
+
+    return new JournaldLoggerProcess(flags, configMemFd, bufferSize);
   }
 
   virtual ~JournaldLoggerProcess()
   {
+    if (configMemFd.isSome()) {
+      os::close(configMemFd.get());
+    }
+
     if (buffer != NULL) {
       delete[] buffer;
       buffer = NULL;
@@ -87,31 +153,6 @@ public:
       std::strcpy((char*) entries[i].iov_base, entry.c_str());
     }
 
-    if (flags.destination_type == "logrotate" ||
-        flags.destination_type == "journald+logrotate") {
-      // Populate the `logrotate` configuration file.
-      // See `Flags::logrotate_options` for the format.
-      //
-      // NOTE: We specify a size of `--logrotate_max_size - length`
-      // because `logrotate` has slightly different size semantics.
-      // `logrotate` will rotate when the max size is *exceeded*.
-      // We rotate to keep files *under* the max size.
-      std::string basename = Path(flags.logrotate_filename.get()).basename();
-
-      const std::string config =
-        "\"" + basename + "\" {\n" +
-        flags.logrotate_options.getOrElse("") + "\n" +
-        "size " + stringify(flags.logrotate_max_size.bytes() - length) + "\n" +
-        "}";
-
-      Try<Nothing> result = os::write(basename + LOGROTATE_CONF_SUFFIX, config);
-
-      if (result.isError()) {
-        return Failure(
-            "Failed to write logrotate configuration file: " + result.error());
-      }
-    }
-
     // NOTE: This is a prerequisuite for `io::read`.
     Try<Nothing> nonblock = os::nonblock(STDIN_FILENO);
     if (nonblock.isError()) {
@@ -127,7 +168,7 @@ public:
   // Reads from stdin and writes to journald.
   void loop()
   {
-    io::read(STDIN_FILENO, buffer, length)
+    io::read(STDIN_FILENO, buffer, bufferSize)
       .then([&](size_t readSize) -> Future<Nothing> {
         // Check if EOF has been reached on the input stream.
         // This indicates that the container (whose logs are being
@@ -248,23 +289,40 @@ public:
     // the error and continue logging.  In case the leading log file
     // is not renamed, we will continue appending to the existing
     // leading log file.
-    std::string basename = Path(flags.logrotate_filename.get()).basename();
-
     os::shell(
         flags.logrotate_path +
-        " --state \"" + basename + LOGROTATE_STATE_SUFFIX +
-        "\" \"" + basename + LOGROTATE_CONF_SUFFIX + "\"");
+        " --state \"" + Path(flags.logrotate_filename.get()).basename() +
+        LOGROTATE_STATE_SUFFIX + "\" \"" + configPath.get() + "\"");
 
     // Reset the number of bytes written.
     bytesWritten = 0;
   }
 
 private:
-  Flags flags;
+  explicit JournaldLoggerProcess(
+      const Flags& _flags,
+      const Option<int_fd>& _configMemFd,
+      size_t _bufferSize)
+    : ProcessBase(process::ID::generate("logrotate-logger")),
+      flags(_flags),
+      configMemFd(_configMemFd),
+      buffer(new char[_bufferSize]),
+      bufferSize(_bufferSize),
+      leading(None()),
+      bytesWritten(0)
+  {
+    if (configMemFd.isSome()) {
+      configPath = "/proc/self/fd/" + stringify(configMemFd.get());
+    }
+  }
+
+  const Flags flags;
+  const Option<int_fd> configMemFd;
+  Option<std::string> configPath;
 
   // For reading from stdin.
   char* buffer;
-  size_t length;
+  const size_t bufferSize;
 
   // For writing and rotating the leading log file.
   Option<int> leading;
@@ -326,15 +384,24 @@ int main(int argc, char** argv)
   }
 
   // Asynchronously control the flow and size of logs.
-  JournaldLoggerProcess process(flags);
-  spawn(&process);
+  Try<JournaldLoggerProcess*> process = JournaldLoggerProcess::create(flags);
+  if (process.isError()) {
+    EXIT(EXIT_FAILURE)
+      << Error("Failed to create logger process: " + process.error());
+  }
+
+  spawn(process.get());
 
   // Wait for the logging process to finish.
-  Future<Nothing> status = dispatch(process, &JournaldLoggerProcess::run);
+  Future<Nothing> status =
+    dispatch(process.get(), &JournaldLoggerProcess::run);
+
   status.await();
 
-  terminate(process);
-  wait(process);
+  terminate(process.get());
+  wait(process.get());
+
+  delete process.get();
 
   return status.isReady() ? EXIT_SUCCESS : EXIT_FAILURE;
 }
