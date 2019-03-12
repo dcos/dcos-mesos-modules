@@ -76,6 +76,10 @@ mesos_journald_logger_SOURCES =				\
 
 SYSTEMD_JOURNALD = `pkg-config --cflags --libs libsystemd`
 
+# NOTE: The modules build assumes that Mesos is built with
+# `--enable-launcher-sealing` and `--disable-libtool-wrappers`.
+# An internal symbol gated by this flag inside `src/linux/memfd.hpp`
+# will be used by the logger.
 mesos_journald_logger_LDFLAGS =				\
   $(MESOS_LDFLAGS)					\
   $(SYSTEMD_JOURNALD)
