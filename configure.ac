@@ -168,7 +168,7 @@ if test -n "`echo $with_protobuf`"; then
 else
   if test -d "$mesos_build_dir"; then
     # Check for the protobuf compiler in 3rdparty PATH.
-    AC_PATH_TOOL([PROTOCOMPILER], [protoc], [], [${mesos_build_dir}/3rdparty/bin])
+    AC_PATH_TOOL([PROTOCOMPILER], [protoc], [], [${mesos_build_dir}/3rdparty/protobuf-3.5.0/src])
   else
     # Check for the protobuf compiler in default PATH.
     AC_PATH_TOOL([PROTOCOMPILER], [protoc], [], [$PATH])
