@@ -27,7 +27,7 @@ cd <mesos-source>
 ./bootstrap
 mkdir build
 cd build
-../configure --enable-libevent --enable-ssl --enable-install-module-dependencies
+../configure --enable-libevent --enable-ssl --enable-install-module-dependencies --enable-launcher-sealing --disable-libtool-wrappers
 make
 ```
 
