@@ -163,7 +163,7 @@ public:
     MesosTest::TearDown();
   }
 
-private:
+protected:
   Modules modules;
 };
 
@@ -304,6 +304,32 @@ TEST_F(JournaldLoggerTest, ROOT_LogToJournaldWithBigLabel)
 // non-existence of the logrotate config file.
 TEST_F(JournaldLoggerTest, ROOT_LogrotateCustomOptions)
 {
+  const std::string testFile = path::join(sandbox.get(), "CustomRotateOptions");
+
+  // Custom config consists of a postrotate script which creates
+  // an empty file in the temporary directory on log rotation.
+  const std::string customConfig =
+    "postrotate\n touch " + testFile + "\nendscript";
+
+  // There is no way to change a task's custom logrotate options except when
+  // loading the module.  So this test will unload the module, change the
+  // logrotate options, and then reload the module.
+  ASSERT_SOME(ModuleManager::unload(JOURNALD_LOGGER_NAME));
+
+  foreach (Modules::Library& library, *modules.mutable_libraries()) {
+    foreach (Modules::Library::Module& module, *library.mutable_modules()) {
+      if (module.has_name() && module.name() == JOURNALD_LOGGER_NAME) {
+        Parameter* parameter = module.add_parameters();
+        parameter->set_key("logrotate_stdout_options");
+        parameter->set_value(customConfig);
+      }
+    }
+  }
+
+  // Initialize the modules.
+  Try<Nothing> result = ModuleManager::load(modules);
+  ASSERT_SOME(result);
+
   // Create a master, agent, and framework.
   Try<Owned<cluster::Master>> master = StartMaster();
   ASSERT_SOME(master);
@@ -349,13 +375,6 @@ TEST_F(JournaldLoggerTest, ROOT_LogrotateCustomOptions)
   AWAIT_READY(offers);
   EXPECT_NE(0u, offers.get().size());
 
-  const std::string testFile = path::join(sandbox.get(), "CustomRotateOptions");
-
-  // Custom config consists of a postrotate script which creates
-  // an empty file in the temporary directory on log rotation.
-  const std::string customConfig =
-    "postrotate\n touch " + testFile + "\nendscript";
-
   // Start a task that spams stdout with 2 MB of (mostly blank) output.
   // The container logger module is loaded with parameters that limit
   // the log size to files of 10 MB each.  After the task completes,
@@ -373,10 +392,18 @@ TEST_F(JournaldLoggerTest, ROOT_LogrotateCustomOptions)
   variable->set_value("logrotate");
 
   // Add an override for the logger's stdout stream.
-  // We will check this by inspecting the generated configuration file.
+  // This way of overriding custom options should be disabled,
+  // so we will check that these options are ignored.
+  // See MESOS-9564 for more context.
+  const std::string ignoredtestFile =
+    path::join(sandbox.get(), "ShouldNotBeCreated");
+
+  const std::string ignoredConfig =
+    "postrotate\n touch " + ignoredtestFile + "\nendscript";
+
   variable = task.mutable_command()->mutable_environment()->add_variables();
   variable->set_name("CONTAINER_LOGGER_LOGROTATE_STDOUT_OPTIONS");
-  variable->set_value(customConfig);
+  variable->set_value(ignoredConfig);
 
   Future<TaskStatus> statusStarting;
   Future<TaskStatus> statusRunning;
@@ -452,6 +479,7 @@ TEST_F(JournaldLoggerTest, ROOT_LogrotateCustomOptions)
   // Since some logs should have been rotated, the postrotate script should
   // have created this file.
   ASSERT_TRUE(os::exists(testFile));
+  ASSERT_FALSE(os::exists(ignoredtestFile));
 }
 
 
