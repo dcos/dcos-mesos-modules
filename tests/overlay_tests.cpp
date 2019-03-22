@@ -14,6 +14,7 @@
 
 #include <mesos/slave/isolator.hpp>
 
+#include <process/clock.hpp>
 #include <process/future.hpp>
 #include <process/gmock.hpp>
 #include <process/gtest.hpp>
@@ -44,7 +45,7 @@
 #include "overlay/messages.pb.h"
 #include "overlay/overlay.hpp"
 #include "overlay/overlay.pb.h"
-
+#include "overlay/supervisor.hpp"
 
 #include "slave/flags.hpp"
 
@@ -59,9 +60,11 @@ using std::cout;
 using std::endl;
 using std::string;
 
+using process::Clock;
 using process::Future;
 using process::Owned;
 using process::PID;
+using process::ProcessBase;
 using process::UPID;
 
 using process::http::OK;
@@ -94,6 +97,7 @@ using mesos::modules::overlay::internal::MasterConfig;
 using mesos::modules::overlay::OverlayInfo;
 using mesos::modules::overlay::State;
 using mesos::modules::overlay::agent::IPSET_OVERLAY;
+using mesos::modules::overlay::supervisor::ProcessSupervisor;
 
 namespace mesos {
 namespace overlay {
@@ -269,7 +273,7 @@ protected:
           {"docker",
            "network",
            "rm",
-           OVERLAY_NAME, 
+           OVERLAY_NAME,
            OVERLAY_NAME_2});
       // cannot use AWAIT_READY as it would fail if one of the networks
       // is absent
@@ -1354,7 +1358,6 @@ TEST_F(OverlayTest, ROOT_checkAddVirtualNetworks)
   ASSERT_EQ(agentOverlay->info().subnet(), "11.0.0.0/8");
   ASSERT_EQ(agentOverlay->subnet6(), "fd04::/80");
   ASSERT_EQ(agentOverlay->info().subnet6(), "fd04::/64");
-
 }
 
 
@@ -1504,7 +1507,7 @@ TEST_F(OverlayTest, checkMTUConfiguration)
 }
 
 
-//Test enable/disable IPv6 configuration
+// Test enable/disable IPv6 configuration.
 TEST_F(OverlayTest, ROOT_checkEnableDisableIPv6Configuration)
 {
   Try<Owned<cluster::Master>> master = StartMaster();
@@ -1601,7 +1604,8 @@ TEST_F(OverlayTest, ROOT_checkEnableDisableIPv6Configuration)
   ASSERT_SOME(json);
 
   // Verify that IPv6 is disabled in docker network
-  ipv6Flag = json->values[0].as<JSON::Object>().find<JSON::Boolean>("EnableIPv6");
+  ipv6Flag =
+    json->values[0].as<JSON::Object>().find<JSON::Boolean>("EnableIPv6");
   ASSERT_SOME(ipv6Flag);
   EXPECT_EQ(ipv6Flag.get(), false);
 }
@@ -1939,6 +1943,42 @@ TEST_F(OverlayTest, ROOT_checkDockerIsolation)
        "1"});
 
   AWAIT_READY(iptables);
+}
+
+
+// Test the supervisor.
+TEST_F(OverlayTest, supervisor)
+{
+  const Duration delay = Seconds(3);
+
+  Try<Owned<ProcessSupervisor<ProcessBase>>> result =
+    ProcessSupervisor<ProcessBase>::create([]() {
+      return Owned<ProcessBase>(new ProcessBase());
+    }, delay);
+  ASSERT_SOME(result);
+
+  Owned<ProcessSupervisor<ProcessBase>> supervisor = result.get();
+
+  spawn(supervisor.get());
+
+  // Terminating the child process.
+  Future<UPID> pid1 = supervisor->child();
+  AWAIT_READY(pid1);
+  terminate(pid1.get());
+  wait(pid1.get());
+
+  Clock::pause();
+  Clock::settle();
+  Clock::advance(delay);
+  Clock::resume();
+
+  // Checking if the child process is restarted.
+  Future<UPID> pid2 = supervisor->child();
+  AWAIT_READY(pid2);
+  ASSERT_NE(pid1.get(), pid2.get());
+
+  terminate(supervisor.get());
+  wait(supervisor.get());
 }
 
 } // namespace tests {

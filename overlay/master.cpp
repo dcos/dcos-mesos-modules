@@ -33,6 +33,7 @@
 #include "messages.hpp"
 #include "network.hpp"
 #include "overlay.hpp"
+#include "supervisor.hpp"
 
 namespace http = process::http;
 
@@ -71,6 +72,7 @@ using mesos::modules::overlay::internal::AgentRegisteredMessage;
 using mesos::modules::overlay::internal::MasterConfig;
 using mesos::modules::overlay::internal::RegisterAgentMessage;
 using mesos::modules::overlay::internal::UpdateAgentOverlaysMessage;
+using mesos::modules::overlay::supervisor::ProcessSupervisor;
 using mesos::Parameters;
 using mesos::state::LogStorage;
 using mesos::state::protobuf::Variable;
@@ -1234,6 +1236,17 @@ public:
           new mesos::state::protobuf::State(storage));
     }
 
+    // Parse replicatedLogTimeout.
+    Try<Duration> replicatedLogTimeout = Minutes(5);
+    if (masterConfig.has_replicated_log_timeout()) {
+      replicatedLogTimeout =
+        Duration::parse(masterConfig.replicated_log_timeout());
+      if (replicatedLogTimeout.isError()) {
+        return Error("Error parsing replicatedLogTimeout: " +
+                     replicatedLogTimeout.error());
+      }
+    }
+
     return Owned<ManagerProcess>(new ManagerProcess(
           overlays,
           vtepSubnet.get(),
@@ -1242,6 +1255,7 @@ public:
           vtepMTU,
           networkConfig,
           replicatedLog,
+          replicatedLogTimeout.get(),
           storage,
           log));
   }
@@ -1539,6 +1553,12 @@ protected:
     recovering = true;
 
     replicatedLog->fetch<overlay::State>(REPLICATED_LOG_STORE_KEY)
+      .after(replicatedLogTimeout,
+             defer(self(),
+                 &ManagerProcess::timeout<Variable<overlay::State>>,
+                 "fetch",
+                 replicatedLogTimeout,
+                 lambda::_1))
       .onAny(defer(self(),
                    &ManagerProcess::_recover,
                    lambda::_1));
@@ -1554,6 +1574,7 @@ protected:
                    <<(variable.isDiscarded() ? "discarded"
                        : variable.failure());
 
+      demote();
       return;
     }
 
@@ -1586,7 +1607,8 @@ protected:
       Try<Agent> agent = Agent::create(agentInfo);
       if (agent.isError()) {
         LOG(ERROR) << "Could not recover Agent: "<< agent.error();
-        abort();
+        demote();
+        return;
       }
 
       agents.emplace(agent->getIP(), agent.get());
@@ -1609,7 +1631,8 @@ protected:
                        << overlay.subnet() << ": "
                        << network.error();
 
-            abort();
+            demote();
+            return;
           }
 
           // We should already have this particular overlay at bootup.
@@ -1622,7 +1645,8 @@ protected:
             LOG(ERROR) << "Unable to reserve the subnet " << network.get()
                        << ": " << result.error();
 
-            abort();
+            demote();
+            return;
           }
         }
 
@@ -1636,7 +1660,8 @@ protected:
             LOG(ERROR) << "Unable to parse the retrieved network: "
               << overlay.subnet6() << ": "
               << network6.error();
-            abort();
+            demote();
+            return;
           }
 
           // We should already have this particular overlay at bootup.
@@ -1648,7 +1673,8 @@ protected:
           if (result.isError()) {
             LOG(ERROR) << "Unable to reserve the IPv6 subnet " << network6.get()
                        << ": " << result.error();
-            abort();
+            demote();
+            return;
           }
         }
 
@@ -1665,7 +1691,8 @@ protected:
                        << overlay.backend().vxlan().vtep_ip() << ": "
                        << vtepIP.error();
 
-            abort();
+            demote();
+            return;
           }
 
           // NOTE: We only need to reserve the VTEP IP and not the
@@ -1678,7 +1705,8 @@ protected:
             LOG(ERROR) << "Unable to reserve VTEP IP: "
                        << vtepIP.get() << ": " << result.error();
 
-            abort();
+            demote();
+            return;
           }
 
           // IPv6
@@ -1690,7 +1718,8 @@ protected:
               LOG(ERROR) << "Unable to parse the retrieved `vtep IPv6`: "
                 << overlay.backend().vxlan().vtep_ip6() << ": "
                 << vtepIP6.error();
-              abort();
+              demote();
+              return;
             }
 
             LOG(INFO) << "Reserving VTEP IPv6: " << vtepIP6.get();
@@ -1698,7 +1727,8 @@ protected:
             if (result.isError()) {
               LOG(ERROR) << "Unable to reserve VTEP IPv6: "
                          << vtepIP6.get() << ": " << result.error();
-              abort();
+              demote();
+              return;
             }
           }
         }
@@ -1720,6 +1750,7 @@ protected:
     storedState = variable.get();
 
     LOG(INFO) << "Moving " << self() << " to `RECOVERED` state.";
+    recovering = false;
     return;
   }
 
@@ -1731,6 +1762,7 @@ private:
   hashmap<IP, Agent> agents;
 
   Owned<mesos::state::protobuf::State> replicatedLog;
+  Duration replicatedLogTimeout;
 
   Option<Variable<overlay::State>> storedState;
 
@@ -1756,6 +1788,7 @@ private:
       const Option<size_t>& vtepMTU,
       const NetworkConfig& _networkConfig,
       const Owned<mesos::state::protobuf::State> _replicatedLog,
+      const Duration _replicatedLogTimeout,
       Storage* _storage,
       Log* _log)
     : ProcessBase("overlay-master"),
@@ -1763,6 +1796,7 @@ private:
       storing(false),
       overlays(_overlays),
       replicatedLog(_replicatedLog),
+      replicatedLogTimeout(_replicatedLogTimeout),
       storedState(None()),
       storage(_storage),
       log(_log),
@@ -1823,6 +1857,12 @@ private:
       stateVariable = stateVariable.mutate(_networkState);
 
       replicatedLog->store(stateVariable)
+        .after(replicatedLogTimeout,
+               defer(self(),
+                     &ManagerProcess::timeout<Option<Variable<overlay::State>>>,
+                     "store",
+                     replicatedLogTimeout,
+                     lambda::_1))
         .onAny(defer(self(), &ManagerProcess::_store, lambda::_1, operations));
 
       operations.clear();
@@ -1888,32 +1928,27 @@ private:
     }
   }
 
+  template <typename T>
+  Future<T> timeout(
+      const string& operation,
+      const Duration& duration,
+      Future<T> future)
+  {
+    // Helper for treating State operations that timeout as failures.
+    future.discard();
+
+    return Failure(
+        "Failed to perform " + operation + " within " + stringify(duration));
+  }
+
+
   void demote()
   {
-    // Reset state of the replicated log.
-    recovering = false;
-    storing = false;
-    operations.clear();
-    storedState = None();
+    LOG(WARNING) << "Demoting (terminating) " << self();
 
-    // We should forget all agents since when this master becomes
-    // the leader they will re-register and get added to the
-    // in-memory databse.
-    agents.clear();
-    networkState.clear_agents();
-
-
-    // While we should not clear all the overlays (since they are static) we
-    // need to de-allocate the address space of the overlays so that
-    // when this master becomes the leader it can reserve any
-    // addresses that were pending.
-    foreachvalue(Owned<Overlay>& overlay, overlays) {
-      overlay->reset();
-    }
-
-    // We need to de-allocate the VTEP MAC and VTEP addresses
-    // allocated to the Agent as well.
-    vtep.reset();
+    // To force re-election and agents re-registration, terminate the process.
+    // It will be re-started by the Supervisor with a clean state in 3 seconds.
+    terminate(self());
   }
 };
 
@@ -1923,13 +1958,13 @@ class Manager : public Anonymous
 public:
   static Try<Manager*> createManager(const MasterConfig& masterConfig)
   {
-    Try<Owned<ManagerProcess>> process =
-      ManagerProcess::createManagerProcess(masterConfig);
+    Try<Owned<ProcessSupervisor<ManagerProcess>>> process =
+      ProcessSupervisor<ManagerProcess>::create([=]() {
+        return ManagerProcess::createManagerProcess(masterConfig);
+      }, Seconds(3));
 
     if (process.isError()) {
-      return Error(
-          "Unable to create the `Manager` process: " +
-          process.error());
+      return Error(process.error());
     }
 
     return new Manager(process.get());
@@ -1942,13 +1977,13 @@ public:
   }
 
 private:
-  Manager(Owned<ManagerProcess> _process)
+  Manager(Owned<ProcessSupervisor<ManagerProcess>> _process)
   : process(_process)
   {
     spawn(process.get());
   }
 
-  Owned<ManagerProcess> process;
+  Owned<ProcessSupervisor<ManagerProcess>> process;
 };
 
 } // namespace master {
