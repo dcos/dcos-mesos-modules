@@ -107,9 +107,7 @@ public:
     LoggerFlags overriddenFlags;
     overriddenFlags.destination_type = flags.destination_type;
     overriddenFlags.logrotate_max_stdout_size = flags.logrotate_max_stdout_size;
-    overriddenFlags.logrotate_stdout_options = flags.logrotate_stdout_options;
     overriddenFlags.logrotate_max_stderr_size = flags.logrotate_max_stderr_size;
-    overriddenFlags.logrotate_stderr_options = flags.logrotate_stderr_options;
 
     // TODO(jieyu): Consider merge labels with container specific
     // extra labels from the environment, instead of overwriting.
@@ -146,6 +144,15 @@ public:
         LOG(WARNING) << warning.message;
       }
     }
+
+    // TODO(josephw): Custom options would allow tasks to execute arbitrary
+    // scripts in logrotate's `postrotate` clause or add rotation of arbitrary
+    // files.  This is disabled in favor of more targeted options in future,
+    // such as ints for the number of files to keep, or bools for compression.
+    // See: https://issues.apache.org/jira/browse/MESOS-9564
+    // and https://jira.mesosphere.com/browse/DCOS-47733.
+    overriddenFlags.logrotate_stdout_options = flags.logrotate_stdout_options;
+    overriddenFlags.logrotate_stderr_options = flags.logrotate_stderr_options;
 
     Option<ExecutorInfo> executorInfo;
     if (containerConfig.has_executor_info()) {

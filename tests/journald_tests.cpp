@@ -27,6 +27,7 @@
 #include <stout/strings.hpp>
 #include <stout/try.hpp>
 
+#include <stout/os/pstree.hpp>
 #include <stout/os/read.hpp>
 
 #include "common/shell.hpp"
@@ -162,7 +163,7 @@ public:
     MesosTest::TearDown();
   }
 
-private:
+protected:
   Modules modules;
 };
 
@@ -296,6 +297,189 @@ TEST_F(JournaldLoggerTest, ROOT_LogToJournaldWithBigLabel)
 
   AWAIT_READY(secondQuery);
   ASSERT_FALSE(strings::contains(secondQuery.get(), specialString));
+}
+
+
+// Loads the journald ContainerLogger module and checks for the
+// non-existence of the logrotate config file.
+TEST_F(JournaldLoggerTest, ROOT_LogrotateCustomOptions)
+{
+  const std::string testFile = path::join(sandbox.get(), "CustomRotateOptions");
+
+  // Custom config consists of a postrotate script which creates
+  // an empty file in the temporary directory on log rotation.
+  const std::string customConfig =
+    "postrotate\n touch " + testFile + "\nendscript";
+
+  // There is no way to change a task's custom logrotate options except when
+  // loading the module.  So this test will unload the module, change the
+  // logrotate options, and then reload the module.
+  ASSERT_SOME(ModuleManager::unload(JOURNALD_LOGGER_NAME));
+
+  foreach (Modules::Library& library, *modules.mutable_libraries()) {
+    foreach (Modules::Library::Module& module, *library.mutable_modules()) {
+      if (module.has_name() && module.name() == JOURNALD_LOGGER_NAME) {
+        Parameter* parameter = module.add_parameters();
+        parameter->set_key("logrotate_stdout_options");
+        parameter->set_value(customConfig);
+      }
+    }
+  }
+
+  // Initialize the modules.
+  Try<Nothing> result = ModuleManager::load(modules);
+  ASSERT_SOME(result);
+
+  // Create a master, agent, and framework.
+  Try<Owned<cluster::Master>> master = StartMaster();
+  ASSERT_SOME(master);
+
+  // We'll need access to these flags later.
+  mesos::internal::slave::Flags flags = CreateSlaveFlags();
+
+  // Use the journald container logger.
+  flags.container_logger = JOURNALD_LOGGER_NAME;
+
+  Fetcher fetcher(flags);
+
+  // We use an actual containerizer + executor since we want something to run.
+  Try<MesosContainerizer*> _containerizer =
+    MesosContainerizer::create(flags, false, &fetcher);
+
+  CHECK_SOME(_containerizer);
+  Owned<MesosContainerizer> containerizer(_containerizer.get());
+
+  Owned<MasterDetector> detector = master.get()->createDetector();
+
+  Try<Owned<cluster::Slave>> slave =
+    StartSlave(detector.get(), containerizer.get(), flags);
+  ASSERT_SOME(slave);
+
+  MockScheduler sched;
+  MesosSchedulerDriver driver(
+      &sched, DEFAULT_FRAMEWORK_INFO, master.get()->pid, DEFAULT_CREDENTIAL);
+
+  Future<FrameworkID> frameworkId;
+  EXPECT_CALL(sched, registered(&driver, _, _))
+    .WillOnce(FutureArg<1>(&frameworkId));
+
+  // Wait for an offer, and start a task.
+  Future<vector<Offer>> offers;
+  EXPECT_CALL(sched, resourceOffers(&driver, _))
+    .WillOnce(FutureArg<1>(&offers))
+    .WillRepeatedly(Return()); // Ignore subsequent offers.
+
+  driver.start();
+  AWAIT_READY(frameworkId);
+
+  AWAIT_READY(offers);
+  EXPECT_NE(0u, offers.get().size());
+
+  // Start a task that spams stdout with 2 MB of (mostly blank) output.
+  // The container logger module is loaded with parameters that limit
+  // the log size to files of 10 MB each.  After the task completes,
+  // `logrotate` should trigger rotation of stdout logs, so the postrotate
+  // script is executed.
+  TaskInfo task = createTask(
+      offers.get()[0],
+      "i=0; while [ $i -lt 10240 ]; "
+      "do printf '%-1024d\\n' $i; i=$((i+1)); done");
+
+  // Make sure the destination of the logs is logrotate.
+  Environment::Variable* variable =
+    task.mutable_command()->mutable_environment()->add_variables();
+  variable->set_name("CONTAINER_LOGGER_DESTINATION_TYPE");
+  variable->set_value("logrotate");
+
+  // Add an override for the logger's stdout stream.
+  // This way of overriding custom options should be disabled,
+  // so we will check that these options are ignored.
+  // See MESOS-9564 for more context.
+  const std::string ignoredtestFile =
+    path::join(sandbox.get(), "ShouldNotBeCreated");
+
+  const std::string ignoredConfig =
+    "postrotate\n touch " + ignoredtestFile + "\nendscript";
+
+  variable = task.mutable_command()->mutable_environment()->add_variables();
+  variable->set_name("CONTAINER_LOGGER_LOGROTATE_STDOUT_OPTIONS");
+  variable->set_value(ignoredConfig);
+
+  Future<TaskStatus> statusStarting;
+  Future<TaskStatus> statusRunning;
+  Future<TaskStatus> statusFinished;
+  EXPECT_CALL(sched, statusUpdate(&driver, _))
+    .WillOnce(FutureArg<1>(&statusStarting))
+    .WillOnce(FutureArg<1>(&statusRunning))
+    .WillOnce(FutureArg<1>(&statusFinished))
+    .WillRepeatedly(Return());       // Ignore subsequent updates.
+
+  driver.launchTasks(offers.get()[0].id(), {task});
+
+  AWAIT_READY(statusStarting);
+  EXPECT_EQ(TASK_STARTING, statusStarting.get().state());
+
+  AWAIT_READY(statusRunning);
+  EXPECT_EQ(TASK_RUNNING, statusRunning.get().state());
+
+  AWAIT_READY(statusFinished);
+  EXPECT_EQ(TASK_FINISHED, statusFinished.get().state());
+
+  driver.stop();
+  driver.join();
+
+  // The ContainerLogger spawns some helper processes that continue running
+  // briefly after the container finishes. Once they finish reading/writing
+  // the container's pipe, they should exit.
+  const Duration maxReapWaitTime = Seconds(30);
+  Try<os::ProcessTree> pstrees = os::pstree(0);
+  ASSERT_SOME(pstrees);
+  foreach (const os::ProcessTree& pstree, pstrees->children) {
+    // Wait for the logger subprocesses to exit, for up to 30 seconds each.
+    Duration waited = Duration::zero();
+    do {
+      if (!os::exists(pstree.process.pid)) {
+        break;
+      }
+
+      // Push the clock ahead to speed up the reaping of subprocesses.
+      Clock::pause();
+      Clock::settle();
+      Clock::advance(Seconds(1));
+      Clock::resume();
+
+      os::sleep(Milliseconds(100));
+      waited += Milliseconds(100);
+    } while (waited < maxReapWaitTime);
+
+    EXPECT_LE(waited, maxReapWaitTime);
+  }
+
+  // Check that the sandbox was written to.
+  std::string sandboxDirectory = path::join(
+      flags.work_dir,
+      "slaves",
+      offers.get()[0].slave_id().value(),
+      "frameworks",
+      frameworkId.get().value(),
+      "executors",
+      statusRunning->executor_id().value(),
+      "runs",
+      "latest");
+
+  ASSERT_TRUE(os::exists(sandboxDirectory));
+  const std::string stdoutPath = path::join(sandboxDirectory, "stdout");
+  ASSERT_TRUE(os::exists(stdoutPath));
+
+  // An associated logrotate config file should not exist.
+  const std::string configPath =
+    path::join(sandboxDirectory, "stdout.logrotate.conf");
+  ASSERT_FALSE(os::exists(configPath));
+
+  // Since some logs should have been rotated, the postrotate script should
+  // have created this file.
+  ASSERT_TRUE(os::exists(testFile));
+  ASSERT_FALSE(os::exists(ignoredtestFile));
 }
 
 
