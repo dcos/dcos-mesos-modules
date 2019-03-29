@@ -60,7 +60,8 @@ void FileSink::send(
     int line,
     const struct ::tm* tm_time,
     const char* message,
-    size_t message_len)
+    size_t message_len,
+    google::int32 usecs)
 {
   os::write(
       logFd,
@@ -71,7 +72,24 @@ void FileSink::send(
           tm_time,
           message,
           // NOTE: The LogSink's message length excludes the newline.
-          message_len + 1));
+          message_len + 1,
+          usecs));
+}
+
+// This implements the send() method with the signature obsoleted in
+// MESOS-9687. The only reason why it is not empty is to provide
+// compatibility of the modules with the pre-MESOS-9687 Mesos code.
+void FileSink::send(
+    google::LogSeverity severity,
+    const char* full_filename,
+    const char* base_filename,
+    int line,
+    const struct ::tm* tm_time,
+    const char* message,
+    size_t message_len)
+{
+  send(severity, full_filename, base_filename, line, tm_time, message,
+       message_len, 0);
 }
 
 
