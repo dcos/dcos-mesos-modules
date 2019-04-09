@@ -5,15 +5,19 @@
 
 #include <systemd/sd-journal.h>
 
+#include <process/address.hpp>
 #include <process/dispatch.hpp>
 #include <process/future.hpp>
 #include <process/id.hpp>
 #include <process/io.hpp>
+#include <process/network.hpp>
 #include <process/process.hpp>
 
 #include <stout/check.hpp>
 #include <stout/error.hpp>
 #include <stout/exit.hpp>
+#include <stout/json.hpp>
+#include <stout/jsonify.hpp>
 #include <stout/nothing.hpp>
 #include <stout/path.hpp>
 #include <stout/strings.hpp>
@@ -54,7 +58,8 @@ public:
     const size_t bufferSize = os::pagesize();
 
     if (flags.destination_type == "logrotate" ||
-        flags.destination_type == "journald+logrotate") {
+        flags.destination_type == "journald+logrotate" ||
+        flags.destination_type == "fluentbit+logrotate") {
       // Populate the `logrotate` configuration file.
       // See `Flags::logrotate_options` for the format.
       //
@@ -189,9 +194,20 @@ public:
         }
 
         if (flags.destination_type == "logrotate" ||
-            flags.destination_type == "journald+logrotate") {
+            flags.destination_type == "journald+logrotate" ||
+            flags.destination_type == "fluentbit+logrotate") {
           // Write the bytes to sandbox, with log rotation.
           Try<Nothing> result = write_logrotate(readSize);
+          if (result.isError()) {
+            promise.fail("Failed to write: " + result.error());
+            return Nothing();
+          }
+        }
+
+        if (flags.destination_type == "fluentbit" ||
+            flags.destination_type == "fluentbit+logrotate") {
+          // Write the bytes to sandbox, with log rotation.
+          Try<Nothing> result = write_fluentbit(readSize);
           if (result.isError()) {
             promise.fail("Failed to write: " + result.error());
             return Nothing();
@@ -230,7 +246,6 @@ public:
     // Even if the write fails, we ignore the error.
     return Nothing();
   }
-
 
   // Writes the buffer from stdin to the leading log file.
   // When the number of written bytes exceeds `--logrotate_max_size`,
@@ -272,6 +287,66 @@ public:
     }
 
     bytesWritten += readSize;
+
+    return Nothing();
+  }
+
+  // Writes the buffer from stdin to the specified fluentbit address.
+  Try<Nothing> write_fluentbit(size_t readSize)
+  {
+    if (fluentbit_socket.isNone()) {
+      // Create a TCP socket.
+      fluentbit_socket =
+        net::socket(flags.fluentbit_ip->family(), SOCK_STREAM, 0);
+
+      if (fluentbit_socket->isError()) {
+        return Error("Failed to create socket: " + fluentbit_socket->error());
+      }
+
+      // Try to connect to fluentbit.
+      Try<Nothing, SocketError> connect = network::connect(
+          fluentbit_socket->get(),
+          network::inet::Address(
+              flags.fluentbit_ip.get(), flags.fluentbit_port));
+
+      // NOTE: Sending messages to fluentbit is on a best-effort basis.
+      // If we cannot connect for whatever reason, lines will be dropped.
+      if (connect.isError()) {
+        std::cerr
+          << "Failed to connect to fluentbit: " << connect.error() << std::endl;
+
+        os::close(fluentbit_socket->get());
+        fluentbit_socket = None();
+        return Nothing();
+      }
+    }
+
+    // We may be reading more than one log line at once,
+    // but we need to add labels for each line.
+    std::string logs(buffer, readSize);
+    std::vector<std::string> lines = strings::split(logs, "\n");
+
+    foreach (const std::string& line, lines) {
+      if (line.empty()) {
+        continue;
+      }
+
+      JSON::Object object;
+      object.values["line"] = line;
+
+      Try<Nothing> result = os::write(fluentbit_socket->get(), jsonify(object));
+
+      // If we fail to write, assume the socket has broken.
+      // We'll close the socket and try to reconnect later.
+      // In the meantime, the current batch of lines will be dropped.
+      if (result.isError()) {
+        std::cerr << "Failed to write: " << result.error() << std::endl;
+
+        os::close(fluentbit_socket->get());
+        fluentbit_socket = None();
+        return Nothing();
+      }
+    }
 
     return Nothing();
   }
@@ -335,6 +410,9 @@ private:
   int num_entries;
   struct iovec* entries;
 
+  // The connection to the specified fluentbit address.
+  Option<Try<int_fd>> fluentbit_socket;
+
   // Used to capture when the logging has completed because the
   // underlying process/input has terminated.
   Promise<Nothing> promise;
@@ -387,7 +465,7 @@ int main(int argc, char** argv)
   Try<JournaldLoggerProcess*> process = JournaldLoggerProcess::create(flags);
   if (process.isError()) {
     EXIT(EXIT_FAILURE)
-      << Error("Failed to create logger process: " + process.error());
+      << "Failed to create logger process: " << process.error();
   }
 
   spawn(process.get());

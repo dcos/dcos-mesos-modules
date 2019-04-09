@@ -16,8 +16,10 @@
 #include <process/future.hpp>
 #include <process/gmock.hpp>
 #include <process/gtest.hpp>
+#include <process/network.hpp>
 #include <process/owned.hpp>
 #include <process/process.hpp>
+#include <process/socket.hpp>
 #include <process/time.hpp>
 
 #include <stout/duration.hpp>
@@ -874,6 +876,183 @@ TEST_P(JournaldLoggerTest, ROOT_LogToJournald)
     EXPECT_TRUE(containsSpecialString)
       << "Expected " << specialString << " to appear in " << stdout.get();
   }
+}
+
+
+class FluentbitLoggerTest : public JournaldLoggerTest
+{
+public:
+  virtual void SetUp() override
+  {
+    // NOTE: We explicitly do not call the JournaldLoggerTest::SetUp function
+    // as we need to modify some module parameters before loading them.
+    MesosTest::SetUp();
+
+    // Create the mock Fluent Bit server.
+    Try<network::inet::Socket> server = network::inet::Socket::create();
+    ASSERT_SOME(server);
+
+    fluentbit_server = server.get();
+
+    Try<network::inet::Address> bind =
+      fluentbit_server->bind(
+          network::inet::Address(net::IP(process::address().ip), 0));
+    ASSERT_SOME(bind);
+
+    // This setup assumes one task is run, leading to two connections.
+    Try<Nothing> listen = fluentbit_server->listen(2);
+    ASSERT_SOME(listen);
+
+    // Read in the example `modules.json`.
+    Try<std::string> read =
+      os::read(path::join(MODULES_BUILD_DIR, "journald", "modules.json"));
+    ASSERT_SOME(read);
+
+    Try<JSON::Object> json = JSON::parse<JSON::Object>(read.get());
+    ASSERT_SOME(json);
+
+    Try<Modules> _modules = protobuf::parse<Modules>(json.get());
+    ASSERT_SOME(_modules);
+
+    modules = _modules.get();
+
+    // Replace the dummy values for `fluentbit_ip` and `fluentbit_port`
+    // with the server bind address above.
+    foreach (Modules::Library& library, *modules.mutable_libraries()) {
+      foreach (Modules::Library::Module& module, *library.mutable_modules()) {
+        if (module.has_name() && module.name() == JOURNALD_LOGGER_NAME) {
+          foreach (Parameter& parameter, *module.mutable_parameters()) {
+            if (parameter.key() == "fluentbit_ip") {
+              parameter.set_value(stringify(bind.get().ip));
+            } else if (parameter.key() == "fluentbit_port") {
+              parameter.set_value(stringify(bind.get().port));
+            }
+          }
+        }
+      }
+    }
+
+    // Initialize the modules.
+    Try<Nothing> result = ModuleManager::load(modules);
+    ASSERT_SOME(result);
+  }
+
+protected:
+  Option<network::inet::Socket> fluentbit_server;
+};
+
+
+INSTANTIATE_TEST_CASE_P(
+    LoggingMode,
+    FluentbitLoggerTest,
+    ::testing::Values(
+        std::string("fluentbit"),
+        std::string("fluentbit+logrotate")));
+
+
+// Sets up a TCP to mock the Fluent Bit component and then loads the
+// ContainerLogger module and runs a task.
+// We expect a known string logged by the task to reach the mock Fluent Bit.
+TEST_P(FluentbitLoggerTest, ROOT_LogToFluentbit)
+{
+  // Create a master, agent, and framework.
+  Try<Owned<cluster::Master>> master = StartMaster();
+  ASSERT_SOME(master);
+
+  // We'll need access to these flags later.
+  mesos::internal::slave::Flags flags = CreateSlaveFlags();
+
+  // Use the journald container logger.
+  flags.container_logger = JOURNALD_LOGGER_NAME;
+
+  Fetcher fetcher(flags);
+
+  // We use an actual containerizer + executor since we want something to run.
+  Try<MesosContainerizer*> _containerizer =
+    MesosContainerizer::create(flags, false, &fetcher);
+
+  CHECK_SOME(_containerizer);
+  Owned<MesosContainerizer> containerizer(_containerizer.get());
+
+  Owned<MasterDetector> detector = master.get()->createDetector();
+
+  Try<Owned<cluster::Slave>> slave =
+    StartSlave(detector.get(), containerizer.get(), flags);
+  ASSERT_SOME(slave);
+
+  MockScheduler sched;
+  MesosSchedulerDriver driver(
+      &sched, DEFAULT_FRAMEWORK_INFO, master.get()->pid, DEFAULT_CREDENTIAL);
+
+  EXPECT_CALL(sched, registered(&driver, _, _));
+
+  // Wait for an offer, and start a task.
+  Future<vector<Offer>> offers;
+  EXPECT_CALL(sched, resourceOffers(&driver, _))
+    .WillOnce(FutureArg<1>(&offers))
+    .WillRepeatedly(Return()); // Ignore subsequent offers.
+
+  driver.start();
+
+  AWAIT_READY(offers);
+  EXPECT_NE(0u, offers.get().size());
+
+  const std::string specialString = "some-super-unique-string";
+
+  TaskInfo task = createTask(offers.get()[0], "echo " + specialString);
+
+  // Change the destination of the logs based on the parameterized test.
+  Environment::Variable* variable =
+    task.mutable_command()->mutable_environment()->add_variables();
+  variable->set_name("CONTAINER_LOGGER_DESTINATION_TYPE");
+  variable->set_value(GetParam());
+
+  Future<TaskStatus> statusStarting;
+  Future<TaskStatus> statusRunning;
+  Future<TaskStatus> statusFinished;
+  EXPECT_CALL(sched, statusUpdate(&driver, _))
+    .WillOnce(FutureArg<1>(&statusStarting))
+    .WillOnce(FutureArg<1>(&statusRunning))
+    .WillOnce(FutureArg<1>(&statusFinished))
+    .WillRepeatedly(Return());       // Ignore subsequent updates.
+
+  driver.launchTasks(offers.get()[0].id(), {task});
+
+  AWAIT_READY(statusStarting);
+  EXPECT_EQ(TASK_STARTING, statusStarting.get().state());
+
+  // We expect two connections to be made with our `fluentbit_server`:
+  // one for stdout and one for stderr.
+  Future<network::inet::Socket> _client1 = fluentbit_server->accept();
+  AWAIT_ASSERT_READY(_client1);
+
+  Future<network::inet::Socket> _client2 = fluentbit_server->accept();
+  AWAIT_ASSERT_READY(_client2);
+
+  AWAIT_READY(statusRunning);
+  EXPECT_EQ(TASK_RUNNING, statusRunning.get().state());
+
+  AWAIT_READY(statusFinished);
+  EXPECT_EQ(TASK_FINISHED, statusFinished.get().state());
+
+  driver.stop();
+  driver.join();
+
+  // Remove const-ness.
+  network::inet::Socket client1 = _client1.get();
+  network::inet::Socket client2 = _client2.get();
+
+  // Read everything.  This also acts to wait until the loggers exit,
+  // and thereby close the connections.
+  Future<std::string> data1 = client1.recv(-1);
+  Future<std::string> data2 = client2.recv(-1);
+
+  AWAIT_ASSERT_READY(data1);
+  AWAIT_ASSERT_READY(data2);
+
+  // From the server side, we don't actually know which connection is
+  // stdout or stderr.  We expect the special string to be in stdout.
+  ASSERT_TRUE(strings::contains(data1.get() + data2.get(), specialString));
 }
 
 

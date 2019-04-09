@@ -11,6 +11,7 @@
 #include <stout/foreach.hpp>
 #include <stout/hashmap.hpp>
 #include <stout/json.hpp>
+#include <stout/net.hpp>
 #include <stout/option.hpp>
 
 #include <stout/os/exists.hpp>
@@ -36,12 +37,14 @@ struct LoggerFlags : public virtual flags::FlagsBase
         "destination_type",
         "Determines where logs should be piped.\n"
         "Valid destinations include: 'journald', 'logrotate',\n"
-        "or 'journald+logrotate'.",
+        "'fluentbit', 'journald+logrotate', or 'fluentbit+logrotate'.",
         "journald",
         [](const std::string& value) -> Option<Error> {
           if (value != "journald" &&
               value != "logrotate" &&
-              value != "journald+logrotate") {
+              value != "fluentbit" &&
+              value != "journald+logrotate" &&
+              value != "fluentbit+logrotate") {
             return Error("Invalid destination type: " + value);
           }
 
@@ -202,6 +205,22 @@ struct Flags : public virtual LoggerFlags
 
           return None();
         });
+
+
+    add(&Flags::fluentbit_ip,
+        "fluentbit_ip",
+        "IP of the Fluent Bit TCP listener.",
+        [](const Option<net::IP>& value) -> Option<Error> {
+          if (value.isNone()) {
+            return Error("--fluentbit_ip is required");
+          }
+
+          return None();
+        });
+
+    add(&Flags::fluentbit_port,
+        "fluentbit_port",
+        "Port of the Fluent Bit TCP listener.");
   }
 
   std::string environment_variable_prefix;
@@ -212,6 +231,9 @@ struct Flags : public virtual LoggerFlags
   Bytes max_label_payload_size;
 
   size_t libprocess_num_worker_threads;
+
+  Option<net::IP> fluentbit_ip;
+  int fluentbit_port;
 };
 
 

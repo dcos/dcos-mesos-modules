@@ -15,6 +15,12 @@
             }, {
               "key": "destination_type",
               "value": "journald+logrotate"
+            }, {
+              "key": "fluentbit_ip",
+              "value": "127.0.0.1"
+            }, {
+              "key": "fluentbit_port",
+              "value": "5170"
             }
           ]
         }

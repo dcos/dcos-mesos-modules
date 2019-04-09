@@ -295,6 +295,8 @@ public:
     outFlags.user = containerConfig.has_user()
       ? Option<string>(containerConfig.user())
       : Option<string>::none();
+    outFlags.fluentbit_ip = flags.fluentbit_ip;
+    outFlags.fluentbit_port = flags.fluentbit_port;
 
     // If we are on systemd, then extend the life of the process as we
     // do with the executor. Any grandchildren's lives will also be
@@ -354,6 +356,8 @@ public:
     errFlags.user = containerConfig.has_user()
       ? Option<string>(containerConfig.user())
       : Option<string>::none();
+    errFlags.fluentbit_ip = flags.fluentbit_ip;
+    errFlags.fluentbit_port = flags.fluentbit_port;
 
     // Spawn a process to handle stderr.
     Try<Subprocess> errProcess = subprocess(

@@ -41,12 +41,14 @@ struct Flags : public virtual flags::FlagsBase
         "destination_type",
         "Determines where logs should be piped.\n"
         "Valid destinations include: 'journald', 'logrotate',\n"
-        "or 'journald+logrotate'.",
+        "'fluentbit', 'journald+logrotate', or 'fluentbit+logrotate'.",
         "journald",
         [](const std::string& value) -> Option<Error> {
           if (value != "journald" &&
               value != "logrotate" &&
-              value != "journald+logrotate") {
+              value != "fluentbit" &&
+              value != "journald+logrotate" &&
+              value != "fluentbit+logrotate") {
             return Error("Invalid destination type: " + value);
           }
 
@@ -156,6 +158,21 @@ struct Flags : public virtual flags::FlagsBase
     add(&Flags::user,
         "user",
         "The user this command should run as.");
+
+    add(&Flags::fluentbit_ip,
+        "fluentbit_ip",
+        "IP of the Fluent Bit TCP listener.",
+        [](const Option<net::IP>& value) -> Option<Error> {
+          if (value.isNone()) {
+            return Error("--fluentbit_ip is required");
+          }
+
+          return None();
+        });
+
+    add(&Flags::fluentbit_port,
+        "fluentbit_port",
+        "Port of the Fluent Bit TCP listener.");
   }
 
   std::string destination_type;
@@ -170,6 +187,10 @@ struct Flags : public virtual flags::FlagsBase
   Option<std::string> logrotate_filename;
   std::string logrotate_path;
   Option<std::string> user;
+
+  // Only used if the `destination_type` has "fluentbit".
+  Option<net::IP> fluentbit_ip;
+  int fluentbit_port;
 };
 
 } // namespace logger {
