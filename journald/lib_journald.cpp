@@ -77,6 +77,20 @@ public:
       const ContainerID& containerId,
       const ContainerConfig& containerConfig)
   {
+    if (containerConfig.has_container_class() &&
+        containerConfig.container_class() ==
+          mesos::slave::ContainerClass::DEBUG) {
+      ContainerIO io;
+
+      io.out = ContainerIO::IO::PATH(
+          path::join(containerConfig.directory(), "stdout"));
+
+      io.err = ContainerIO::IO::PATH(
+          path::join(containerConfig.directory(), "stderr"));
+
+      return io;
+    }
+
     // Prepare the environment for the container logger subprocess.
     // We inherit agent environment variables except for those
     // LIBPROCESS or MESOS prefixed environment variables. See MESOS-6747.
