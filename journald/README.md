@@ -1,7 +1,7 @@
 # Journald Container Logger module
 
 The `JournaldContainerLogger` module takes all executor and tasks logs
-and pipes them to a configurable destination.  When the module was first 
+and pipes them to a configurable destination.  When the module was first
 written, it piped logs to the local systemd journald and so bears the name.
 However, in practice, using journald is *not recommended* due to scalability
 issues with the journald process.
@@ -80,7 +80,10 @@ Each line of logs is then wrapped in a JSON object (`{"line":"<log line>"}`)
 and written over the TCP connection.  This output mode does not attempt
 to retry if errors are encountered and will drop lines instead.
 
-> **NOTE**: The destination of the TCP connection is not specific to 
+The same labels sent to journald will also be included in the JSON object.
+See the Journald mode section above for specifics.
+
+> **NOTE**: The destination of the TCP connection is not specific to
 > Fluent Bit, as it is a plain TCP connection.  However, DC/OS uses
 > Fluent Bit, hence the mode's name.
 

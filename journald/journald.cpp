@@ -142,15 +142,20 @@ public:
   // journald or the sandbox, depending on the input flags.
   Future<Nothing> run()
   {
-    // Pre-populate the `iovec` with the constant labels.
+    // Pre-populate the `iovec` and `fluentbit_object` with the constant labels.
     num_entries = flags.parsed_labels.labels().size() + 1;
     entries = new struct iovec[num_entries];
 
     for (int i = 0; i < flags.parsed_labels.labels().size(); i++) {
       const mesos::Label& label = flags.parsed_labels.labels(i);
+      const std::string key = strings::upper(label.key());
 
-      const std::string entry =
-        strings::upper(label.key()) + "=" + label.value();
+      // Fluentbit is written as a JSON object.
+      fluentbit_object.values[key] = label.value();
+
+      // Journald requires conversion into the `iovec` structure,
+      // which contains C-strings of concatenated key-values.
+      const std::string entry = key + "=" + label.value();
 
       // Copy the label as a C-string.
       entries[i].iov_len = entry.length();
@@ -331,10 +336,13 @@ public:
         continue;
       }
 
-      JSON::Object object;
-      object.values["line"] = line;
+      // Overwrite a specific key in the stored object before writing to the
+      // socket. Since labels are stored in all capital letters, there will
+      // be no key conflicts.
+      fluentbit_object.values["line"] = line;
 
-      Try<Nothing> result = os::write(fluentbit_socket->get(), jsonify(object));
+      Try<Nothing> result =
+        os::write(fluentbit_socket->get(), jsonify(fluentbit_object));
 
       // If we fail to write, assume the socket has broken.
       // We'll close the socket and try to reconnect later.
@@ -412,6 +420,11 @@ private:
 
   // The connection to the specified fluentbit address.
   Option<Try<int_fd>> fluentbit_socket;
+
+  // Object written to fluentbit, which is pre-filled with labels associated
+  // with the stream.  The "line" key is overwritten with the log line,
+  // before writing over the socket.
+  JSON::Object fluentbit_object;
 
   // Used to capture when the logging has completed because the
   // underlying process/input has terminated.
