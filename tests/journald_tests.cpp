@@ -1052,7 +1052,17 @@ TEST_P(FluentbitLoggerTest, ROOT_LogToFluentbit)
 
   // From the server side, we don't actually know which connection is
   // stdout or stderr.  We expect the special string to be in stdout.
-  ASSERT_TRUE(strings::contains(data1.get() + data2.get(), specialString));
+  std::string combinedOutput = data1.get() + data2.get();
+  ASSERT_TRUE(strings::contains(combinedOutput, specialString));
+
+  // Log lines should also contain some metadata about the source of logs.
+  // We check for this summarily, since one of these outputs could be empty.
+  // And we don't want to implement a JSON object stream parser.
+  EXPECT_TRUE(strings::contains(combinedOutput, "FRAMEWORK_ID"));
+  EXPECT_TRUE(strings::contains(combinedOutput, "AGENT_ID"));
+  EXPECT_TRUE(strings::contains(combinedOutput, "EXECUTOR_ID"));
+  EXPECT_TRUE(strings::contains(combinedOutput, "CONTAINER_ID"));
+  EXPECT_TRUE(strings::contains(combinedOutput, "STREAM"));
 }
 
 
