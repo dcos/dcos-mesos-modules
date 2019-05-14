@@ -43,6 +43,17 @@ some information to make filtering and querying feasible:
 * `STREAM` == `STDOUT` or `STDERR`.
 * Any values in the `extra_labels` parameter passed to the module.
 
+The module flag `max_label_payload_size` is used to limit the total
+size of the metadata tagged with each log line.  Basic labels like the
+`*_ID`s and `STREAM` will always be included.  Other labels are copied
+(in no particular order) until the total size of the labels exceed the
+`max_label_payload_size`, or until all labels are copied.
+
+> **NOTE**: This limitation exists because labels and other flags are passed
+> to the logger's helper subprocesses as command line arguments.  On most
+> systems, the maximum length of command line arguments cannot exceed a
+> fixed value (usually 2 MB).
+
 For example, using `mesos-execute`:
 
 ```
