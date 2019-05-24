@@ -672,6 +672,143 @@ TEST_F(JournaldLoggerTest, ROOT_CGROUPS_LaunchThenRecoverThenLaunchNested)
 }
 
 
+// This verifies that the logger makes a special case for DEBUG containers
+// and simply prints the output of DEBUG containers to the sandbox.
+// This is the same behavior as the SandboxContainerLogger.
+TEST_F(JournaldLoggerTest, ROOT_CGROUPS_DebugContainersLogToSandbox)
+{
+  mesos::internal::slave::Flags flags = CreateSlaveFlags();
+  flags.launcher = "linux";
+  flags.isolation = "cgroups/cpu,filesystem/linux,namespaces/pid";
+
+  // Use the journald container logger.
+  flags.container_logger = JOURNALD_LOGGER_NAME;
+
+  Fetcher fetcher(flags);
+
+  Try<MesosContainerizer*> create = MesosContainerizer::create(
+      flags,
+      false,
+      &fetcher);
+
+  ASSERT_SOME(create);
+
+  Owned<MesosContainerizer> containerizer(create.get());
+
+  // Generate an AgentID to "recover" the MesosContainerizer with.
+  mesos::internal::slave::state::SlaveState state;
+  state.id = SlaveID();
+  state.id.set_value(id::UUID::random().toString());
+
+  AWAIT_READY(containerizer->recover(state));
+
+  ContainerID containerId;
+  containerId.set_value(id::UUID::random().toString());
+
+  const std::string specialParentString = "special-parent-string";
+
+  // We want to print a special string to stdout and then sleep
+  // so that there is enough time to launch a nested container.
+  ExecutorInfo executorInfo = createExecutorInfo(
+      "executor",
+      "echo '" + specialParentString + "' && sleep 1000",
+      "cpus:1");
+
+  executorInfo.mutable_framework_id()->set_value(id::UUID::random().toString());
+
+  // Make a valid ExecutorRunPath, much like the
+  // `slave::paths::getExecutorRunPath` helper (that we don't have access to).
+  const std::string executorRunPath = path::join(
+      flags.work_dir,
+      "slaves", stringify(state.id),
+      "frameworks", stringify(executorInfo.framework_id()),
+      "executors", stringify(executorInfo.executor_id()),
+      "runs", stringify(containerId));
+
+  ASSERT_SOME(os::mkdir(executorRunPath));
+
+  // Launch the top-level container.
+  Future<Containerizer::LaunchResult> launch = containerizer->launch(
+      containerId,
+      createContainerConfig(None(), executorInfo, executorRunPath),
+      std::map<std::string, std::string>(),
+      None());
+
+  AWAIT_ASSERT_EQ(Containerizer::LaunchResult::SUCCESS, launch);
+
+  Future<ContainerStatus> status = containerizer->status(containerId);
+  AWAIT_READY(status);
+  ASSERT_TRUE(status->has_executor_pid());
+
+  // Now launch the nested container.
+  ContainerID nestedContainerId;
+  nestedContainerId.mutable_parent()->CopyFrom(containerId);
+  nestedContainerId.set_value(id::UUID::random().toString());
+
+  const std::string specialChildString = "special-child-string";
+
+  // Mark this as a DEBUG container, much like health checks and
+  // other nested container sessions.
+  launch = containerizer->launch(
+      nestedContainerId,
+      createContainerConfig(
+          createCommandInfo("echo '" + specialChildString + "'"),
+          None(),
+          mesos::slave::ContainerClass::DEBUG),
+      std::map<std::string, std::string>(),
+      None());
+
+  AWAIT_ASSERT_EQ(Containerizer::LaunchResult::SUCCESS, launch);
+
+  status = containerizer->status(nestedContainerId);
+  AWAIT_READY(status);
+  ASSERT_TRUE(status->has_executor_pid());
+
+  // Wait for the nested container to finish.
+  Future<Option<mesos::slave::ContainerTermination>> nestedWait =
+    containerizer->wait(nestedContainerId);
+
+  AWAIT_READY(nestedWait);
+  ASSERT_SOME(nestedWait.get());
+
+  // Destroy the parent container.
+  Future<Option<mesos::slave::ContainerTermination>> wait =
+    containerizer->wait(containerId);
+
+  containerizer->destroy(containerId);
+
+  AWAIT_READY(wait);
+  ASSERT_SOME(wait.get());
+  ASSERT_TRUE(wait.get()->has_status());
+  EXPECT_WTERMSIG_EQ(SIGKILL, wait.get()->status());
+
+  // Filter the output of journald via AGENT_ID. This should contain the
+  // output of the parent container, but not the child (debug) container.
+  Future<std::string> firstQuery = runCommand(
+      "journalctl",
+      {"journalctl",
+      "AGENT_ID=" + stringify(state.id)});
+
+  AWAIT_READY(firstQuery);
+  EXPECT_TRUE(strings::contains(firstQuery.get(), specialParentString));
+  EXPECT_FALSE(strings::contains(firstQuery.get(), specialChildString));
+
+  // Check the debug container's sandbox for the expected output.
+  const std::string debugContainerStdout =
+    path::join(
+        executorRunPath,
+        "containers",
+        nestedContainerId.value(),
+        "stdout");
+
+  ASSERT_TRUE(os::exists(debugContainerStdout));
+
+  Result<std::string> stdout = os::read(debugContainerStdout);
+  ASSERT_SOME(stdout);
+  EXPECT_TRUE(strings::contains(stdout.get(), specialChildString));
+}
+
+
 INSTANTIATE_TEST_CASE_P(
     LoggingMode,
     JournaldLoggerTest,

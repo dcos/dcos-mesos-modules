@@ -77,6 +77,11 @@ public:
       const ContainerID& containerId,
       const ContainerConfig& containerConfig)
   {
+    // DEBUG containers are associated with `LAUNCH_NESTED_CONTAINER_SESSION`
+    // calls and generally do not need extensive logging because their output
+    // is either temporary (i.e. health checks) or sent to the session starter
+    // (i.e. `dcos task exec`). Because forking logger subprocesses can be
+    // expensive, we simply log to sandbox for these container types.
     if (containerConfig.has_container_class() &&
         containerConfig.container_class() ==
           mesos::slave::ContainerClass::DEBUG) {
