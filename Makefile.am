@@ -144,8 +144,11 @@ CLEANFILES += $(OVERLAY_PROTOS)
 # Library with both master and agent anonymous modules.
 pkglib_LTLIBRARIES += libmesos_network_overlay.la
 libmesos_network_overlay_la_SOURCES =			\
+  overlay/agent_metrics.cpp				\
   overlay/agent.cpp					\
+  overlay/master_metrics.cpp				\
   overlay/master.cpp					\
+  overlay/supervisor_metrics.cpp			\
   ${OVERLAY_PROTOS}
 
 libmesos_network_overlay_la_LDFLAGS =			\

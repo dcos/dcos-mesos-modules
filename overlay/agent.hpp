@@ -10,6 +10,7 @@
 #include <mesos/mesos.hpp>
 #include <mesos/module/anonymous.hpp>
 
+#include <overlay/agent_metrics.hpp>
 #include <overlay/messages.hpp>
 
 namespace mesos {
@@ -72,8 +73,7 @@ private:
   enum State
   {
     REGISTERING = 0,
-    REGISTERED = 1,
-    CONFIGURING = 2
+    REGISTERED = 1
   };
 
   ManagerProcess(
@@ -105,6 +105,8 @@ private:
   uint32_t configAttempts;
 
   process::Owned<master::detector::MasterDetector> detector;
+
+  Metrics metrics;
 };
 
 
