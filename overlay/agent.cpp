@@ -383,6 +383,7 @@ void ManagerProcess::_updateAgentOverlays(
     const Future<vector<Future<Nothing>>>& results)
 {
   if (!results.isReady()) {
+    ++metrics.update_agent_overlays_messages_dropped;
     LOG(ERROR) << "Unable to configure any overlay: "
                << (results.isDiscarded() ? "discarded" : results.failure());
 
@@ -441,6 +442,7 @@ void ManagerProcess::_updateAgentOverlays(
 
 void ManagerProcess::agentRegisteredAcknowledgement(const UPID& from)
 {
+  ++metrics.agent_registered_acknowledgements_received;
   LOG(INFO) << "Received agent registered acknowledgment from " << from;
 
   configAttempts++;
@@ -462,6 +464,7 @@ void ManagerProcess::agentRegisteredAcknowledgement(const UPID& from)
       if (!overlay.has_state() ||
           !overlay.state().has_status() ||
           overlay.state().status() != OverlayState::STATUS_OK) {
+        ++metrics.agent_registered_acknowledgements_dropped;
         LOG(ERROR) << "Overlay " << overlay.info().name() << " has not been "
           << "configured hence dropping register "
           << "acknowledgment from master.";

@@ -34,6 +34,30 @@ struct Metrics
 
   // Counts the number of network bridge allocation failures.
   process::metrics::Counter bridge_allocation_failures;
+
+  // Counts the number of RegisterAgentMessage messages received.
+  // It is an internal metric.
+  process::metrics::Counter register_agent_messages_received;
+
+  // Counts the number of RegisterAgentMessage messages dropped.
+  // It is an internal metric.
+  process::metrics::Counter register_agent_messages_dropped;
+
+  // Counts the number of UpdateAgentOverlaysMessage messages sent.
+  // It is an internal metric.
+  process::metrics::Counter update_agent_overlays_messages_sent;
+
+  // Counts the number of AgentRegisteredMessage messages received.
+  // It is an internal metric.
+  process::metrics::Counter agent_registered_messages_received;
+
+  // Counts the number of AgentRegisteredMessage messages dropped.
+  // It is an internal metric.
+  process::metrics::Counter agent_registered_messages_dropped;
+
+  // Counts the number of AgentRegisteredAcknowledgement messages sent.
+  // It is an internal metric.
+  process::metrics::Counter agent_registered_acknowledgements_sent;
 };
 
 } // namespace master {

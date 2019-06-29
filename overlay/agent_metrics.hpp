@@ -33,6 +33,10 @@ struct Metrics
   // for any reason.
   process::metrics::Counter docker_cmd_failures;
 
+  // Counts the number of RegisterAgentMessage messages sent.
+  // It is an internal metric.
+  process::metrics::Counter register_agent_messages_sent;
+
   // Counts the number of UpdateAgentOverlaysMessage messages received.
   // It is an internal metric.
   process::metrics::Counter update_agent_overlays_messages_received;
@@ -49,9 +53,13 @@ struct Metrics
   // for any reason. It is an internal metric.
   process::metrics::Counter agent_registered_messages_dropped;
 
-  // Counts the number of RegisterAgentMessage messages sent.
-  // It is an internal metric.
-  process::metrics::Counter register_agent_messages_sent;
+  // Counts the number of AgentRegisteredAcknowledgement messages
+  // received. It is an internal metric.
+  process::metrics::Counter agent_registered_acknowledgements_received;
+
+  // Counts the number of AgentRegisteredAcknowledgement messages
+  // dropped. It is an internal metric.
+  process::metrics::Counter agent_registered_acknowledgements_dropped;
 };
 
 } // namespace agent {
