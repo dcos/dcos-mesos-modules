@@ -1220,7 +1220,7 @@ public:
             path::join(url.get().path, REPLICATED_LOG_STORE_REPLICAS),
             url.get().authentication,
             true,
-            "overlay/");
+            "overlay/master/");
       } else {
         // Use replicated log without ZooKeeper.
         LOG(INFO)
@@ -1233,7 +1233,7 @@ public:
               REPLICATED_LOG_STORE),
             set<UPID>(),
             true,
-            "overlay/");
+            "overlay/master/");
       }
 
       storage = new LogStorage(log);
