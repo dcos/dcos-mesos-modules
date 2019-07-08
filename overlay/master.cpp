@@ -1,6 +1,7 @@
 #include <stdio.h>
 
 #include <list>
+#include <memory>
 
 #include <stout/check.hpp>
 #include <stout/interval.hpp>
@@ -30,6 +31,7 @@
 #include <mesos/state/storage.hpp>
 #include <mesos/zookeeper/detector.hpp>
 
+#include "master_metrics.hpp"
 #include "messages.hpp"
 #include "network.hpp"
 #include "overlay.hpp"
@@ -531,7 +533,8 @@ struct Overlay
 class Agent
 {
 public:
-  static Try<Agent> create(const AgentInfo& agentInfo)
+  static Try<Agent> create(std::shared_ptr<Metrics> metrics,
+                           const AgentInfo& agentInfo)
   {
     Try<IP> _ip = IP::parse(agentInfo.ip(), AF_INET);
 
@@ -545,7 +548,7 @@ public:
       backend = agentInfo.overlays(0).backend();
     }
 
-    Agent agent(_ip.get(), backend);
+    Agent agent(metrics, _ip.get(), backend);
 
     for (int i = 0; i < agentInfo.overlays_size(); i++) {
       agent.addOverlay(agentInfo.overlays(i));
@@ -559,8 +562,10 @@ public:
     return agent;
   }
 
-  Agent(const IP& _ip, const Option<BackendInfo>& _backend = None())
-    : backend(_backend),
+  Agent(std::shared_ptr<Metrics> metrics, const IP& _ip,
+        const Option<BackendInfo>& _backend = None())
+    : metrics(metrics),
+      backend(_backend),
       ip(_ip) {};
   const IP getIP() const { return ip; };
 
@@ -630,6 +635,7 @@ public:
         if (overlay->network.isSome()) {
           Try<Network> _agentSubnet = overlay->allocate();
           if (_agentSubnet.isError()) {
+            ++metrics->subnet_allocation_failures;
             LOG(ERROR) << "Cannot allocate subnet from overlay "
                        << name << " to Agent " << ip << ":"
                        << _agentSubnet.error();
@@ -644,6 +650,7 @@ public:
         if (overlay->network6.isSome()) {
           Try<Network> _agentSubnet6 = overlay->allocate6();
           if (_agentSubnet6.isError()) {
+            ++metrics->subnet6_allocation_failures;
             LOG(ERROR) << "Cannot allocate IPv6 subnet from overlay "
                        << name << " to Agent " << ip << ":"
                        << _agentSubnet6.error();
@@ -660,6 +667,7 @@ public:
             networkConfig);
 
         if (bridges.isError()) {
+          ++metrics->bridge_allocation_failures;
           LOG(ERROR) << "Unable to allocate bridge for network "
                      << name << ": " << bridges.error();
 
@@ -814,6 +822,8 @@ private:
 
     return Nothing();
   }
+
+  std::shared_ptr<Metrics> metrics;
 
   // Currently all overlays on an agent share a single backend.
   //
@@ -984,7 +994,7 @@ public:
       return Error(
           "VTEP MAC are derived from last 24 bits of VTEP IP.  Hence, "
           "in order to guarantee unique VTEP MAC we need the VTEP IP "
-          "subnet to greater than /8");
+          "subnet to be equal to or greater than /8");
     }
 
     Try<net::MAC> vtepMACOUI = createMAC(networkConfig.vtep_mac_oui(), true);
@@ -1051,7 +1061,7 @@ public:
 
       // The overlay name is used to derive the Mesos bridge and
       // Docker bridge names. Since, in Linux, network device names
-      // cannot excced 15 characters, we need to impose the limit on
+      // cannot exceed 15 characters, we need to impose the limit on
       // the overlay network name.
       if (overlay.name().size() > MAX_OVERLAY_NAME) {
         return Error(
@@ -1210,7 +1220,7 @@ public:
             path::join(url.get().path, REPLICATED_LOG_STORE_REPLICAS),
             url.get().authentication,
             true,
-            "overlay/");
+            "overlay/master/");
       } else {
         // Use replicated log without ZooKeeper.
         LOG(INFO)
@@ -1223,7 +1233,7 @@ public:
               REPLICATED_LOG_STORE),
             set<UPID>(),
             true,
-            "overlay/");
+            "overlay/master/");
       }
 
       storage = new LogStorage(log);
@@ -1303,6 +1313,7 @@ protected:
       const RegisterAgentMessage& registerMessage)
   {
     LOG(INFO) << "Got registration from pid: " << pid;
+    ++metrics->register_agent_messages_received;
 
     if (replicatedLog.get() != nullptr) {
       if (storedState.isNone() && !recovering) {
@@ -1310,6 +1321,7 @@ protected:
         LOG(INFO) << MASTER_MANAGER_PROCESS_ID << " moving to `RECOVERING`"
           << " state . Hence, not sending an update to agent"
           << pid;
+        ++metrics->register_agent_messages_dropped;
         recover();
         return;
       } else if (storedState.isNone() && recovering) {
@@ -1318,6 +1330,7 @@ protected:
         LOG(INFO) << MASTER_MANAGER_PROCESS_ID << " in `RECOVERING`"
           << " state . Hence, not sending an update to agent"
           << pid;
+        ++metrics->register_agent_messages_dropped;
         return;
       } // else -> `storedState.isSome` , we have recovered.
     }
@@ -1325,6 +1338,7 @@ protected:
     // Recovery complete.
     Try<IP> agentIP = IP::convert(pid.address.ip);
     if (agentIP.isError()) {
+      ++metrics->register_agent_messages_dropped;
       LOG(ERROR) << "Couldn't parse agent ip "
                  << agentIP.error();
       return;
@@ -1341,6 +1355,8 @@ protected:
            !backendInfo.vxlan().has_vtep_ip6()) {
         Try<Network> vtepIP6 = vtep.allocateIP6();
         if (vtepIP6.isError()) {
+          ++metrics->register_agent_messages_dropped;
+          ++metrics->ip6_allocation_failures;
           LOG(ERROR)
             << "Unable to get VTEP IPv6 for Agent: " << vtepIP6.error()
             << "Cannot fulfill re-registration for Agent: " << pid;
@@ -1386,6 +1402,7 @@ protected:
       LOG(INFO) << "Agent " << pid
                 << " info has not been updated in the replicated log."
                 << " Hence dropping this registration request.";
+      ++metrics->register_agent_messages_dropped;
       return;
     } else {
       // New Agent.
@@ -1393,6 +1410,8 @@ protected:
 
       Try<Network> vtepIP = vtep.allocateIP();
       if (vtepIP.isError()) {
+        ++metrics->register_agent_messages_dropped;
+        ++metrics->ip_allocation_failures;
         LOG(ERROR)
           << "Unable to get VTEP IP for Agent: " << vtepIP.error()
           << "Cannot fulfill registration for Agent: " << pid;
@@ -1405,6 +1424,8 @@ protected:
       if (vtep.network6.isSome()) {
         Try<Network> _vtepIP6 = vtep.allocateIP6();
         if (_vtepIP6.isError()) {
+          ++metrics->register_agent_messages_dropped;
+          ++metrics->ip6_allocation_failures;
           LOG(ERROR)
            << "Unable to get VTEP IPv6 for Agent: " << _vtepIP6.error()
            << "Cannot fulfill registration for Agent: " << pid;
@@ -1417,6 +1438,7 @@ protected:
 
       Try<IP> _vtepIP = IP::convert(vtepIP.get().address());
       if (_vtepIP.isError()) {
+        ++metrics->register_agent_messages_dropped;
         LOG(ERROR) << "Couldn't parse vtep IP " << _vtepIP.error()
                    << "Cannot fulfill registration for Agent: " << pid;
         return;
@@ -1424,6 +1446,7 @@ protected:
 
       Try<net::MAC> vtepMAC = vtep.generateMAC(_vtepIP.get());
       if (vtepMAC.isError()) {
+        ++metrics->register_agent_messages_dropped;
         LOG(ERROR)
           << "Unable to get VTEP MAC for Agent: " << vtepMAC.error()
           << "Cannot fulfill registration for Agent: " << pid;
@@ -1448,7 +1471,7 @@ protected:
       BackendInfo backend;
       backend.mutable_vxlan()->CopyFrom(vxlan);
 
-      agents.emplace(agentIP.get(), Agent(agentIP.get(), backend));
+      agents.emplace(agentIP.get(), Agent(metrics, agentIP.get(), backend));
 
       Agent* agent = &(agents.at(agentIP.get()));
 
@@ -1476,6 +1499,7 @@ protected:
                       const Future<bool>& result)
   {
     if (!result.isReady()) {
+      ++metrics->register_agent_messages_dropped;
       LOG(WARNING) << "Unable to process registration request from "
                    << pid << " due to: "
                    << (result.isDiscarded() ? "discarded" : result.failure());
@@ -1499,12 +1523,16 @@ protected:
     }
 
     send(pid, update);
+    ++metrics->update_agent_overlays_messages_sent;
   }
 
   void agentRegistered(const UPID& from, const AgentRegisteredMessage& message)
   {
+    ++metrics->agent_registered_messages_received;
+
     Try<IP> _agentIP = IP::convert(from.address.ip);
     if (_agentIP.isError()) {
+      ++metrics->agent_registered_messages_dropped;
       LOG(ERROR) << "Couldn't parse agent IP " << _agentIP.error()
                  << " Got ACK from " << from;
       return;
@@ -1526,11 +1554,14 @@ protected:
 
           LOG(INFO) << "Sending register ACK to: " << from;
           send(from, AgentRegisteredAcknowledgement());
+          ++metrics->agent_registered_acknowledgements_sent;
           return;
         }
       }
+      ++metrics->agent_registered_messages_dropped;
       LOG(ERROR) << "Unable to find the registered agent in the `networkState`";
     } else {
+      ++metrics->agent_registered_messages_dropped;
       LOG(ERROR) << "Got ACK for network message for non-existent PID "
                  << from;
     }
@@ -1551,6 +1582,7 @@ protected:
     CHECK_NOTNULL(replicatedLog.get());
 
     recovering = true;
+    metrics->recovering = 1;
 
     replicatedLog->fetch<overlay::State>(REPLICATED_LOG_STORE_KEY)
       .after(replicatedLogTimeout,
@@ -1604,7 +1636,7 @@ protected:
       const AgentInfo& agentInfo = _networkState.agents(i);
 
       // Clear the `State` of the `AgentInfo`
-      Try<Agent> agent = Agent::create(agentInfo);
+      Try<Agent> agent = Agent::create(metrics, agentInfo);
       if (agent.isError()) {
         LOG(ERROR) << "Could not recover Agent: "<< agent.error();
         demote();
@@ -1751,6 +1783,7 @@ protected:
 
     LOG(INFO) << "Moving " << self() << " to `RECOVERED` state.";
     recovering = false;
+    metrics->recovering = 0;
     return;
   }
 
@@ -1780,6 +1813,8 @@ private:
 
   Vtep vtep;
 
+  std::shared_ptr<Metrics> metrics;
+
   ManagerProcess(
       const hashmap<string, Owned<Overlay>>& _overlays,
       const Network& vtepSubnet,
@@ -1800,7 +1835,8 @@ private:
       storedState(None()),
       storage(_storage),
       log(_log),
-      vtep(vtepSubnet, vtepSubnet6, vtepMACOUI, vtepMTU)
+      vtep(vtepSubnet, vtepSubnet6, vtepMACOUI, vtepMTU),
+      metrics(std::make_shared<Metrics>())
   {
     networkState.mutable_network()->CopyFrom(_networkConfig);
   };

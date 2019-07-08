@@ -256,6 +256,7 @@ void ManagerProcess::initialize()
       &ManagerProcess::overlay);
 
   state = REGISTERING;
+  metrics.registering = 1;
 
   detector->detect()
     .onAny(defer(self(), &ManagerProcess::detected, lambda::_1));
@@ -281,6 +282,8 @@ void ManagerProcess::exited(const UPID& pid)
   LOG(INFO) << "Moving " << pid << " to `REGISTERING` state.";
 
   state = REGISTERING;
+  metrics.registering = 1;
+
   doReliableRegistration(INITIAL_BACKOFF_PERIOD);
 }
 
@@ -288,13 +291,17 @@ void ManagerProcess::updateAgentOverlays(
     const UPID& from,
     const UpdateAgentOverlaysMessage& message)
 {
+  ++metrics.update_agent_overlays_messages_received;
   LOG(INFO) << "Received 'UpdateAgentOverlaysMessage' from " << from;
 
   if (state != REGISTERING) {
+    ++metrics.update_agent_overlays_messages_dropped;
     LOG(WARNING) << "Ignored 'UpdateAgentOverlaysMessage' from " << from
-                 << " because overlay agent is not in DISCONNECTED state";
+                 << " because overlay agent is not in REGISTERING state";
     return;
   }
+
+  int64_t overlays_without_subnets = 0;
 
   vector<Future<Nothing>> futures;
   foreach (const AgentOverlayInfo& overlay, message.overlays()) {
@@ -312,6 +319,7 @@ void ManagerProcess::updateAgentOverlays(
       // configuration is in progress and we can't update the master
       // till all network configuration has been attempted.
       if (status == OverlayState::STATUS_CONFIGURING) {
+        ++metrics.update_agent_overlays_messages_dropped;
         LOG(INFO) << "Since overlay network '"
                   << name << "' is in 'STATUS_CONFIGURING' dropping"
                   << " this `UpdateAgentOverlaysMessage', since an overlay"
@@ -343,15 +351,21 @@ void ManagerProcess::updateAgentOverlays(
     CHECK(!overlay.has_state());
 
     overlays[name] = overlay;
+    if (!overlay.info().has_subnet()) {
+      ++overlays_without_subnets;
+    }
 
     futures.push_back(configure(name));
   }
+
+  metrics.overlays_without_subnets = overlays_without_subnets;
 
   // If we don't have any `Futures` setup that means this was a
   // duplicate update corresponding to one already in progress. We
   // should therefore not setup a response for acknowledging this
   // registration.
   if (message.overlays_size() > 0 && futures.empty()) {
+    ++metrics.update_agent_overlays_messages_dropped;
     LOG(INFO) << "Looks like we received a duplicate config update from "
               << from << " dropping this message.";
     return;
@@ -369,6 +383,7 @@ void ManagerProcess::_updateAgentOverlays(
     const Future<vector<Future<Nothing>>>& results)
 {
   if (!results.isReady()) {
+    ++metrics.update_agent_overlays_messages_dropped;
     LOG(ERROR) << "Unable to configure any overlay: "
                << (results.isDiscarded() ? "discarded" : results.failure());
 
@@ -385,12 +400,14 @@ void ManagerProcess::_updateAgentOverlays(
     }
   }
 
-  if (!messages.empty()){
+  if (!messages.empty()) {
+    metrics.overlay_config_failures += messages.size();
     LOG(ERROR) << "Unable to configure some of the overlays on this Agent: "
                << strings::join("\n", messages);
   }
 
   if (state != REGISTERING) {
+    ++metrics.agent_registered_messages_dropped;
     LOG(WARNING) << "Ignored sending registered message because "
                  << "agent is not in REGISTERING state";
     return;
@@ -417,6 +434,7 @@ void ManagerProcess::_updateAgentOverlays(
   // will keep sending 'UpdateAgentOverlaysMessage', which will
   // essentially cause a retry of sending this message.
   send(overlayMaster.get(), message);
+  ++metrics.agent_registered_messages_sent;
 
   return;
 }
@@ -424,6 +442,7 @@ void ManagerProcess::_updateAgentOverlays(
 
 void ManagerProcess::agentRegisteredAcknowledgement(const UPID& from)
 {
+  ++metrics.agent_registered_acknowledgements_received;
   LOG(INFO) << "Received agent registered acknowledgment from " << from;
 
   configAttempts++;
@@ -431,6 +450,7 @@ void ManagerProcess::agentRegisteredAcknowledgement(const UPID& from)
   link(from);
 
   if (configAttempts > maxConfigAttempts) {
+    metrics.overlay_config_failed = 1;
     LOG(ERROR) << "Could not configure some overlay networks after "
                << configAttempts
                << " attempts hence moving to 'REGISTERED' state with "
@@ -444,6 +464,7 @@ void ManagerProcess::agentRegisteredAcknowledgement(const UPID& from)
       if (!overlay.has_state() ||
           !overlay.state().has_status() ||
           overlay.state().status() != OverlayState::STATUS_OK) {
+        ++metrics.agent_registered_acknowledgements_dropped;
         LOG(ERROR) << "Overlay " << overlay.info().name() << " has not been "
           << "configured hence dropping register "
           << "acknowledgment from master.";
@@ -453,6 +474,7 @@ void ManagerProcess::agentRegisteredAcknowledgement(const UPID& from)
   }
 
   state = REGISTERED;
+  metrics.registering = 0;
 
   connected.set(Nothing());
 }
@@ -470,7 +492,9 @@ void ManagerProcess::detected(const Future<Option<MasterInfo>>& mesosMaster)
   // configuring overlay networks, learned from the new Master, on
   // this agent.
   configAttempts = 0;
+
   state = REGISTERING;
+  metrics.registering = 1;
 
   Option<MasterInfo> latestMesosMaster = None();
 
@@ -527,6 +551,7 @@ void ManagerProcess::doReliableRegistration(Duration maxBackoff)
             << overlayMaster.get();
 
   send(overlayMaster.get(), registerMessage);
+  ++metrics.register_agent_messages_sent;
 
   // Bound the maximum backoff by 'REGISTRATION_RETRY_INTERVAL_MAX'.
   maxBackoff = std::min(maxBackoff, REGISTRATION_RETRY_INTERVAL_MAX);
@@ -828,21 +853,23 @@ Future<bool> ManagerProcess::checkDockerNetwork(const string& name)
       Subprocess::PATH("/dev/null"));
 
   if (s.isError()) {
+    ++metrics.docker_cmd_failures;
     return Failure("Unable to execute docker network inspect: " + s.error());
   }
 
   return s->status()
-    .then([](const Option<int>& status) -> Future<bool> {
+    .then([this](const Option<int>& status) -> Future<bool> {
         if (status.isNone()) {
-        return Failure("Failed to reap the subprocess");
+          return Failure("Failed to reap the subprocess");
         }
 
         if (status.get() != 0) {
-        return false;
+          ++metrics.docker_cmd_failures;
+          return false;
         }
 
         return true;
-        });
+      });
 }
 
 
@@ -908,6 +935,7 @@ Future<Nothing> ManagerProcess::_configureDockerNetwork(
     name);
 
   if (dockerCommand.isError()) {
+    ++metrics.docker_cmd_failures;
     return Failure(
         "Failed to create docker network command: " +
         dockerCommand.error());
@@ -928,6 +956,7 @@ Future<Nothing> ManagerProcess::__configureDockerNetwork(
   CHECK(overlays.contains(name));
 
   if (!result.isReady()) {
+    ++metrics.docker_cmd_failures;
     return Failure(
         "Unable to configure docker network: " +
         (result.isDiscarded() ? "discarded" : result.failure()));

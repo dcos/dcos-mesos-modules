@@ -11,6 +11,8 @@
 #include <process/owned.hpp>
 #include <process/process.hpp>
 
+#include "supervisor_metrics.hpp"
+
 namespace mesos {
 namespace modules {
 namespace overlay {
@@ -70,6 +72,10 @@ protected:
   {
     LOG(INFO) << "(Re-)starting the process";
 
+    if (process_starts > 0) {
+      ++metrics.process_restarts;
+    }
+
     if (process.get() == nullptr) {
         Try<process::Owned<T>> result = func();
         if (result.isError()) {
@@ -93,6 +99,8 @@ protected:
       delete promise;
       promises.pop();
     }
+
+    ++process_starts;
   }
 
   virtual void exited(const process::UPID& pid) override
@@ -123,13 +131,17 @@ private:
     : func(_func),
       delay(_delay),
       process(_process),
-      state(State::UNSPAWNED) {}
+      state(State::UNSPAWNED),
+      process_starts() {}
 
   const Func func;
   const Duration delay;
   process::Owned<T> process;
   std::queue<process::Promise<process::UPID>*> promises;
   State state;
+
+  Metrics metrics;
+  int64_t process_starts;
 };
 
 } // namespace supervisor {
