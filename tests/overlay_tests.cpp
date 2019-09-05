@@ -1981,7 +1981,196 @@ TEST_F(OverlayTest, supervisor)
   wait(supervisor.get());
 }
 
+// Tests the ability of the `Master overlay module` to drop agent
+// records.
+TEST_F(OverlayTest, checkMasterAgentDeletion)
+{
+  Try<Owned<cluster::Master>> master = StartMaster();
+  ASSERT_SOME(master);
+
+  LOG(INFO) << "Master PID: " << master.get()->pid;
+
+  MasterConfig masterOverlayConfig;
+  masterOverlayConfig
+    .set_replicated_log_dir("overlay_replicated_log");
+
+  Try<Owned<Anonymous>> masterModule = startOverlayMaster(masterOverlayConfig);
+  ASSERT_SOME(masterModule);
+
+  // Let's hit the `state` endpoint first.
+  UPID overlayMaster = UPID(
+      MASTER_MANAGER_PROCESS_ID,
+      master.get()->pid.address);
+
+  Future<Response> stateResponse = process::http::get(
+      overlayMaster,
+      "state");
+
+  AWAIT_EXPECT_RESPONSE_STATUS_EQ(OK().status, stateResponse);
+  AWAIT_EXPECT_RESPONSE_HEADER_EQ(
+      APPLICATION_JSON,
+      "Content-Type",
+      stateResponse);
+
+  Try<State> state = parseMasterState(stateResponse->body);
+
+  // Sanity checks of overlay networking configuration.
+  ASSERT_SOME(state);
+  ASSERT_EQ(1, state->network().overlays_size());
+
+  // Make sure that no agents are registered yet.
+  ASSERT_EQ(0, state->agents_size());
+
+  AgentConfig agentOverlayConfig;
+  agentOverlayConfig.set_master(stringify(overlayMaster.address));
+
+  // Setup a future to notify the test that Agent overlay module has
+  // registered.
+  Future<RegisterAgentMessage> registerAgentMessage =
+    FUTURE_PROTOBUF(RegisterAgentMessage(), _, _);
+
+  // Setup a future to notify the test that Agent overlay module has
+  // registered.
+  Future<AgentRegisteredMessage> agentRegisteredMessage =
+    FUTURE_PROTOBUF(AgentRegisteredMessage(), _, _);
+
+  Try<Owned<overlayAgent::ManagerProcess>> agentModule = startOverlayAgent(
+      agentOverlayConfig);
+
+  ASSERT_SOME(agentModule);
+  AWAIT_READY(registerAgentMessage);
+  AWAIT_READY(agentRegisteredMessage);
+
+  // Check that the agent is allowed to progress.
+  AWAIT_READY(agentModule.get()->ready());
+
+  UPID overlayAgent = UPID(AGENT_MANAGER_PROCESS_ID, master.get()->pid.address);
+  Future<Response> agentResponse = process::http::get(
+      overlayAgent,
+      "overlay");
+
+  AWAIT_EXPECT_RESPONSE_STATUS_EQ(OK().status, agentResponse);
+  AWAIT_EXPECT_RESPONSE_HEADER_EQ(
+      APPLICATION_JSON,
+      "Content-Type",
+      agentResponse);
+
+  // Let's keep the agent info and overlay config as a string for records.
+  Try<AgentInfo> agentInfo = parseAgentOverlay(agentResponse->body);
+  ASSERT_SOME(agentInfo);
+  agentInfo->clear_configuration_attempts();
+  string agentInfoString = agentInfo->SerializeAsString();
+
+  // Hit the `state` endpoint again to verify that the agent has been
+  // registered.
+  stateResponse = process::http::get(overlayMaster, "state");
+
+  AWAIT_EXPECT_RESPONSE_STATUS_EQ(OK().status, stateResponse);
+  AWAIT_EXPECT_RESPONSE_HEADER_EQ(
+      APPLICATION_JSON,
+      "Content-Type",
+      stateResponse);
+
+  state = parseMasterState(stateResponse->body);
+  ASSERT_SOME(state);
+  ASSERT_EQ(1, state->agents_size());
+
+  // Ensure that what we got from the agent is what we get from the master too.
+  AgentInfo masterAgentInfo;
+  masterAgentInfo.CopyFrom(state->agents(0));
+  string masterAgentInfoString = masterAgentInfo.SerializeAsString();
+  ASSERT_EQ(agentInfoString, masterAgentInfoString);
+
+  // Now let's stop the agent and drop the corresponding record from
+  // the state.
+  ASSERT_SOME(stopOverlayAgent());
+  string requestBody = "{\"agents\":[\"" + state->agents(0).ip() + "\"]}";
+  stateResponse = process::http::post(
+       overlayMaster,
+       "agents/delete",
+       None(),
+       requestBody,
+       "application/json");
+
+  AWAIT_EXPECT_RESPONSE_STATUS_EQ(OK().status, stateResponse);
+  AWAIT_EXPECT_RESPONSE_HEADER_EQ(
+      APPLICATION_JSON,
+      "Content-Type",
+      stateResponse);
+
+  // We get the full state in response. Let's verify that there are
+  // no agents registered.
+  state = parseMasterState(stateResponse->body);
+  ASSERT_SOME(state);
+  ASSERT_EQ(0, state->agents_size());
+
+  // Double-check that the agent is gone from the state by hitting
+  // the `state` endpoint once again.
+  stateResponse = process::http::get(
+      overlayMaster,
+      "state");
+
+  AWAIT_EXPECT_RESPONSE_STATUS_EQ(OK().status, stateResponse);
+  AWAIT_EXPECT_RESPONSE_HEADER_EQ(
+      APPLICATION_JSON,
+      "Content-Type",
+      stateResponse);
+
+  state = parseMasterState(stateResponse->body);
+  ASSERT_SOME(state);
+  ASSERT_EQ(0, state->agents_size());
+
+  // Now let's check that if the agent comes back, it is able to
+  // re-register, its configuration is correct and is as expected,
+  // and this fact is reflected in the state accordinly.
+  registerAgentMessage = FUTURE_PROTOBUF(RegisterAgentMessage(), _, _);
+
+  // Setup a future to notify the test that Agent overlay module has
+  // registered.
+  agentRegisteredMessage = FUTURE_PROTOBUF(AgentRegisteredMessage(), _, _);
+  agentModule = startOverlayAgent(agentOverlayConfig);
+  ASSERT_SOME(agentModule);
+  AWAIT_READY(registerAgentMessage);
+  AWAIT_READY(agentRegisteredMessage);
+  AWAIT_READY(agentModule.get()->ready());
+
+
+  // Make sure that even after the agent re-registration, both master and
+  // agent have the same agent configuration.
+  overlayAgent = UPID(AGENT_MANAGER_PROCESS_ID, master.get()->pid.address);
+  agentResponse = process::http::get(overlayAgent, "overlay");
+
+  AWAIT_EXPECT_RESPONSE_STATUS_EQ(OK().status, agentResponse);
+  AWAIT_EXPECT_RESPONSE_HEADER_EQ(
+      APPLICATION_JSON,
+      "Content-Type",
+      agentResponse);
+
+  agentInfo = parseAgentOverlay(agentResponse->body);
+  ASSERT_SOME(agentInfo);
+  agentInfo->clear_configuration_attempts();
+  ASSERT_EQ(agentInfoString, agentInfo->SerializeAsString());
+
+  stateResponse = process::http::get(
+      overlayMaster,
+      "state");
+
+  AWAIT_EXPECT_RESPONSE_STATUS_EQ(OK().status, stateResponse);
+  AWAIT_EXPECT_RESPONSE_HEADER_EQ(
+      APPLICATION_JSON,
+      "Content-Type",
+      stateResponse);
+
+  state = parseMasterState(stateResponse->body);
+  ASSERT_SOME(state);
+  ASSERT_EQ(1, state->agents_size());
+
+  masterAgentInfo.CopyFrom(state->agents(0));
+  ASSERT_EQ(
+      masterAgentInfoString,
+      masterAgentInfo.SerializeAsString());
+}
+
 } // namespace tests {
 } // namespace overlay {
 } // namespace mesos {
-

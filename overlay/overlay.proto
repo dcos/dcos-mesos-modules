@@ -89,7 +89,7 @@ message AgentOverlayInfo {
 
   optional State state = 6;
 
-  //IPv6 subnet
+  // IPv6 subnet
   optional string subnet6 = 7;
 }
 
