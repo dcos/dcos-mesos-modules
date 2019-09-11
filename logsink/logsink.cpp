@@ -37,7 +37,7 @@ FileSink::FileSink(const Flags& _flags) : flags(_flags)
   }
 
   // Open the file in append mode (or create it if it doesn't exist).
-  Try<int> open = os::open(
+  Try<int_fd> open = os::open(
       flags.output_file,
       O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC,
       S_IRUSR | S_IWUSR | S_IRGRP);
@@ -118,8 +118,8 @@ protected:
   process::Owned<FileSink> sink;
 };
 
-} // namespace mesos {
 } // namespace logsink {
+} // namespace mesos {
 
 
 Module<Anonymous> com_mesosphere_mesos_LogSink(

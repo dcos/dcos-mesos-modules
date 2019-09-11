@@ -69,11 +69,14 @@ public:
 
 protected:
   Flags flags;
-  int logFd;
+  int_fd logFd;
   std::recursive_mutex mutex;
 };
 
 } // namespace logsink {
 } // namespace mesos {
+
+extern mesos::modules::Module<mesos::modules::Anonymous>
+  com_mesosphere_mesos_LogSink;
 
 #endif // __LOGSINK_LOGSINK_HPP__
