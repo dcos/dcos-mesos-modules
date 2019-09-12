@@ -5,6 +5,7 @@
 #include <stout/check.hpp>
 #include <stout/interval.hpp>
 #include <stout/json.hpp>
+#include <stout/jsonify.hpp>
 #include <stout/mac.hpp>
 #include <stout/os.hpp>
 #include <stout/protobuf.hpp>
@@ -87,10 +88,16 @@ constexpr char REPLICATED_LOG_STORE[] = "overlay_replicated_log";
 constexpr char REPLICATED_LOG_STORE_KEY[] = "network-state";
 constexpr char REPLICATED_LOG_STORE_REPLICAS[] = "overlay_log_replicas";
 
-const string OVERLAY_HELP = HELP(
+const string OVERLAY_STATE_ENDPOINT_HELP = HELP(
     TLDR("Allocate overlay network resources for Master."),
-    USAGE("/overlay-master/overlays"),
+    USAGE("/overlay-master/state"),
     DESCRIPTION("Allocate subnets, VTEP IP and the MAC addresses.", "")
+);
+
+const string OVERLAY_DELETE_AGENTS_ENDPOINT_HELP = HELP(
+    TLDR("Manage Agent records in the overlay state."),
+    USAGE("/overlay-master/agents"),
+    DESCRIPTION("Purge overlay state records of Agents that are gone.", "")
 );
 
 // Helper function to convert std::string to `net::MAC`.
@@ -166,6 +173,40 @@ struct Vtep
     freeIP6 -= ip6;
 
     return Network(ip6, network6.get().prefix());
+  }
+
+  Try<Nothing> deallocateIP(const Network& ip)
+  {
+    Try<IP> _ip = IP::convert(ip.address());
+    if (_ip.isError()) {
+      return Error(_ip.error());
+    }
+
+    if (freeIP.contains(_ip.get())) {
+      return Error(
+        "Unable to deallocate IP: " + stringify(_ip.get()) +
+        " that wasn't previously allocated");
+    }
+
+    freeIP += _ip.get();
+    return Nothing();
+  }
+
+  Try<Nothing> deallocateIP6(const Network& ip6)
+  {
+    Try<IP> _ip = IP::convert(ip6.address());
+    if (_ip.isError()) {
+      return Error(_ip.error());
+    }
+
+    if (freeIP6.contains(_ip.get())) {
+      return Error(
+        "Unable to deallocate IP: " + stringify(_ip.get()) +
+        " that wasn't previously allocated");
+    }
+
+    freeIP6 += _ip.get();
+    return Nothing();
   }
 
   Try<Nothing> reserve(const Network& ip)
@@ -663,7 +704,7 @@ public:
           LOG(ERROR) << "Unable to allocate bridge for network "
                      << name << ": " << bridges.error();
 
-          if ( agentSubnet.isSome()) {
+          if (agentSubnet.isSome()) {
             overlay->free(agentSubnet.get());
           }
 
@@ -945,6 +986,47 @@ protected:
 
 private:
   AgentInfo agentInfo;
+};
+
+
+class DeleteAgents : public Operation {
+public:
+  explicit DeleteAgents(const hashset<string>& _agentIPs)
+  {
+    agentIPs = _agentIPs;
+  }
+
+  const string description() const
+  {
+    return "Drop agents operation";
+  }
+
+protected:
+  Try<bool> perform(State *networkState, hashmap<IP, Agent>* agents)
+  {
+    LOG(INFO) << "Deleting agents from state";
+
+    vector<int> agentsToDelete;
+    int agentsSize = networkState->agents_size();
+    for (int i = agentsSize - 1; i >= 0; --i) {
+      const AgentInfo& agent = networkState->agents(i);
+      if (agentIPs.count(agent.ip()) > 0) {
+        LOG(INFO) << "Deleting agent from state: " << agent.ip();
+        agentsToDelete.push_back(i);
+      }
+    }
+
+    google::protobuf::RepeatedPtrField<AgentInfo>* stateAgents =
+      networkState->mutable_agents();
+    foreach (int index, agentsToDelete) {
+      stateAgents->DeleteSubrange(index, 1);
+    }
+
+    return true;
+  }
+
+private:
+  hashset<string> agentIPs;
 };
 
 
@@ -1282,8 +1364,13 @@ protected:
     LOG(INFO) << "Adding route for '" << self().id << "/state'";
 
     route("/state",
-          OVERLAY_HELP,
-          &ManagerProcess::state);
+          OVERLAY_STATE_ENDPOINT_HELP,
+          &ManagerProcess::stateEndpoint);
+
+    LOG(INFO) << "Adding route for '" << self().id << "/agents'";
+    route("/agents/delete",
+          OVERLAY_DELETE_AGENTS_ENDPOINT_HELP,
+          &ManagerProcess::deleteAgentsEndpoint);
 
     // When a new agent comes up or an existing agent reconnects with
     // the master, it'll first send a `RegisterAgentMessage` to the
@@ -1501,6 +1588,79 @@ protected:
     send(pid, update);
   }
 
+  Try<Nothing> deleteAgents(const hashset<IP> agentIPs)
+  {
+    foreach (const IP& ip, agentIPs) {
+      LOG(INFO) << "Deleting agent from in-memory data structures: "
+                << stringify(ip);
+      if (!agents.contains(ip)) {
+        LOG(INFO) << "Unable to find an agent with IP: " + stringify(ip);
+        continue;
+      }
+
+      const Agent* agent = &(agents.at(ip));
+
+      foreach (const AgentOverlayInfo& agentOverlay, agent->getOverlays()) {
+        string overlayName = agentOverlay.info().name();
+        Owned<Overlay> overlay = overlays.at(overlayName);
+
+        if (agentOverlay.has_subnet()) {
+          Try<Network> subnet =
+            Network::parse(agentOverlay.subnet(), AF_INET);
+          if (subnet.isError()) {
+            return Error(subnet.error());
+          }
+          Try<Nothing> result = overlay->free(subnet.get());
+          if (result.isError()) {
+            return Error(result.error());
+          }
+        }
+        if (agentOverlay.has_subnet6()) {
+          Try<Network> subnet6 =
+            Network::parse(agentOverlay.subnet6(), AF_INET6);
+          if (subnet6.isError()) {
+            return Error(subnet6.error());
+          }
+          Try<Nothing> result = overlay->free6(subnet6.get());
+          if (result.isError()) {
+            return Error(result.error());
+          }
+        }
+
+        if (agentOverlay.backend().has_vxlan()) {
+          Try<Network> ip =
+            Network::parse(agentOverlay.backend().vxlan().vtep_ip(), AF_INET);
+          if (ip.isError()) {
+            return Error(ip.error());
+          }
+          Try<Nothing> result = vtep.deallocateIP(ip.get());
+          if (result.isError()) {
+            return Error(result.error());
+          }
+
+          if (agentOverlay.backend().vxlan().has_vtep_ip6()) {
+            Try<Network> ip6 =
+              Network::parse(agentOverlay.backend().vxlan().vtep_ip6(),
+                             AF_INET6);
+            if (ip6.isError()) {
+              return Error(ip6.error());
+            }
+            result = vtep.deallocateIP6(ip6.get());
+            if (result.isError()) {
+              return Error(result.error());
+            }
+          }
+        }
+      }
+
+      agents.erase(ip);
+      LOG(INFO) << "Deleted agent from in-memory data structures: "
+                << stringify(ip);
+    }
+
+    return Nothing();
+  }
+
   void agentRegistered(const UPID& from, const AgentRegisteredMessage& message)
   {
     Try<IP> _agentIP = IP::convert(from.address.ip);
@@ -1536,13 +1696,100 @@ protected:
     }
   }
 
-  Future<http::Response> state(const http::Request& request)
+  Future<http::Response> stateEndpoint(const http::Request& request)
   {
     VLOG(1) << "Responding to `state` endpoint";
 
     return http::OK(
         JSON::protobuf(networkState),
         request.url.query.get("jsonp"));
+  }
+
+  Future<http::Response> deleteAgentsEndpoint(const http::Request& request)
+  {
+    VLOG(1) << "Responding to `agents/delete` endpoint";
+
+    if (request.method != "POST") {
+      return http::MethodNotAllowed({"POST"}, request.method);
+    }
+
+    if (replicatedLog.get() != nullptr && storedState.isNone()) {
+      return http::ServiceUnavailable();
+    }
+
+    Try<JSON::Object> json = JSON::parse<JSON::Object>(request.body);
+    if (json.isError()) {
+      return http::BadRequest();
+    }
+
+    Result<JSON::Array> agentIPsJson = json.get().at<JSON::Array>("agents");
+    if (agentIPsJson.isError() || agentIPsJson.isNone()) {
+      return http::BadRequest();
+    }
+
+    hashset<string> agentIPs;
+    foreach (const JSON::Value value, agentIPsJson.get().values) {
+      if (!value.is<JSON::String>()) {
+        return http::BadRequest();
+      }
+      string agentIPStr = value.as<JSON::String>().value;
+      Try<IP> agentIP = IP::parse(agentIPStr, AF_INET);
+      if (agentIP.isError()) {
+        return http::BadRequest();
+      }
+      agentIPs.insert(agentIPStr);
+    }
+
+    http::Pipe pipe;
+    http::Response response;
+    response.type = http::Response::PIPE;
+    response.code = http::Status::OK;
+    response.status = http::Status::string(response.code);
+    response.headers = http::Headers({
+      {"Content-Type", "application/json"}
+    });
+    response.reader = Option<http::Pipe::Reader>::some(pipe.reader());
+
+    http::Pipe::Writer writer = pipe.writer();
+    update(Owned<Operation>(new DeleteAgents(agentIPs)))
+      .onAny(defer(self(),
+                   &ManagerProcess::_deleteAgentsEndpoint,
+                   writer,
+                   agentIPs,
+                   lambda::_1));
+
+    return response;
+  }
+
+  void _deleteAgentsEndpoint(http::Pipe::Writer writer,
+                             const hashset<string> agentIPs,
+                             const Future<bool>& result)
+  {
+    if (!result.isReady()) {
+      if (result.isPending()) {
+        writer.fail("the future is still pending");
+      } else if (result.isDiscarded()) {
+        writer.fail("the future has been discarded");
+      } else if (result.isAbandoned()) {
+        writer.fail("the future has been abandoned");
+      } else if (result.isFailed()) {
+        writer.fail(result.failure());
+      } else {
+        writer.fail("the future is not ready due to an unknown reason");
+      }
+      return;
+    }
+
+    hashset<IP> parsedAgentIPs;
+    foreach (const string ip, agentIPs) {
+      parsedAgentIPs.insert(IP::parse(ip, AF_INET).get());
+    }
+    Try<Nothing> deletionOutcome = deleteAgents(parsedAgentIPs);
+    CHECK(!deletionOutcome.isError());
+
+    string stateJson = jsonify(JSON::protobuf(networkState));
+    writer.write(stateJson);
+    writer.close();
   }
 
   void recover()
@@ -1638,7 +1885,7 @@ protected:
           // We should already have this particular overlay at bootup.
           CHECK(overlays.contains(overlay.info().name()));
 
-          LOG(INFO) << "reserving IPv4 " << stringify(network.get());
+          LOG(INFO) << "Reserving IPv4 " << stringify(network.get());
           Try<Nothing> result =
             overlays.at(overlay.info().name())->reserve(network.get());
           if (result.isError()) {
@@ -1667,7 +1914,7 @@ protected:
           // We should already have this particular overlay at bootup.
           CHECK(overlays.contains(overlay.info().name()));
 
-          LOG(INFO) << "reserving IPv6 " << stringify(network6.get());
+          LOG(INFO) << "Reserving IPv6 " << stringify(network6.get());
           Try<Nothing> result =
             overlays.at(overlay.info().name())->reserve6(network6.get());
           if (result.isError()) {
@@ -2037,7 +2284,7 @@ Anonymous* createOverlayMasterManager(const Parameters& parameters)
       Try<MasterConfig> _masterConfig = parseMasterConfig(config.get());
       if (_masterConfig.isError()) {
         LOG(ERROR)
-          << "Unable to prase the Master JSON configuration: "
+          << "Unable to parse the Master JSON configuration: "
           << _masterConfig.error();
         return nullptr;
       }
