@@ -31,6 +31,9 @@ cd build
 make
 ```
 
+In order to compile the Mesos modules tests, `--enable-tests-install`
+should be added to the `configure`'s command-line arguments too.
+
 ### Systemd journald headers
 
 Some of these modules also require systemd development headers and libraries.
