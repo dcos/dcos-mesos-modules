@@ -43,6 +43,7 @@ using mesos::slave::ContainerConfig;
 using mesos::slave::ContainerLogger;
 using mesos::slave::ContainerIO;
 
+#ifndef __WINDOWS__
 // Forward declare some functions located in `src/linux/systemd.cpp`.
 // This is not exposed in the Mesos public headers, but is necessary to
 // keep the ContainerLogger's companion binaries alive if the agent dies.
@@ -56,6 +57,7 @@ Try<Nothing> extendLifetime(pid_t child);
 bool enabled();
 
 } // namespace systemd {
+#endif // __WINDOWS__
 
 namespace mesos {
 namespace journald {
@@ -245,7 +247,9 @@ public:
     // occurs after the `slaves` directory.
     // See: src/slave/paths.hpp in the Mesos codebase for more info.
     vector<string> sandboxTokens =
-      strings::tokenize(containerConfig.directory(), "/");
+      strings::tokenize(
+          containerConfig.directory(),
+          stringify(os::PATH_SEPARATOR));
 
     Option<string> agentId = None();
     for (int i = sandboxTokens.size() - 2; i >= 0; i -= 2) {
@@ -288,7 +292,7 @@ public:
     // of the pipe and will be solely responsible for closing that end.
     // The ownership of the write-end will be passed to the caller
     // of this function.
-    Try<array<int, 2>> pipefd = os::pipe();
+    Try<array<int_fd, 2>> pipefd = os::pipe();
     if (pipefd.isError()) {
       return Failure("Failed to create pipe: " + pipefd.error());
     }
@@ -321,17 +325,23 @@ public:
     // do with the executor. Any grandchildren's lives will also be
     // extended.
     std::vector<Subprocess::ParentHook> parentHooks;
+#ifndef __WINDOWS__
     if (systemd::enabled()) {
       parentHooks.emplace_back(Subprocess::ParentHook(
           &systemd::mesos::extendLifetime));
     }
+#endif // __WINDOWS__
 
     // Spawn a process to handle stdout.
     Try<Subprocess> outProcess = subprocess(
         path::join(flags.companion_dir, mesos::journald::logger::NAME),
         {mesos::journald::logger::NAME},
         Subprocess::FD(outfds.read, Subprocess::IO::OWNED),
+#ifndef __WINDOWS__
         Subprocess::PATH("/dev/null"),
+#else
+        Subprocess::PATH("NUL"),
+#endif // __WINDOWS__
         Subprocess::FD(STDERR_FILENO),
         &outFlags,
         environment,
@@ -383,7 +393,11 @@ public:
         path::join(flags.companion_dir, mesos::journald::logger::NAME),
         {mesos::journald::logger::NAME},
         Subprocess::FD(errfds.read, Subprocess::IO::OWNED),
+#ifndef __WINDOWS__
         Subprocess::PATH("/dev/null"),
+#else
+        Subprocess::PATH("NUL"),
+#endif // __WINDOWS__
         Subprocess::FD(STDERR_FILENO),
         &errFlags,
         environment,
