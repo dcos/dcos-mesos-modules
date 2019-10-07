@@ -32,7 +32,10 @@
 #include "metrics/messages.pb.h"
 
 namespace inet = process::network::inet;
+
+#ifndef __WINDOWS__
 namespace unix = process::network::unix;
+#endif // __WINDOWS__
 
 using namespace mesos;
 using namespace process;
@@ -96,6 +99,7 @@ public:
     }
 
     if (flags.service_network.get() == "unix") {
+#ifndef __WINDOWS__
       Try<unix::Address> address =
         unix::Address::create(flags.service_address.get());
       if (address.isError()) {
@@ -104,6 +108,9 @@ public:
       }
 
       serviceUnixAddress = address.get();
+#else
+      LOG(FATAL) << "Unix domain sockets are not supported on Windows";
+#endif // __WINDOWS__
     }
 
     // Set `serviceEndpoint` based on flags.
@@ -239,12 +246,14 @@ public:
       return http::connect(serviceInetAddress.get(), http::Scheme::HTTPS);
     }
 
+#ifndef __WINDOWS__
     if (serviceUnixAddress.isSome()) {
       if (flags.service_scheme.get() == "http") {
         return http::connect(serviceUnixAddress.get(), http::Scheme::HTTP);
       }
       return http::connect(serviceUnixAddress.get(), http::Scheme::HTTPS);
     }
+#endif // __WINDOWS__
 
     UNREACHABLE();
   }
@@ -282,11 +291,13 @@ public:
                   endpoint);
             }
 
+#ifndef __WINDOWS__
             if (serviceUnixAddress.isSome()) {
               request.url.scheme = serviceScheme;
               request.url.domain = "";
               request.url.path = endpoint;
             }
+#endif // __WINDOWS__
 
             return connection.send(request);
           }))
@@ -297,7 +308,8 @@ public:
           });
   }
 
-  Future<http::Response> send(const ContainerStartRequest& containerStartRequest)
+  Future<http::Response> send(
+      const ContainerStartRequest& containerStartRequest)
   {
     string body = jsonify(JSON::Protobuf(containerStartRequest));
 
@@ -314,8 +326,9 @@ private:
   string serviceScheme;
   string serviceEndpoint;
   Option<inet::Address> serviceInetAddress;
+#ifndef __WINDOWS__
   Option<unix::Address> serviceUnixAddress;
-
+#endif // __WINDOWS__
   // A set of all DEBUG containers the module has observed during `prepare()`.
   // This is used to skip the DELETE request during the cleanup phase, since we
   // do not set up metrics for DEBUG containers.
