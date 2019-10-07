@@ -99,7 +99,15 @@ protected:
           } ]
         }
         )~",
+
+        // TODO(tillt): We need to rework this for Windows as soon as
+        // there are standalone modules on that platform.
+#ifndef __WINDOWS__
         path::join(MODULES_BUILD_DIR, ".libs", "libmetrics-module.so"),
+#else
+        "C:/fake/location/metrics-module.dll",
+#endif // __WINDOWS__
+
         ip + ":" + port,
         "/" + METRICS_PROCESS + "/" + API_PATH,
         stringify(REQUEST_TIMEOUT));
