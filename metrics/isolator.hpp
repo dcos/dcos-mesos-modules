@@ -161,4 +161,6 @@ private:
 } // namespace dcos {
 } // namespace mesosphere {
 
+extern mesos::modules::Module<mesos::slave::Isolator> com_mesosphere_dcos_MetricsIsolatorModule;
+
 #endif // __METRICS_ISOLATOR_MODULE_HPP__
