@@ -1994,6 +1994,13 @@ TEST_F(OverlayTest, checkMasterAgentDeletion)
   masterOverlayConfig
     .set_replicated_log_dir("overlay_replicated_log");
 
+  // Add an IPv6 overlay network.
+  OverlayInfo overlay6;
+  overlay6.set_name(OVERLAY_NAME_2);
+  overlay6.set_subnet6("fd04::/64");
+  overlay6.set_prefix6(OVERLAY_PREFIX6);
+  masterOverlayConfig.mutable_network()->add_overlays()->CopyFrom(overlay6);
+
   Try<Owned<Anonymous>> masterModule = startOverlayMaster(masterOverlayConfig);
   ASSERT_SOME(masterModule);
 
@@ -2016,7 +2023,7 @@ TEST_F(OverlayTest, checkMasterAgentDeletion)
 
   // Sanity checks of overlay networking configuration.
   ASSERT_SOME(state);
-  ASSERT_EQ(1, state->network().overlays_size());
+  ASSERT_EQ(2, state->network().overlays_size());
 
   // Make sure that no agents are registered yet.
   ASSERT_EQ(0, state->agents_size());
@@ -2055,10 +2062,21 @@ TEST_F(OverlayTest, checkMasterAgentDeletion)
       "Content-Type",
       agentResponse);
 
+  // Sort overlays in protobufs in order to make their order determenistic,
+  // so that it is OK to compare them as strings.
+  auto overlaySorter =
+      [](const AgentOverlayInfo& a, const AgentOverlayInfo& b) {
+          return a.info().name() < b.info().name();
+      };
+
   // Let's keep the agent info and overlay config as a string for records.
   Try<AgentInfo> agentInfo = parseAgentOverlay(agentResponse->body);
   ASSERT_SOME(agentInfo);
   agentInfo->clear_configuration_attempts();
+  std::sort(
+      agentInfo->mutable_overlays()->begin(),
+      agentInfo->mutable_overlays()->end(),
+      overlaySorter);
   string agentInfoString = agentInfo->SerializeAsString();
 
   // Hit the `state` endpoint again to verify that the agent has been
@@ -2078,6 +2096,10 @@ TEST_F(OverlayTest, checkMasterAgentDeletion)
   // Ensure that what we got from the agent is what we get from the master too.
   AgentInfo masterAgentInfo;
   masterAgentInfo.CopyFrom(state->agents(0));
+  std::sort(
+      masterAgentInfo.mutable_overlays()->begin(),
+      masterAgentInfo.mutable_overlays()->end(),
+      overlaySorter);
   string masterAgentInfoString = masterAgentInfo.SerializeAsString();
   ASSERT_EQ(agentInfoString, masterAgentInfoString);
 
@@ -2134,7 +2156,6 @@ TEST_F(OverlayTest, checkMasterAgentDeletion)
   AWAIT_READY(agentRegisteredMessage);
   AWAIT_READY(agentModule.get()->ready());
 
-
   // Make sure that even after the agent re-registration, both master and
   // agent have the same agent configuration.
   overlayAgent = UPID(AGENT_MANAGER_PROCESS_ID, master.get()->pid.address);
@@ -2149,6 +2170,10 @@ TEST_F(OverlayTest, checkMasterAgentDeletion)
   agentInfo = parseAgentOverlay(agentResponse->body);
   ASSERT_SOME(agentInfo);
   agentInfo->clear_configuration_attempts();
+  std::sort(
+      agentInfo->mutable_overlays()->begin(),
+      agentInfo->mutable_overlays()->end(),
+      overlaySorter);
   ASSERT_EQ(agentInfoString, agentInfo->SerializeAsString());
 
   stateResponse = process::http::get(
@@ -2166,6 +2191,10 @@ TEST_F(OverlayTest, checkMasterAgentDeletion)
   ASSERT_EQ(1, state->agents_size());
 
   masterAgentInfo.CopyFrom(state->agents(0));
+  std::sort(
+      masterAgentInfo.mutable_overlays()->begin(),
+      masterAgentInfo.mutable_overlays()->end(),
+      overlaySorter);
   ASSERT_EQ(
       masterAgentInfoString,
       masterAgentInfo.SerializeAsString());
