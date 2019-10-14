@@ -1599,6 +1599,7 @@ protected:
       }
 
       const Agent* agent = &(agents.at(ip));
+      hashset<string> vtepIPs, vtepIP6s;
 
       foreach (const AgentOverlayInfo& agentOverlay, agent->getOverlays()) {
         string overlayName = agentOverlay.info().name();
@@ -1615,6 +1616,7 @@ protected:
             return Error(result.error());
           }
         }
+
         if (agentOverlay.has_subnet6()) {
           Try<Network> subnet6 =
             Network::parse(agentOverlay.subnet6(), AF_INET6);
@@ -1628,28 +1630,33 @@ protected:
         }
 
         if (agentOverlay.backend().has_vxlan()) {
-          Try<Network> ip =
-            Network::parse(agentOverlay.backend().vxlan().vtep_ip(), AF_INET);
-          if (ip.isError()) {
-            return Error(ip.error());
-          }
-          Try<Nothing> result = vtep.deallocateIP(ip.get());
-          if (result.isError()) {
-            return Error(result.error());
-          }
+          vtepIPs.insert(agentOverlay.backend().vxlan().vtep_ip());
 
           if (agentOverlay.backend().vxlan().has_vtep_ip6()) {
-            Try<Network> ip6 =
-              Network::parse(agentOverlay.backend().vxlan().vtep_ip6(),
-                             AF_INET6);
-            if (ip6.isError()) {
-              return Error(ip6.error());
-            }
-            result = vtep.deallocateIP6(ip6.get());
-            if (result.isError()) {
-              return Error(result.error());
-            }
+            vtepIP6s.insert(agentOverlay.backend().vxlan().vtep_ip6());
           }
+        }
+      }
+
+      foreach (const string s, vtepIPs) {
+        Try<Network> ip = Network::parse(s, AF_INET);
+        if (ip.isError()) {
+          return Error(ip.error());
+        }
+        Try<Nothing> result = vtep.deallocateIP(ip.get());
+        if (result.isError()) {
+          return Error(result.error());
+        }
+      }
+
+      foreach (const string s, vtepIP6s) {
+        Try<Network> ip6 = Network::parse(s, AF_INET6);
+        if (ip6.isError()) {
+          return Error(ip6.error());
+        }
+        Try<Nothing> result = vtep.deallocateIP6(ip6.get());
+        if (result.isError()) {
+          return Error(result.error());
         }
       }
 
@@ -1785,6 +1792,9 @@ protected:
       parsedAgentIPs.insert(IP::parse(ip, AF_INET).get());
     }
     Try<Nothing> deletionOutcome = deleteAgents(parsedAgentIPs);
+    if (deletionOutcome.isError()) {
+      LOG(ERROR) << "Failed to delete agents: " << deletionOutcome.error();
+    }
     CHECK(!deletionOutcome.isError());
 
     string stateJson = jsonify(JSON::protobuf(networkState));
