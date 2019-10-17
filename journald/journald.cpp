@@ -129,22 +129,22 @@ public:
       os::close(configMemFd.get());
     }
 
-    if (buffer != NULL) {
+    if (buffer != nullptr) {
       delete[] buffer;
-      buffer = NULL;
+      buffer = nullptr;
     }
 
 #ifndef __WINDOWS__
-    if (entries != NULL) {
+    if (entries != nullptr) {
       for (int i = 0; i < num_entries - 1; i++) {
-        if (entries != NULL) {
+        if (entries != nullptr) {
           delete[] (char*) entries[i].iov_base;
-          entries[i].iov_base = NULL;
+          entries[i].iov_base = nullptr;
         }
       }
 
       delete[] entries;
-      entries = NULL;
+      entries = nullptr;
     }
 #endif // __WINDOWS__
 
