@@ -43,7 +43,7 @@ using mesos::slave::ContainerConfig;
 using mesos::slave::ContainerLogger;
 using mesos::slave::ContainerIO;
 
-#ifndef __WINDOWS__
+#ifdef __linux__
 // Forward declare some functions located in `src/linux/systemd.cpp`.
 // This is not exposed in the Mesos public headers, but is necessary to
 // keep the ContainerLogger's companion binaries alive if the agent dies.
@@ -57,7 +57,7 @@ Try<Nothing> extendLifetime(pid_t child);
 bool enabled();
 
 } // namespace systemd {
-#endif // __WINDOWS__
+#endif // __linux__
 
 namespace mesos {
 namespace journald {
@@ -325,12 +325,12 @@ public:
     // do with the executor. Any grandchildren's lives will also be
     // extended.
     std::vector<Subprocess::ParentHook> parentHooks;
-#ifndef __WINDOWS__
+#ifdef __linux__
     if (systemd::enabled()) {
       parentHooks.emplace_back(Subprocess::ParentHook(
           &systemd::mesos::extendLifetime));
     }
-#endif // __WINDOWS__
+#endif // __linux__
 
     // Spawn a process to handle stdout.
     Try<Subprocess> outProcess = subprocess(
