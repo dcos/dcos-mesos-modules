@@ -76,18 +76,27 @@ struct Flags : virtual flags::FlagsBase
     add(&Flags::service_network,
         "dcos_metrics_service_network",
         "The network where the --dcos_metrics_service_address is reachable.\n"
+#ifndef __WINDOWS__
         "Must be either \"inet\" or \"unix\".",
+#else
+        "Must be \"inet\" on Windows.",
+#endif // __WINDOWS__
         [](const Option<std::string>& value) -> Option<Error> {
           if (value.isNone()) {
             return Error("Missing required option"
                          " --dcos_metrics_service_network");
           }
-
+#ifndef __WINDOWS__
+          if (value.get() != "inet") {
+            return Error("Expected --dcos_metrics_service_network"
+                         " to be \"inet\"");
+          }
+#else
           if (value.get() != "inet" && value.get() != "unix") {
             return Error("Expected --dcos_metrics_service_network"
                          " to be either \"inet\" or \"unix\"");
           }
-
+#endif // __WINDOWS__
           return None();
         });
 
@@ -160,5 +169,7 @@ private:
 } // namespace metrics {
 } // namespace dcos {
 } // namespace mesosphere {
+
+extern mesos::modules::Module<mesos::slave::Isolator> com_mesosphere_dcos_MetricsIsolatorModule;
 
 #endif // __METRICS_ISOLATOR_MODULE_HPP__
