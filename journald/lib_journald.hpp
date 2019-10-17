@@ -3,6 +3,8 @@
 
 #include <stdio.h>
 
+#include <mesos/module/container_logger.hpp>
+
 #include <mesos/slave/container_logger.hpp>
 #include <mesos/slave/containerizer.hpp>
 
@@ -36,14 +38,19 @@ struct LoggerFlags : public virtual flags::FlagsBase
     add(&LoggerFlags::destination_type,
         "destination_type",
         "Determines where logs should be piped.\n"
-        "Valid destinations include: 'journald', 'logrotate',\n"
-        "'fluentbit', 'journald+logrotate', or 'fluentbit+logrotate'.",
+        "Valid destinations include: 'logrotate', 'fluentbit',\n"
+#ifndef __WINDOWS__
+        "'journald', 'journald+logrotate',\n"
+#endif // __WINDOWS__
+        "or 'fluentbit+logrotate'.",
         "journald",
         [](const std::string& value) -> Option<Error> {
-          if (value != "journald" &&
-              value != "logrotate" &&
+          if (value != "logrotate" &&
               value != "fluentbit" &&
+#ifndef __WINDOWS__
+              value != "journald" &&
               value != "journald+logrotate" &&
+#endif // __WINDOWS
               value != "fluentbit+logrotate") {
             return Error("Invalid destination type: " + value);
           }
@@ -168,7 +175,11 @@ struct Flags : public virtual LoggerFlags
           // Check if `logrotate` exists via the help command.
           // TODO(josephw): Consider a more comprehensive check.
           Try<std::string> helpCommand =
+#ifndef __WINDOWS__
             os::shell(value + " --help > /dev/null");
+#else
+            os::shell(value);
+#endif // __WINDOWS__
 
           if (helpCommand.isError()) {
             return Error(
@@ -277,5 +288,8 @@ protected:
 
 } // namespace journald {
 } // namespace mesos {
+
+extern mesos::modules::Module<mesos::slave::ContainerLogger>
+  com_mesosphere_mesos_JournaldLogger;
 
 #endif // __JOURNALD_LIB_JOURNALD_HPP__

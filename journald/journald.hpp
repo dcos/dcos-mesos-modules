@@ -21,7 +21,11 @@ namespace mesos {
 namespace journald {
 namespace logger {
 
+#ifndef __WINDOWS__
 const std::string NAME = "mesos-journald-logger";
+#else
+const std::string NAME = "mesos-journald-logger.exe";
+#endif // __WINDOWS__
 const std::string LOGROTATE_CONF_SUFFIX = ".logrotate.conf";
 const std::string LOGROTATE_STATE_SUFFIX = ".logrotate.state";
 
@@ -32,22 +36,28 @@ struct Flags : public virtual flags::FlagsBase
     setUsageMessage(
       "Usage: " + NAME + " [options]\n"
       "\n"
-      "This command pipes from STDIN to journald.\n"
-      "Each line (delineated by newline) of STDIN is labeled with --labels\n"
-      "before it is written to journald.  See '--labels'."
+      "This command pipes from STDIN to a destination of choice.\n"
+      "If supported by the destination, each line (delineated by newline)\n"
+      "of STDIN is labeled with --journald_labels before it is written.\n"
+      "See '--journald_labels'."
       "\n");
 
     add(&Flags::destination_type,
         "destination_type",
         "Determines where logs should be piped.\n"
-        "Valid destinations include: 'journald', 'logrotate',\n"
-        "'fluentbit', 'journald+logrotate', or 'fluentbit+logrotate'.",
-        "journald",
+        "Valid destinations include: 'logrotate', 'fluentbit',\n"
+#ifndef __WINDOWS__
+        "'journald', 'journald+logrotate',\n"
+#endif // __WINDOWS__
+        "or 'fluentbit+logrotate'.",
+        "logrotate",
         [](const std::string& value) -> Option<Error> {
-          if (value != "journald" &&
-              value != "logrotate" &&
+          if (value != "logrotate" &&
               value != "fluentbit" &&
+#ifndef __WINDOWS__
+              value != "journald" &&
               value != "journald+logrotate" &&
+#endif // __WINDOWS
               value != "fluentbit+logrotate") {
             return Error("Invalid destination type: " + value);
           }
@@ -55,6 +65,8 @@ struct Flags : public virtual flags::FlagsBase
           return None();
         });
 
+    // NOTE: This flag is supported on Windows because the same
+    // labels are used for journald and fluentbit.
     add(&Flags::journald_labels,
         "journald_labels",
         "Labels to append to each line of logs written to journald.\n"
@@ -145,7 +157,11 @@ struct Flags : public virtual flags::FlagsBase
           // Check if `logrotate` exists via the help command.
           // TODO(josephw): Consider a more comprehensive check.
           Try<std::string> helpCommand =
+#ifndef __WINDOWS__
             os::shell(value + " --help > /dev/null");
+#else
+            os::shell(value);
+#endif // __WINDOWS__
 
           if (helpCommand.isError()) {
             return Error(

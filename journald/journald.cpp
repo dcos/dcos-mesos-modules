@@ -1,9 +1,11 @@
 #include <string>
 #include <vector>
 
+#ifndef __WINDOWS__
 #include <sys/uio.h> // For `struct iovec`.
 
 #include <systemd/sd-journal.h>
+#endif // __WINDOWS__
 
 #include <process/address.hpp>
 #include <process/dispatch.hpp>
@@ -34,6 +36,7 @@
 using namespace process;
 using namespace mesos::journald::logger;
 
+#ifndef __WINDOWS__
 // Forward declare a helper found in `src/linux/memfd.hpp`.
 namespace mesos {
 namespace internal {
@@ -45,6 +48,7 @@ Try<int_fd> create(const std::string& name, unsigned int flags);
 } // namespace memfd {
 } // namespace internal {
 } // namespace mesos {
+#endif // __WINDOWS__
 
 class JournaldLoggerProcess : public Process<JournaldLoggerProcess>
 {
@@ -73,6 +77,7 @@ public:
         "size " + stringify(flags.logrotate_max_size.bytes() - bufferSize) +
         "\n}";
 
+#ifndef __WINDOWS__
       // Create a temporary anonymous file, which can be accessed by a child
       // process by opening a `/proc/self/fd/<FD of anonymous file>`.
       // This file is automatically removed on process termination, so we don't
@@ -105,6 +110,14 @@ public:
       }
 
       configMemFd = memFd.get();
+#else
+      Try<Nothing> result = os::write(
+          flags.logrotate_filename.get() + LOGROTATE_CONF_SUFFIX, config);
+
+      if (result.isError()) {
+        return Error("Failed to write configuration file: " + result.error());
+      }
+#endif // __WINDOWS__
     }
 
     return new JournaldLoggerProcess(flags, configMemFd, bufferSize);
@@ -121,6 +134,7 @@ public:
       buffer = NULL;
     }
 
+#ifndef __WINDOWS__
     if (entries != NULL) {
       for (int i = 0; i < num_entries - 1; i++) {
         if (entries != NULL) {
@@ -132,9 +146,15 @@ public:
       delete[] entries;
       entries = NULL;
     }
+#endif // __WINDOWS__
 
     if (leading.isSome()) {
       os::close(leading.get());
+    }
+
+    if (fluentbit_socket.isSome()) {
+      os::close(fluentbit_socket->get());
+      fluentbit_socket = None();
     }
   }
 
@@ -144,7 +164,9 @@ public:
   {
     // Pre-populate the `iovec` and `fluentbit_object` with the constant labels.
     num_entries = flags.parsed_labels.labels().size() + 1;
+#ifndef __WINDOWS__
     entries = new struct iovec[num_entries];
+#endif // __WINDOWS__
 
     for (int i = 0; i < flags.parsed_labels.labels().size(); i++) {
       const mesos::Label& label = flags.parsed_labels.labels(i);
@@ -153,6 +175,7 @@ public:
       // Fluentbit is written as a JSON object.
       fluentbit_object.values[key] = label.value();
 
+#ifndef __WINDOWS__
       // Journald requires conversion into the `iovec` structure,
       // which contains C-strings of concatenated key-values.
       const std::string entry = key + "=" + label.value();
@@ -161,6 +184,7 @@ public:
       entries[i].iov_len = entry.length();
       entries[i].iov_base = new char[entry.length() + 1];
       std::strcpy((char*) entries[i].iov_base, entry.c_str());
+#endif // __WINDOWS__
     }
 
     // NOTE: This is a prerequisuite for `io::read`.
@@ -188,6 +212,7 @@ public:
           return Nothing();
         }
 
+#ifndef __WINDOWS__
         if (flags.destination_type == "journald" ||
             flags.destination_type == "journald+logrotate") {
           // Write the bytes to journald.
@@ -197,6 +222,7 @@ public:
             return Nothing();
           }
         }
+#endif // __WINDOWS__
 
         if (flags.destination_type == "logrotate" ||
             flags.destination_type == "journald+logrotate" ||
@@ -226,6 +252,7 @@ public:
       });
   }
 
+#ifndef __WINDOWS__
   // Writes the buffer from stdin to the journald.
   // Any `flags.journald_labels` will be prepended to each line.
   Try<Nothing> write_journald(size_t readSize)
@@ -251,6 +278,7 @@ public:
     // Even if the write fails, we ignore the error.
     return Nothing();
   }
+#endif // __WINDOWS__
 
   // Writes the buffer from stdin to the leading log file.
   // When the number of written bytes exceeds `--logrotate_max_size`,
@@ -268,7 +296,7 @@ public:
     if (leading.isNone()) {
       std::string basename = Path(flags.logrotate_filename.get()).basename();
 
-      Try<int> open = os::open(
+      Try<int_fd> open = os::open(
           basename,
           O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC,
           S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
@@ -408,7 +436,7 @@ private:
   const size_t bufferSize;
 
   // For writing and rotating the leading log file.
-  Option<int> leading;
+  Option<int_fd> leading;
   size_t bytesWritten;
 
   // Used as arguments for `sd_journal_sendv`.
@@ -416,7 +444,10 @@ private:
   // The last entry holds a pointer to a stack-allocated C-string,
   // which is changed each time we write to journald.
   int num_entries;
+
+#ifndef __WINDOWS__
   struct iovec* entries;
+#endif // __WINDOWS__
 
   // The connection to the specified fluentbit address.
   Option<Try<int_fd>> fluentbit_socket;
@@ -464,6 +495,7 @@ int main(int argc, char** argv)
         "Failed to switch working directory for journald logger").message;
   }
 
+#ifndef __WINDOWS__
   // If the `--user` flag is set, change the UID of this process to that user.
   if (flags.user.isSome()) {
     Try<Nothing> result = os::su(flags.user.get());
@@ -473,6 +505,7 @@ int main(int argc, char** argv)
         << ErrnoError("Failed to switch user for journald logger").message;
     }
   }
+#endif // __WINDOWS__
 
   // Asynchronously control the flow and size of logs.
   Try<JournaldLoggerProcess*> process = JournaldLoggerProcess::create(flags);
@@ -493,6 +526,11 @@ int main(int argc, char** argv)
   wait(process.get());
 
   delete process.get();
+
+  // NOTE: We need to finalize libprocess, on Windows especially,
+  // as any binary that uses the networking stack on Windows must
+  // also clean up the networking stack before exiting.
+  process::finalize(true);
 
   return status.isReady() ? EXIT_SUCCESS : EXIT_FAILURE;
 }
