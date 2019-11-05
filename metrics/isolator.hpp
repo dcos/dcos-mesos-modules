@@ -87,14 +87,14 @@ struct Flags : virtual flags::FlagsBase
                          " --dcos_metrics_service_network");
           }
 #ifndef __WINDOWS__
-          if (value.get() != "inet") {
-            return Error("Expected --dcos_metrics_service_network"
-                         " to be \"inet\"");
-          }
-#else
           if (value.get() != "inet" && value.get() != "unix") {
             return Error("Expected --dcos_metrics_service_network"
                          " to be either \"inet\" or \"unix\"");
+          }
+#else
+          if (value.get() != "inet") {
+            return Error("Expected --dcos_metrics_service_network"
+                         " to be \"inet\"");
           }
 #endif // __WINDOWS__
           return None();
