@@ -1871,6 +1871,8 @@ protected:
       agents.emplace(agent->getIP(), agent.get());
       VLOG(1) << "Recovered agent: " << agent->getIP();
 
+      hashset <string> reservedVTEPIPs, reservedVTEPIP6s;
+
       for (int j = 0; j < agentInfo.overlays_size(); j++) {
         const AgentOverlayInfo& overlay = agentInfo.overlays(j);
 
@@ -1935,18 +1937,13 @@ protected:
           }
         }
 
-        // All overlay instances on an Agent share the same VTEP IP
-        // and MAC. Hence, the backend information on all the overlay
-        // information would be the same. We therefore need to reserve
-        // the VTEP IP and MAC only once.
-        if (j == 0) {
-          Try<Network> vtepIP =
-            Network::parse(overlay.backend().vxlan().vtep_ip(), AF_INET);
+        string vtepIPStr = overlay.backend().vxlan().vtep_ip();
+        if (!reservedVTEPIPs.contains(vtepIPStr)) {
+          Try<Network> vtepIP = Network::parse(vtepIPStr, AF_INET);
 
           if (vtepIP.isError()) {
             LOG(ERROR) << "Unable to parse the retrieved `vtepIP`: "
-                       << overlay.backend().vxlan().vtep_ip() << ": "
-                       << vtepIP.error();
+                       << vtepIPStr << ": " << vtepIP.error();
 
             demote();
             return;
@@ -1966,27 +1963,32 @@ protected:
             return;
           }
 
-          // IPv6
-          if (overlay.backend().vxlan().has_vtep_ip6()) {
-            Try<Network> vtepIP6 =
-              Network::parse(overlay.backend().vxlan().vtep_ip6(), AF_INET6);
+          reservedVTEPIPs.insert(vtepIPStr);
+        }
+
+        // VTEP IPv6
+        if (overlay.backend().vxlan().has_vtep_ip6()) {
+          string vtepIP6Str = overlay.backend().vxlan().vtep_ip6();
+          if (!reservedVTEPIP6s.contains(vtepIP6Str)) {
+            Try<Network> vtepIP6 = Network::parse(vtepIP6Str, AF_INET6);
 
             if (vtepIP6.isError()) {
               LOG(ERROR) << "Unable to parse the retrieved `vtep IPv6`: "
-                << overlay.backend().vxlan().vtep_ip6() << ": "
-                << vtepIP6.error();
+                << vtepIP6Str << ": " << vtepIP6.error();
               demote();
               return;
             }
 
             LOG(INFO) << "Reserving VTEP IPv6: " << vtepIP6.get();
-            result = vtep.reserve6(vtepIP6.get());
+            Try<Nothing> result = vtep.reserve6(vtepIP6.get());
             if (result.isError()) {
               LOG(ERROR) << "Unable to reserve VTEP IPv6: "
                          << vtepIP6.get() << ": " << result.error();
               demote();
               return;
             }
+
+            reservedVTEPIP6s.insert(vtepIP6Str);
           }
         }
       }
