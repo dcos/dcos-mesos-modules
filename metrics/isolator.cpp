@@ -64,8 +64,14 @@ public:
   {
     // Set `serviceScheme` based on flags.
     ASSERT(flags.service_scheme.isSome());
+
+#ifdef USE_SSL_SOCKET
     ASSERT(flags.service_scheme.get() == "http" ||
            flags.service_scheme.get() == "https");
+#else
+    ASSERT(flags.service_scheme.get() == "http");
+#endif // USE_SSL_SOCKET
+
     serviceScheme = flags.service_scheme.get();
 
     // Set `service*Address` based on flags.
@@ -243,7 +249,11 @@ public:
       if (flags.service_scheme.get() == "http") {
         return http::connect(serviceInetAddress.get(), http::Scheme::HTTP);
       }
-      return http::connect(serviceInetAddress.get(), http::Scheme::HTTPS);
+#ifdef USE_SSL_SOCKET
+       return http::connect(serviceInetAddress.get(), http::Scheme::HTTPS);
+#else
+      return Failure("HTTPS is not supported by this build");
+#endif // USE_SSL_SOCKET
     }
 
 #ifndef __WINDOWS__
@@ -251,7 +261,11 @@ public:
       if (flags.service_scheme.get() == "http") {
         return http::connect(serviceUnixAddress.get(), http::Scheme::HTTP);
       }
-      return http::connect(serviceUnixAddress.get(), http::Scheme::HTTPS);
+#ifdef USE_SSL_SOCKET
+       return http::connect(serviceUnixAddress.get(), http::Scheme::HTTPS);
+#else
+      return Failure("HTTPS is not supported by this build");
+#endif // USE_SSL_SOCKET
     }
 #endif // __WINDOWS__
 
