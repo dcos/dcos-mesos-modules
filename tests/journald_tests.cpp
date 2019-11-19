@@ -35,9 +35,9 @@
 #include <stout/os/pstree.hpp>
 #include <stout/os/read.hpp>
 
-#ifndef __WINDOWS__
+#ifdef __linux__
 #include "common/shell.hpp"
-#endif // __WINDOWS__
+#endif // __linux__
 
 #include "module/manager.hpp"
 
@@ -65,13 +65,13 @@ using mesos::master::detector::MasterDetector;
 
 using mesos::modules::ModuleManager;
 
-#ifndef __WINDOWS__
+#ifdef __linux__
 using mesos::modules::common::runCommand;
-#endif // __WINDOWS__
+#endif // __linux__
 
 using testing::WithParamInterface;
 
-#ifndef __WINDOWS__
+#ifdef __linux__
 namespace systemd {
 
 // Forward declare a function and required class located in
@@ -107,7 +107,7 @@ public:
 Try<Nothing> initialize(const Flags& flags);
 
 } // namespace systemd {
-#endif // __WINDOWS__
+#endif // __linux__
 
 
 namespace mesos {
@@ -123,7 +123,7 @@ class JournaldLoggerTest : public MesosTest,
 public:
   static void SetUpTestCase()
   {
-#ifndef __WINDOWS__
+#ifdef __linux__
     // NOTE: This code is normally run in `src/slave/main.cpp`.
     systemd::Flags systemdFlags;
 
@@ -137,7 +137,7 @@ public:
     // The logger's companion binary needs to be able to find
     // libmesos from the agent's environment.
     os::setenv("LD_LIBRARY_PATH", path::join(BUILD_DIR, "src/.libs"));
-#endif // __WINDOWS__
+#endif // __linux__
   }
 
   virtual void SetUp()
@@ -181,7 +181,7 @@ protected:
 };
 
 
-#ifndef __WINDOWS__
+#ifdef __linux__
 // Loads the journald ContainerLogger module and runs a task.
 // Then queries journald for the associated logs.
 TEST_F(JournaldLoggerTest, ROOT_LogToJournaldWithBigLabel)
@@ -512,7 +512,7 @@ TEST_F(JournaldLoggerTest, ROOT_LogrotateCustomOptions)
 }
 
 
-#ifndef __WINDOWS__
+#ifdef __linux__
 // This test verfies that the executor information will be passed to
 // the container logger the same way before and after an agent
 // restart. Note that this is different than the behavior before Mesos
@@ -832,10 +832,10 @@ TEST_F(JournaldLoggerTest, ROOT_CGROUPS_DebugContainersLogToSandbox)
   ASSERT_SOME(stdout);
   EXPECT_TRUE(strings::contains(stdout.get(), specialChildString));
 }
-#endif // __WINDOWS__
+#endif // __linux__
 
 
-#ifndef __WINDOWS__
+#ifdef __linux__
 INSTANTIATE_TEST_CASE_P(
     LoggingMode,
     JournaldLoggerTest,
@@ -848,10 +848,10 @@ INSTANTIATE_TEST_CASE_P(
     LoggingMode,
     JournaldLoggerTest,
     ::testing::Values(std::string("logrotate")));
-#endif // __WINDOWS__
+#endif // __linux__
 
 
-#ifndef __WINDOWS__
+#ifdef __linux__
 // Loads the journald ContainerLogger module and runs a task.
 // Then queries journald for the associated logs.
 TEST_P(JournaldLoggerTest, ROOT_LogToJournald)
@@ -1048,7 +1048,7 @@ TEST_P(JournaldLoggerTest, ROOT_LogToJournald)
       << "Expected " << specialString << " to appear in " << stdout.get();
   }
 }
-#endif // __WINDOWS__
+#endif // __linux__
 
 
 class FluentbitLoggerTest : public JournaldLoggerTest
@@ -1238,7 +1238,7 @@ TEST_P(FluentbitLoggerTest, ROOT_LogToFluentbit)
 }
 
 
-#ifndef __WINDOWS__
+#ifdef __linux__
 class JournaldLoggerDockerTest : public JournaldLoggerTest {};
 
 
@@ -1362,7 +1362,7 @@ TEST_P(JournaldLoggerDockerTest, ROOT_DOCKER_LogToJournald)
   AWAIT_READY(executorQuery);
   ASSERT_TRUE(strings::contains(executorQuery.get(), specialString));
 }
-#endif // __WINDOWS__
+#endif // __linux__
 
 } // namespace tests {
 } // namespace journald {
