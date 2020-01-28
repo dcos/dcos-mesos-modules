@@ -187,11 +187,13 @@ public:
 #endif // __linux__
     }
 
+#ifndef __WINDOWS__
     // NOTE: This is a prerequisuite for `io::read`.
-    Try<Nothing> nonblock = os::nonblock(STDIN_FILENO);
-    if (nonblock.isError()) {
-      return Failure("Failed to set nonblocking pipe: " + nonblock.error());
+    Try<Nothing> async = io::prepare_async(STDIN_FILENO);
+    if (async.isError()) {
+      return Failure("Failed to set aync pipe: " + async.error());
     }
+#endif // __WINDOWS__
 
     // NOTE: This does not block.
     loop();
@@ -202,7 +204,21 @@ public:
   // Reads from stdin and writes to journald.
   void loop()
   {
+#ifdef __WINDOWS__
+    // NOTE: I/O completion ports do not support reading STDIN asynchronously.
+    ssize_t result = os::read(STDIN_FILENO, buffer, bufferSize);
+    if (result == -1) {
+      promise.fail(WindowsError().message);
+      return;
+    }
+
+    Future<size_t>(static_cast<size_t>(result))
+#else
     io::read(STDIN_FILENO, buffer, bufferSize)
+#endif // __WINDOWS__
+      .onFailed([&](const std::string& failure) {
+        promise.fail(failure);
+      })
       .then([&](size_t readSize) -> Future<Nothing> {
         // Check if EOF has been reached on the input stream.
         // This indicates that the container (whose logs are being
