@@ -59,3 +59,6 @@ find_library(
   PATHS ${MESOS_ROOT}/build/src
   PATH_SUFFIXES Debug Release
 )
+
+SET(Protobuf_DIR ${MESOS_ROOT}/build/3rdparty/protobuf-${PROTOBUF_VERSION}/src/protobuf-${PROTOBUF_VERSION}-build/cmake)
+find_package(Protobuf CONFIG REQUIRED)
