@@ -50,6 +50,10 @@ endif ()
 # WINDOWS CONFIGURATION.
 ########################
 if (WIN32)
+  # COFF/PE and friends are somewhat limited in the number of sections they
+  # allow for an object file. We use this to avoid those problems.
+  add_compile_options(/bigobj /vd2)
+
   # Fix Warning C4530: C++ exception handler used, but unwind semantics are not
   # enabled.
   add_compile_options(/EHsc)
@@ -76,3 +80,8 @@ add_subdirectory(dockercfg)
 add_subdirectory(journald)
 add_subdirectory(logsink)
 add_subdirectory(metrics)
+
+# FIXME: due to import path in 'overlay/messages.proto'
+# NOTE: according to [1], overlay module is not required for Windows
+# [1] https://github.com/mesosphere/dcos-enterprise/tree/master/packages/mesos/extra/windows-ee.patches
+#add_subdirectory(overlay)

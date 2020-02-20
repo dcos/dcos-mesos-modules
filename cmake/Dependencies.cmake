@@ -6,6 +6,10 @@ set (RAPIDJSON_INCL "${MESOS_ROOT}/build/3rdparty/rapidjson-${RAPIDJSON_VERSION}
 set (PROCESS_INCL "${MESOS_ROOT}/3rdparty/libprocess/include")
 set (STOUT_INCL "${MESOS_ROOT}/3rdparty/stout/include")
 set (CURL_INCL "${MESOS_ROOT}/build/3rdparty/curl-${CURL_VERSION}/src/curl-${CURL_VERSION}/include")
+set (ZOOKEEPER_INCL
+  "${MESOS_ROOT}/build/3rdparty/zookeeper-${ZOOKEEPER_VERSION}/src/zookeeper-${ZOOKEEPER_VERSION}/src/c/generated"
+  "${MESOS_ROOT}/build/3rdparty/zookeeper-${ZOOKEEPER_VERSION}/src/zookeeper-${ZOOKEEPER_VERSION}/src/c/include"
+)
 
 set (MESOS_BUILD_INCL "${MESOS_ROOT}/build/include")
 set (MESOS_INCL "${MESOS_ROOT}/include")
@@ -43,6 +47,20 @@ find_library(
   HTTP_PARSER_LIB
   NAMES http_parser
   PATHS ${MESOS_ROOT}/build/3rdparty/http_parser-${HTTP_PARSER_VERSION}/src/http_parser-${HTTP_PARSER_VERSION}-build
+  PATH_SUFFIXES Debug Release
+)
+
+find_library(
+  ZOOKEEPER_LIB
+  NAMES zookeeper
+  PATHS ${MESOS_ROOT}/build/3rdparty/zookeeper-${ZOOKEEPER_VERSION}/src/zookeeper-${ZOOKEEPER_VERSION}-build
+  PATH_SUFFIXES Debug Release
+)
+
+find_library(
+  ZOOKEEPER_HASHTABLE_LIB
+  NAMES hashtable
+  PATHS ${MESOS_ROOT}/build/3rdparty/zookeeper-${ZOOKEEPER_VERSION}/src/zookeeper-${ZOOKEEPER_VERSION}-build
   PATH_SUFFIXES Debug Release
 )
 

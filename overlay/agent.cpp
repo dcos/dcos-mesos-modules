@@ -1,3 +1,4 @@
+#include <stdlib.h>
 #include <sstream>
 #include <set>
 #include <vector>
@@ -558,7 +559,7 @@ void ManagerProcess::doReliableRegistration(Duration maxBackoff)
 
   // Determine the delay for next attempt by picking a random
   // duration between 0 and 'maxBackoff'.
-  Duration backoff = maxBackoff * ((double) ::random() / RAND_MAX);
+  Duration backoff = maxBackoff * ((double) rand() / RAND_MAX);
 
   VLOG(1) << "Will retry registration in " << backoff << " if necessary";
 

@@ -20,7 +20,7 @@ add_library(metrics SHARED isolator.cpp)
 protobuf_generate(
   LANGUAGE cpp
   TARGET metrics
-  OUT_VAR PROTO_SRCS PROTO_HDRS
+  # OUT_VAR PROTO_SRCS PROTO_HDRS
   PROTOS messages.proto
 )
 
