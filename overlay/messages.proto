@@ -2,7 +2,7 @@ syntax = "proto2";
 
 package mesos.modules.overlay.internal;
 
-import "overlay.proto";
+import "overlay/overlay.proto";
 
 // NOTE: This option is necessary if any protobufs defined in this file
 // are used in libprocess message routing (i.e. `install<T>(...)`).
