@@ -73,4 +73,5 @@ endif ()
 
 
 add_subdirectory(dockercfg)
+add_subdirectory(journald)
 add_subdirectory(logsink)

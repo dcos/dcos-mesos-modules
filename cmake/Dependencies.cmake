@@ -33,6 +33,20 @@ find_library(
 )
 
 find_library(
+  ZLIB_LIB
+  NAMES zlib zlibd
+  PATHS  ${MESOS_ROOT}/build/3rdparty/zlib-${ZLIB_VERSION}/src/zlib-${ZLIB_VERSION}-build
+  PATH_SUFFIXES Debug Release
+)
+
+find_library(
+  HTTP_PARSER_LIB
+  NAMES http_parser
+  PATHS ${MESOS_ROOT}/build/3rdparty/http_parser-${HTTP_PARSER_VERSION}/src/http_parser-${HTTP_PARSER_VERSION}-build
+  PATH_SUFFIXES Debug Release
+)
+
+find_library(
   MESOS_PROTOBUFS_LIB
   NAMES mesos-protobufs
   PATHS ${MESOS_ROOT}/build/src
