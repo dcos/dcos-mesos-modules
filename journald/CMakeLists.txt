@@ -12,9 +12,9 @@ include_directories(
   "${MESOS_INCL}"
 )
 
-add_library(libjournald SHARED lib_journald.cpp)
+add_library(libjournaldlogger SHARED lib_journald.cpp)
 
-target_link_libraries(libjournald PUBLIC
+target_link_libraries(libjournaldlogger PUBLIC
   ${ZLIB_LIB}
   ${PROCESS_LIB}
   optimized ${GLOG_LIB_RELEASE}
@@ -34,5 +34,5 @@ target_link_libraries(libjournald PUBLIC
 add_executable(mesos-journald-logger journald.cpp)
 
 target_link_libraries(mesos-journald-logger PRIVATE
-  libjournald
+  libjournaldlogger
 )
