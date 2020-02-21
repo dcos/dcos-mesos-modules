@@ -80,3 +80,5 @@ find_library(
 
 SET(Protobuf_DIR ${MESOS_ROOT}/build/3rdparty/protobuf-${PROTOBUF_VERSION}/src/protobuf-${PROTOBUF_VERSION}-build/cmake)
 find_package(Protobuf CONFIG REQUIRED)
+
+find_package(OpenSSL REQUIRED)
