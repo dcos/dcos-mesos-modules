@@ -20,6 +20,7 @@ target_link_libraries(libjournald PUBLIC
   ${GLOG_LIB}
   ${HTTP_PARSER_LIB}
   ${PROTOBUF_LIB}
+  ${OPENSSL_LIBRARIES}
   ${MESOS_PROTOBUFS_LIB}
   ${MESOS_LIB}
   Mswsock
