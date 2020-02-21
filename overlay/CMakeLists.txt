@@ -41,10 +41,12 @@ protobuf_generate(
 message(" ==> ${PROTO_SRCS} ${PROTO_HDRS}")
 
 target_link_libraries(overlay PRIVATE
-  ${GLOG_LIB}
+  optimized ${GLOG_LIB_RELEASE}
+  debug     ${GLOG_LIB_DEBUG}
   ${HTTP_PARSER_LIB}
   ${PROCESS_LIB}
-  ${PROTOBUF_LIB}
+  optimized ${PROTOBUF_LIB_RELEASE}
+  debug     ${PROTOBUF_LIB_DEBUG}
   ${ZLIB_LIB}
   ${ZOOKEEPER_HASHTABLE_LIB}
   ${ZOOKEEPER_LIB}

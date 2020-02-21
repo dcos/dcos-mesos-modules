@@ -25,14 +25,18 @@ protobuf_generate(
 )
 
 target_link_libraries(metrics PRIVATE
-  ${GLOG_LIB}
+  optimized ${GLOG_LIB_RELEASE}
+  debug     ${GLOG_LIB_DEBUG}
   ${HTTP_PARSER_LIB}
   ${PROCESS_LIB}
-  ${PROTOBUF_LIB}
+  optimized ${PROTOBUF_LIB_RELEASE}
+  debug     ${PROTOBUF_LIB_DEBUG}
   ${ZLIB_LIB}
   ${MESOS_PROTOBUFS_LIB}
   ${MESOS_LIB}
   Mswsock
   Userenv
   Ws2_32
+  ${OPENSSL_CRYPTO_LIBRARY}
+  ${OPENSSL_SSL_LIBRARY}
 )

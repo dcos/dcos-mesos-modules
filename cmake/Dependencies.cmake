@@ -16,17 +16,32 @@ set (MESOS_INCL "${MESOS_ROOT}/include")
 
 
 find_library(
-  GLOG_LIB
-  NAMES glog glogd
+  GLOG_LIB_RELEASE
+  NAMES glog
   PATHS ${MESOS_ROOT}/build/3rdparty/glog-${GLOG_VERSION}/src/glog-${GLOG_VERSION}-build
-  PATH_SUFFIXES Debug Release
+  PATH_SUFFIXES Release
 )
 
 find_library(
-  PROTOBUF_LIB
-  NAMES libprotobuf libprotobufd
+  GLOG_LIB_DEBUG
+  NAMES glogd
+  PATHS ${MESOS_ROOT}/build/3rdparty/glog-${GLOG_VERSION}/src/glog-${GLOG_VERSION}-build
+  PATH_SUFFIXES Debug
+)
+
+
+find_library(
+  PROTOBUF_LIB_RELEASE
+  NAMES libprotobuf
   PATHS ${MESOS_ROOT}/build/3rdparty/protobuf-${PROTOBUF_VERSION}/src/protobuf-${PROTOBUF_VERSION}-build
-  PATH_SUFFIXES Debug Release
+  PATH_SUFFIXES Release
+)
+
+find_library(
+  PROTOBUF_LIB_DEBUG
+  NAMES libprotobufd
+  PATHS ${MESOS_ROOT}/build/3rdparty/protobuf-${PROTOBUF_VERSION}/src/protobuf-${PROTOBUF_VERSION}-build
+  PATH_SUFFIXES Debug
 )
 
 find_library(
@@ -80,3 +95,6 @@ find_library(
 
 SET(Protobuf_DIR ${MESOS_ROOT}/build/3rdparty/protobuf-${PROTOBUF_VERSION}/src/protobuf-${PROTOBUF_VERSION}-build/cmake)
 find_package(Protobuf CONFIG REQUIRED)
+
+
+find_package(OpenSSL REQUIRED)

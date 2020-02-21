@@ -15,8 +15,10 @@ include_directories(
 add_library(dockercfg SHARED remover.cpp)
 
 target_link_libraries(dockercfg PRIVATE
-  ${GLOG_LIB}
-  ${PROTOBUF_LIB}
+  optimized ${GLOG_LIB_RELEASE}
+  debug     ${GLOG_LIB_DEBUG}
+  optimized ${PROTOBUF_LIB_RELEASE}
+  debug     ${PROTOBUF_LIB_DEBUG}
   ${PROCESS_LIB}
   ${MESOS_PROTOBUFS_LIB}
   ${MESOS_LIB}

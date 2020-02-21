@@ -17,14 +17,18 @@ add_library(libjournald SHARED lib_journald.cpp)
 target_link_libraries(libjournald PUBLIC
   ${ZLIB_LIB}
   ${PROCESS_LIB}
-  ${GLOG_LIB}
+  optimized ${GLOG_LIB_RELEASE}
+  debug     ${GLOG_LIB_DEBUG}
   ${HTTP_PARSER_LIB}
-  ${PROTOBUF_LIB}
+  optimized ${PROTOBUF_LIB_RELEASE}
+  debug     ${PROTOBUF_LIB_DEBUG}
   ${MESOS_PROTOBUFS_LIB}
   ${MESOS_LIB}
   Mswsock
   Userenv
   Ws2_32
+  ${OPENSSL_CRYPTO_LIBRARY}
+  ${OPENSSL_SSL_LIBRARY}
 )
 
 add_executable(mesos-journald-logger journald.cpp)
