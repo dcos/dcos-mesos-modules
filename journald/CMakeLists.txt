@@ -22,13 +22,12 @@ target_link_libraries(libjournaldlogger PUBLIC
   ${HTTP_PARSER_LIB}
   optimized ${PROTOBUF_LIB_RELEASE}
   debug     ${PROTOBUF_LIB_DEBUG}
+  ${OPENSSL_LIBRARIES}
   ${MESOS_PROTOBUFS_LIB}
   ${MESOS_LIB}
   Mswsock
   Userenv
   Ws2_32
-  ${OPENSSL_CRYPTO_LIBRARY}
-  ${OPENSSL_SSL_LIBRARY}
 )
 
 add_executable(mesos-journald-logger journald.cpp)

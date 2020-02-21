@@ -32,6 +32,7 @@ target_link_libraries(metrics PRIVATE
   optimized ${PROTOBUF_LIB_RELEASE}
   debug     ${PROTOBUF_LIB_DEBUG}
   ${ZLIB_LIB}
+  ${OPENSSL_LIBRARIES}
   ${MESOS_PROTOBUFS_LIB}
   ${MESOS_LIB}
   Mswsock
