@@ -25,12 +25,10 @@ protobuf_generate(
 )
 
 target_link_libraries(metrics PRIVATE
-  optimized ${GLOG_LIB_RELEASE}
-  debug     ${GLOG_LIB_DEBUG}
+  ${GLOG_LIB}
   ${HTTP_PARSER_LIB}
   ${PROCESS_LIB}
-  optimized ${PROTOBUF_LIB_RELEASE}
-  debug     ${PROTOBUF_LIB_DEBUG}
+  ${PROTOBUF_LIB}
   ${ZLIB_LIB}
   ${OPENSSL_LIBRARIES}
   ${MESOS_PROTOBUFS_LIB}

@@ -14,7 +14,6 @@ include_directories(
 add_library(logsink SHARED logsink.cpp)
 
 target_link_libraries(logsink PRIVATE
-  optimized ${GLOG_LIB_RELEASE}
-  debug     ${GLOG_LIB_DEBUG}
+  ${GLOG_LIB}
   Ws2_32
 )

@@ -17,11 +17,9 @@ add_library(libjournaldlogger SHARED lib_journald.cpp)
 target_link_libraries(libjournaldlogger PUBLIC
   ${ZLIB_LIB}
   ${PROCESS_LIB}
-  optimized ${GLOG_LIB_RELEASE}
-  debug     ${GLOG_LIB_DEBUG}
+  ${GLOG_LIB}
   ${HTTP_PARSER_LIB}
-  optimized ${PROTOBUF_LIB_RELEASE}
-  debug     ${PROTOBUF_LIB_DEBUG}
+  ${PROTOBUF_LIB}
   ${OPENSSL_LIBRARIES}
   ${MESOS_PROTOBUFS_LIB}
   ${MESOS_LIB}

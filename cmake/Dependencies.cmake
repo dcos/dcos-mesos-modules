@@ -20,32 +20,17 @@ set (MESOS_INCL "${MESOS_ROOT}/include")
 
 
 find_library(
-  GLOG_LIB_RELEASE
-  NAMES glog
+  GLOG_LIB
+  NAMES glog glogd
   PATHS ${MESOS_ROOT}/build/3rdparty/glog-${GLOG_VERSION}/src/glog-${GLOG_VERSION}-build
-  PATH_SUFFIXES Release
+  PATH_SUFFIXES Debug Release
 )
 
 find_library(
-  GLOG_LIB_DEBUG
-  NAMES glogd
-  PATHS ${MESOS_ROOT}/build/3rdparty/glog-${GLOG_VERSION}/src/glog-${GLOG_VERSION}-build
-  PATH_SUFFIXES Debug
-)
-
-
-find_library(
-  PROTOBUF_LIB_RELEASE
-  NAMES libprotobuf
+  PROTOBUF_LIB
+  NAMES libprotobuf libprotobufd
   PATHS ${MESOS_ROOT}/build/3rdparty/protobuf-${PROTOBUF_VERSION}/src/protobuf-${PROTOBUF_VERSION}-build
-  PATH_SUFFIXES Release
-)
-
-find_library(
-  PROTOBUF_LIB_DEBUG
-  NAMES libprotobufd
-  PATHS ${MESOS_ROOT}/build/3rdparty/protobuf-${PROTOBUF_VERSION}/src/protobuf-${PROTOBUF_VERSION}-build
-  PATH_SUFFIXES Debug
+  PATH_SUFFIXES Debug Release
 )
 
 find_library(
@@ -63,16 +48,10 @@ find_library(
 )
 
 find_library(
-  ZLIB_LIB_STATIC_DEBUG
-  NAMES zlibstaticd
-  PATHS  ${MESOS_ROOT}/build/3rdparty/zlib-${ZLIB_VERSION}/src/zlib-${ZLIB_VERSION}-build
-  PATH_SUFFIXES Debug
-)
-
-find_library(
-  ZLIB_LIB_STATIC_RELEASE
+  ZLIB_LIB_STATIC
   NAMES zlibstatic
-  PATHS  ${MESOS_ROOT}/build/3rdparty/zlib-${ZLIB_VERSION}/src/zlib-${ZLIB_VERSION}-build/Release
+  PATHS  ${MESOS_ROOT}/build/3rdparty/zlib-${ZLIB_VERSION}/src/zlib-${ZLIB_VERSION}-build
+  PATH_SUFFIXES Debug Release
 )
 
 find_library(
@@ -116,66 +95,36 @@ find_package(Protobuf CONFIG REQUIRED)
 find_package(OpenSSL REQUIRED)
 
 find_library(
-  GOOGLEMOCK_LIB_DEBUG
+  GOOGLEMOCK_LIB
   NAMES gmock
-  PATHS ${MESOS_ROOT}/build/3rdparty/googletest-1.8.0/src/googletest-${GOOGLETEST_VERSION}-build/googlemock/Debug
+  PATHS ${MESOS_ROOT}/build/3rdparty/googletest-1.8.0/src/googletest-${GOOGLETEST_VERSION}-build/googlemock
+  PATH_SUFFIXES Debug Release
 )
 
 find_library(
-  GOOGLEMOCK_LIB_RELEASE
-  NAMES gmock
-  PATHS ${MESOS_ROOT}/build/3rdparty/googletest-1.8.0/src/googletest-${GOOGLETEST_VERSION}-build/googlemock/Release/
-)
-
-find_library(
-  GOOGLETEST_LIB_DEBUG
+  GOOGLETEST_LIB
   NAMES gtest
-  PATHS ${MESOS_ROOT}/build/3rdparty/googletest-1.8.0/src/googletest-${GOOGLETEST_VERSION}-build/googlemock/gtest/Debug
+  PATHS  ${MESOS_ROOT}/build/3rdparty/googletest-1.8.0/src/googletest-${GOOGLETEST_VERSION}-build/googlemock/gtest/
+  PATH_SUFFIXES Debug Release
 )
 
 find_library(
-  GOOGLETEST_LIB_RELEASE
-  NAMES gtest
-  PATHS  ${MESOS_ROOT}/build/3rdparty/googletest-1.8.0/src/googletest-${GOOGLETEST_VERSION}-build/googlemock/gtest/Debug
-)
-
-find_library(
-  SASL_LIB_RELEASE
+  SASL_LIB
   NAMES libsasl2
-  PATHS  ${MESOS_ROOT}/build/3rdparty/sasl2-2.1.27rc3/src/sasl2-2.1.27rc3-build/Release/
+  PATHS  ${MESOS_ROOT}/build/3rdparty/sasl2-2.1.27rc3/src/sasl2-2.1.27rc3-build/
+  PATH_SUFFIXES Debug Release
 )
 
 find_library(
-  SASL_LIB_DEBUG
-  NAMES libsasl2
-  PATHS  ${MESOS_ROOT}/build/3rdparty/sasl2-2.1.27rc3/src/sasl2-2.1.27rc3-build/Debug/
-)
-
-find_library(
-  BZIP2_LIB_DEBUG
+  BZIP2_LIB
   NAMES bzip2.lib
   PATHS  ${MESOS_ROOT}/build/3rdparty/bzip2-${BZIP2_VERSION}/src/bzip2-${BZIP2_VERSION}-build
-  PATH_SUFFIXES Debug
+  PATH_SUFFIXES Debug Release
 )
 
 find_library(
-  BZIP2_LIB_RELEASE
-  NAMES bzip2.lib
-  PATHS  ${MESOS_ROOT}/build/3rdparty/bzip2-${BZIP2_VERSION}/src/bzip2-${BZIP2_VERSION}-build
-  PATH_SUFFIXES Release
-)
-
-find_library(
-  CURL_LIB_RELEASE
+  CURL_LIB
   NAMES libcurl
   PATHS  ${MESOS_ROOT}/build/3rdparty/curl-${CURL_VERSION}/src/curl-${CURL_VERSION}-build/lib/
-  PATH_SUFFIXES Release
+  PATH_SUFFIXES Debug Release
 )
-
-find_library(
-  CURL_LIB_DEBUG
-  NAMES libcurl-d
-  PATHS  ${MESOS_ROOT}/build/3rdparty/curl-${CURL_VERSION}/src/curl-${CURL_VERSION}-build/lib
-  PATH_SUFFIXES Debug
-)
-
