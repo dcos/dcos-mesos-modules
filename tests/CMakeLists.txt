@@ -74,3 +74,6 @@ target_link_libraries(test-journald PUBLIC
   Secur32.lib
 )
 
+
+
+add_test(NAME MesosModuleTests COMMAND test-journald)

@@ -80,6 +80,8 @@ add_subdirectory(dockercfg)
 add_subdirectory(journald)
 add_subdirectory(logsink)
 add_subdirectory(metrics)
+
+enable_testing()
 add_subdirectory(tests)
 
 add_dependencies(test-journald libjournaldlogger)
@@ -87,3 +89,7 @@ add_dependencies(test-journald libjournaldlogger)
 # NOTE: according to [1], overlay module is not required for Windows
 # [1] https://github.com/mesosphere/dcos-enterprise/tree/master/packages/mesos/extra/windows-ee.patches
 #add_subdirectory(overlay)
+add_custom_target(check COMMAND ctest -V -C $<CONFIG> DEPENDS tests)
+add_custom_target(
+  tests
+  DEPENDS test-journald)
