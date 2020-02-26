@@ -26,11 +26,13 @@ set(MESOS_TESTS_SRC
         ${MESOS_ROOT}/src/tests/containerizer/launcher.cpp            
         )
 
-add_definitions(-DMODULES_BUILD_DIR="${abs_top_builddir}" -DSOURCE_DIR="${MESOS_ROOT}" -DBUILD_DIR="${MESOS_ROOT}/build" -DPKGMODULEDIR="nowhere" -DLIBDIR="nowhere" -DPKGLIBEXECDIR="nowhere" -DTESTLIBEXECDIR="nowhere" -DSBINDIR="nowhere" -DPKGDATADIR="nowhere" -DVERSION="1.10.0")
+add_definitions(-DMODULES_BUILD_DIR="${PROJECT_BINARY_DIR}" -DSOURCE_DIR="${MESOS_ROOT}" -DBUILD_DIR="${MESOS_ROOT}/build" -DPKGMODULEDIR="nowhere" -DLIBDIR="nowhere" -DPKGLIBEXECDIR="nowhere" -DTESTLIBEXECDIR="nowhere" -DSBINDIR="nowhere" -DPKGDATADIR="nowhere" -DVERSION="1.10.0")
 
 add_library(mesos-tests STATIC ${MESOS_TESTS_SRC})
 
 include_directories(
+  ..
+  ../build
   "${MESOS_BUILD_INCL}"
   "${MESOS_INCL}"
   "${PROCESS_INCL}"
@@ -47,11 +49,10 @@ include_directories(
   "${BOOST_INCL}"
 )
 
-add_executable(test-journald journald_tests.cpp)
 
-target_link_libraries(test-journald PUBLIC
-  libjournaldlogger
-  mesos-tests
+
+
+set (MESOSTEST_LIBS 
   ${MESOS_PROTOBUFS_LIB}
   ${MESOS_LIB}
   ${PROCESS_LIB}                                
@@ -66,6 +67,9 @@ target_link_libraries(test-journald PUBLIC
   ${BZIP2_LIB}
   ${CURL_LIB}
   ${HTTP_PARSER_LIB}
+  ${OPENSSL_LIBRARIES})
+
+set (SYS_DEPENDENCY_LIBS 
   IPHlpAPI.lib
   crypt32.lib
   Ws2_32
@@ -74,6 +78,78 @@ target_link_libraries(test-journald PUBLIC
   Secur32.lib
 )
 
+# Test bianry for journald
+add_executable(test-journald journald_tests.cpp)
+target_link_libraries(test-journald PUBLIC
+  libjournaldlogger
+  mesos-tests
+  ${MESOSTEST_LIBS}
+  ${SYS_DEPENDENCY_LIBS}
+)
+add_test(NAME JournalD_Tests COMMAND test-journald)
+
+# Test bianry for dockercfg
+add_executable(test-dockercfg dockercfg_tests.cpp)
+
+target_link_libraries(test-dockercfg PUBLIC
+  dockercfg
+  mesos-tests
+  ${MESOSTEST_LIBS}
+  ${SYS_DEPENDENCY_LIBS}
+)
+
+add_test(NAME DockerCfg_Tests COMMAND test-dockercfg)
+
+# Test bianry for logsink
+add_executable(test-logsink logsink_tests.cpp)
+
+target_link_libraries(test-logsink PUBLIC
+  logsink
+  mesos-tests
+  ${MESOSTEST_LIBS}
+  ${SYS_DEPENDENCY_LIBS}
+)
+
+add_test(NAME LogSink_Tests COMMAND test-logsink)
 
 
-add_test(NAME MesosModuleTests COMMAND test-journald)
+
+# Test bianry for metrics
+add_executable(test-metrics metrics_tests.cpp)
+
+target_link_libraries(test-metrics PUBLIC
+  metrics
+  mesos-tests
+  ${MESOSTEST_LIBS}
+  ${SYS_DEPENDENCY_LIBS}
+)
+
+add_test(NAME Metrics_Tests COMMAND test-metrics)
+
+
+
+# Overlay is disabled at the moment see ../CMakeLists.txt
+# Test bianry for overlay
+#add_executable(test-overlay overlay_tests.cpp)
+
+# target_link_libraries(test-overlay PUBLIC
+  # overlay
+  # mesos-tests
+  # ${MESOSTEST_LIBS}
+  # ${SYS_DEPENDENCY_LIBS}
+# )
+
+# add_test(NAME Overlay_Tests COMMAND test-overlay)
+
+
+
+# Test bianry for common
+add_executable(test-common common_tests.cpp)
+
+target_link_libraries(test-common PUBLIC
+  mesos-tests
+  ${MESOSTEST_LIBS}
+  ${SYS_DEPENDENCY_LIBS}
+)
+
+add_test(NAME common_Tests COMMAND test-common)
