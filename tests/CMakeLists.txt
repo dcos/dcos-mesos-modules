@@ -128,17 +128,6 @@ target_link_libraries(test-logsink PUBLIC
 add_test(NAME LogSink_Tests COMMAND test-logsink)
 
 # FIXME: fails during configure due to dependencies on proto generated files
-# Test binary for metrics
-# add_executable(test-metrics
-#   metrics_tests.cpp
-# )
-# target_link_libraries(test-metrics PUBLIC
-#   metrics
-#   mesos-tests
-#   ${MESOSTEST_LIBS}
-#   ${SYS_DEPENDENCY_LIBS}
-# )
-# add_test(NAME Metrics_Tests COMMAND test-metrics)
 
 # Overlay is disabled at the moment see ../CMakeLists.txt
 # Test binary for overlay

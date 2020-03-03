@@ -17,13 +17,6 @@ include_directories(
 
 add_library(metrics SHARED isolator.cpp)
 
-protobuf_generate(
-  LANGUAGE cpp
-  TARGET metrics
-  # OUT_VAR PROTO_SRCS PROTO_HDRS
-  PROTOS messages.proto
-)
-
 target_link_libraries(metrics PRIVATE
   ${GLOG_LIB}
   ${HTTP_PARSER_LIB}
