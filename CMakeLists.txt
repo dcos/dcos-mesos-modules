@@ -7,6 +7,8 @@ endif ()
 
 project(dcos-mesos-modules)
 
+include(CTest)
+
 get_filename_component(MESOS_ROOT ../mesos ABSOLUTE)
 
 message("MESOS_ROOT is ${MESOS_ROOT}")
@@ -81,16 +83,11 @@ add_subdirectory(dockercfg)
 add_subdirectory(journald)
 add_subdirectory(logsink)
 add_subdirectory(metrics)
-
-enable_testing()
-add_subdirectory(tests)
-
-add_dependencies(test-journald libjournaldlogger)
 # FIXME: due to import path in 'overlay/messages.proto'
 # NOTE: according to [1], overlay module is not required for Windows
 # [1] https://github.com/mesosphere/dcos-enterprise/tree/master/packages/mesos/extra/windows-ee.patches
 #add_subdirectory(overlay)
-add_custom_target(check COMMAND ctest -V -C $<CONFIG> DEPENDS tests)
-add_custom_target(
-  tests
-  DEPENDS test-journald)
+
+if (BUILD_TESTING)
+  add_subdirectory(tests)
+endif()
