@@ -7,8 +7,6 @@ endif ()
 
 project(dcos-mesos-modules)
 
-include(CTest)
-
 get_filename_component(MESOS_ROOT ../mesos ABSOLUTE)
 
 message("MESOS_ROOT is ${MESOS_ROOT}")
@@ -22,6 +20,7 @@ list(APPEND CMAKE_MODULE_PATH ${MESOS_ROOT}/src/cmake)
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake)
 
 # Macros.
+include(CTest)
 include(Versions)
 include(Dependencies)
 
@@ -78,9 +77,6 @@ if (WIN32)
   add_definitions(-D__WINDOWS__)
 endif ()
 
-
-
-
 add_subdirectory(dockercfg)
 add_subdirectory(journald)
 add_subdirectory(logsink)
@@ -136,8 +132,6 @@ target_link_libraries(metrics PRIVATE
 )
 
 if (BUILD_TESTING)
-  enable_testing()
-
   add_subdirectory(tests)
 
   add_definitions(
@@ -204,8 +198,7 @@ if (BUILD_TESTING)
 
   add_test(NAME Metrics_Tests COMMAND test-metrics --verbose)
 
-
   add_dependencies(test-journald libjournaldlogger)
   add_dependencies(test-metrics metrics)
-  
+
 endif()
