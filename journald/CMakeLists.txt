@@ -15,7 +15,7 @@ include_directories(
 add_library(libjournaldlogger SHARED lib_journald.cpp)
 
 target_link_libraries(libjournaldlogger PUBLIC
-  ${ZLIB_LIB}
+  ${ZLIB_LIB_STATIC}
   ${PROCESS_LIB}
   ${GLOG_LIB}
   ${HTTP_PARSER_LIB}

@@ -41,13 +41,6 @@ find_library(
 )
 
 find_library(
-  ZLIB_LIB
-  NAMES zlib zlibd
-  PATHS  ${MESOS_ROOT}/build/3rdparty/zlib-${ZLIB_VERSION}/src/zlib-${ZLIB_VERSION}-build
-  PATH_SUFFIXES Debug Release
-)
-
-find_library(
   ZLIB_LIB_STATIC
   NAMES zlibstatic
   PATHS  ${MESOS_ROOT}/build/3rdparty/zlib-${ZLIB_VERSION}/src/zlib-${ZLIB_VERSION}-build

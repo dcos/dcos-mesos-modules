@@ -22,7 +22,7 @@ target_link_libraries(metrics PRIVATE
   ${HTTP_PARSER_LIB}
   ${PROCESS_LIB}
   ${PROTOBUF_LIB}
-  ${ZLIB_LIB}
+  ${ZLIB_LIB_STATIC}
   ${OPENSSL_LIBRARIES}
   ${MESOS_PROTOBUFS_LIB}
   ${MESOS_LIB}
