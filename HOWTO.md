@@ -3,26 +3,8 @@
 ```sh
 mkdir build
 cd build
-cmake .. -T "host=x64"
+cmake .. -T "host=x64" -DBUILD_TESTING=OFF
+cmake --build . --config Release -- -m
 
-cmake --build .
-```
-
-
-# CTEST
-```
-cmake --build . --target check
-```
-or
-```
-ctest --verbose
-```
-
-## CTEST with release configurtion
-```
-cmake --build .  --config Release --target check
-```
-or
-```
 ctest -C Release --verbose
 ```

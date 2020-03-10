@@ -87,21 +87,21 @@ add_subdirectory(logsink)
 #add_subdirectory(overlay)
 
 
+# FIXME: due to limitation of protobuf generation process
+# and include in source
 include_directories(
   .
   build
   "${BOOST_INCL}"
-  "${GLOG_INCL}"
-  "${PROTOBUF_INCL}"
-  "${PICOJSON_INCL}"
-  "${RAPIDJSON_INCL}"
-  "${PROCESS_INCL}"
-  "${STOUT_INCL}"
   "${CURL_INCL}"
-  "${MESOS_BUILD_INCL}"
-  "${MESOS_INCL}"
-  # FIXME: due to limitation of protobuf generation process
-  # and include in source
+  "${GLOG_INCL}"
+  "${MESOS_ROOT}/build/include"
+  "${MESOS_ROOT}/include"
+  "${PICOJSON_INCL}"
+  "${PROCESS_INCL}"
+  "${PROTOBUF_INCL}"
+  "${RAPIDJSON_INCL}"
+  "${STOUT_INCL}"
 )
 
 add_library(metrics SHARED metrics/isolator.cpp)
@@ -116,19 +116,17 @@ protobuf_generate(
 )
 
 target_link_libraries(metrics PRIVATE
-  ${GLOG_LIB}
-  ${HTTP_PARSER_LIB}
-  ${PROCESS_LIB}
-  ${PROTOBUF_LIB}
-  ${ZLIB_LIB_STATIC}
   ${OPENSSL_LIBRARIES}
-  ${MESOS_PROTOBUFS_LIB}
-  ${MESOS_LIB}
-  Mswsock
-  Userenv
-  Ws2_32
-  ${OPENSSL_CRYPTO_LIBRARY}
-  ${OPENSSL_SSL_LIBRARY}
+  glog
+  http_parser
+  mesos
+  mesos_protobufs
+  process
+  protobuf
+  zlib
+  $<$<PLATFORM_ID:Windows>:Mswsock>
+  $<$<PLATFORM_ID:Windows>:Userenv>
+  $<$<PLATFORM_ID:Windows>:ws2_32>
 )
 
 if (BUILD_TESTING)
@@ -148,57 +146,55 @@ if (BUILD_TESTING)
   )
 
   include_directories(
-    "${MESOS_BUILD_INCL}"
-    "${MESOS_INCL}"
-    "${MESOS_ROOT}/src"
-    "${MESOS_ROOT}/build/src"
-    "${PROCESS_INCL}"
-    "${ZOOKEEPER_INCL}"
-    "${NVML_INCL}"
-    "${GOOGLEMOCK_INCL}"
-    "${GOOGLETEST_INCL}"
-    "${STOUT_INCL}"
+    "${BOOST_INCL}"
     "${CURL_INCL}"
+    "${GLOG_INCL}"
+    "${GMOCK_INCL}"
+    "${GTEST_INCL}"
+    "${MESOS_ROOT}/build/include"
+    "${MESOS_ROOT}/build/src"
+    "${MESOS_ROOT}/include"
+    "${MESOS_ROOT}/src"
+    "${NVML_INCL}"
+    "${PICOJSON_INCL}"
+    "${PROCESS_INCL}"
     "${PROTOBUF_INCL}"
     "${RAPIDJSON_INCL}"
-    "${PICOJSON_INCL}"
-    "${GLOG_INCL}"
-    "${BOOST_INCL}"
+    "${STOUT_INCL}"
+    "${ZOOKEEPER_INCL}"
   )
 
   # Test bianry for metrics
   add_executable(test-metrics tests/metrics_tests.cpp)
 
-  target_link_libraries(test-metrics PUBLIC
-    metrics
+  target_link_libraries(test-metrics PRIVATE
+    bzip2
+    curl
+    glog
+    gmock
+    gtest
+    http_parser
+    mesos
+    mesos_protobufs
     mesos-tests
-    ${MESOS_PROTOBUFS_LIB}
-    ${MESOS_LIB}
-    ${PROCESS_LIB}
-    ${ZOOKEEPER_LIB}
-    ${ZOOKEEPER_HASHTABLE_LIB}
-    ${PROTOBUF_LIB}
-    ${GLOG_LIB}
-    ${ZLIB_LIB_STATIC}
-    ${GOOGLEMOCK_LIB}
-    ${GOOGLETEST_LIB}
-    ${SASL_LIB}
-    ${BZIP2_LIB}
-    ${CURL_LIB}
-    ${HTTP_PARSER_LIB}
+    metrics
+    process
+    protobuf
+    sasl2
+    zlib
+    zookeeper
+    zookeeper_hashtable
     ${OPENSSL_LIBRARIES}
-    ${SYS_DEPENDENCY_LIBS}
-    IPHlpAPI.lib
-    crypt32.lib
-    Ws2_32
-    Userenv
-    Mswsock
-    Secur32.lib
+    $<$<PLATFORM_ID:Windows>:IPHlpAPI>
+    $<$<PLATFORM_ID:Windows>:crypt32>
+    $<$<PLATFORM_ID:Windows>:Secur32>
+    $<$<PLATFORM_ID:Windows>:Mswsock>
+    $<$<PLATFORM_ID:Windows>:Userenv>
+    $<$<PLATFORM_ID:Windows>:ws2_32>
   )
 
   add_test(NAME Metrics_Tests COMMAND test-metrics --verbose)
 
   add_dependencies(test-journald libjournaldlogger)
   add_dependencies(test-metrics metrics)
-
 endif()

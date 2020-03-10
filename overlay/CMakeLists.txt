@@ -9,8 +9,8 @@ include_directories(
   "${STOUT_INCL}"
   "${CURL_INCL}"
   "${ZOOKEEPER_INCL}"
-  "${MESOS_BUILD_INCL}"
-  "${MESOS_INCL}"
+  "${MESOS_ROOT}/build/include"
+  "${MESOS_ROOT}/include"
   # FIXME: due to limitation of protobuf generation process
   # and include in source
   ${CMAKE_CURRENT_BINARY_DIR}/..

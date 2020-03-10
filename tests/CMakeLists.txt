@@ -1,30 +1,30 @@
 set(MESOS_TESTS_INCL
-  "${MESOS_BUILD_INCL}"
-  "${MESOS_INCL}"
-  "${MESOS_ROOT}/src"
-  "${MESOS_ROOT}/build/src"
-  "${PROCESS_INCL}"
-  "${ZOOKEEPER_INCL}"
-  "${NVML_INCL}"
+  "${CMAKE_CURRENT_BINARY_DIR}/.."
   "${GOOGLEMOCK_INCL}"
   "${GOOGLETEST_INCL}"
-  "${CMAKE_CURRENT_BINARY_DIR}/.."
+  "${MESOS_ROOT}/build/include"
+  "${MESOS_ROOT}/build/src"
+  "${MESOS_ROOT}/include"
+  "${MESOS_ROOT}/src"
+  "${NVML_INCL}"
+  "${PROCESS_INCL}"
+  "${ZOOKEEPER_INCL}"
 )
 
 include_directories(${MESOS_TESTS_INCL})
 
 set(MESOS_TESTS_SRC
-  ${MESOS_ROOT}/src/tests/main.cpp
   ${MESOS_ROOT}/src/tests/cluster.cpp
   ${MESOS_ROOT}/src/tests/containerizer.cpp
+  ${MESOS_ROOT}/src/tests/containerizer/launcher.cpp
   ${MESOS_ROOT}/src/tests/environment.cpp
   ${MESOS_ROOT}/src/tests/flags.cpp
+  ${MESOS_ROOT}/src/tests/main.cpp
   ${MESOS_ROOT}/src/tests/mesos.cpp
-  ${MESOS_ROOT}/src/tests/module.cpp
   ${MESOS_ROOT}/src/tests/mock_registrar.cpp
   ${MESOS_ROOT}/src/tests/mock_slave.cpp
+  ${MESOS_ROOT}/src/tests/module.cpp
   ${MESOS_ROOT}/src/tests/utils.cpp
-  ${MESOS_ROOT}/src/tests/containerizer/launcher.cpp
 )
 
 add_definitions(
@@ -45,52 +45,52 @@ add_library(mesos-tests STATIC ${MESOS_TESTS_SRC})
 include_directories(
   ..
   ../build
-  "${MESOS_BUILD_INCL}"
-  "${MESOS_INCL}"
-  "${PROCESS_INCL}"
-  "${STOUT_INCL}"
-  "${ZOOKEEPER_INCL}"
-  "${NVML_INCL}"
-  "${GOOGLEMOCK_INCL}"
-  "${GOOGLETEST_INCL}"
+  "${BOOST_INCL}"
   "${CURL_INCL}"
+  "${GLOG_INCL}"
+  "${GMOCK_INCL}"
+  "${GTEST_INCL}"
+  "${MESOS_ROOT}/build/include"
+  "${MESOS_ROOT}/include"
+  "${NVML_INCL}"
+  "${PICOJSON_INCL}"
+  "${PROCESS_INCL}"
   "${PROTOBUF_INCL}"
   "${RAPIDJSON_INCL}"
-  "${PICOJSON_INCL}"
-  "${GLOG_INCL}"
-  "${BOOST_INCL}"
+  "${STOUT_INCL}"
+  "${ZOOKEEPER_INCL}"
 )
 
 set (MESOSTEST_LIBS
-  ${MESOS_PROTOBUFS_LIB}
-  ${MESOS_LIB}
-  ${PROCESS_LIB}
-  ${ZOOKEEPER_LIB}
-  ${ZOOKEEPER_HASHTABLE_LIB}
-  ${PROTOBUF_LIB}
-  ${GLOG_LIB}
-  ${ZLIB_LIB_STATIC}
-  ${GOOGLEMOCK_LIB}
-  ${GOOGLETEST_LIB}
-  ${SASL_LIB}
-  ${BZIP2_LIB}
-  ${CURL_LIB}
-  ${HTTP_PARSER_LIB}
   ${OPENSSL_LIBRARIES}
+  bzip2
+  curl
+  glog
+  gmock
+  gtest
+  http_parser
+  mesos
+  mesos_protobufs
+  process
+  protobuf
+  sasl2
+  zlib
+  zookeeper
+  zookeeper_hashtable
 )
 
 set (SYS_DEPENDENCY_LIBS
-  IPHlpAPI.lib
-  crypt32.lib
-  Ws2_32
-  Userenv
-  Mswsock
-  Secur32.lib
+  $<$<PLATFORM_ID:Windows>:crypt32>
+  $<$<PLATFORM_ID:Windows>:IPHlpAPI>
+  $<$<PLATFORM_ID:Windows>:Mswsock>
+  $<$<PLATFORM_ID:Windows>:Secur32>
+  $<$<PLATFORM_ID:Windows>:Userenv>
+  $<$<PLATFORM_ID:Windows>:ws2_32>
 )
 
 # Test binary for common
 add_executable(test-common common_tests.cpp)
-target_link_libraries(test-common PUBLIC
+target_link_libraries(test-common PRIVATE
   mesos-tests
   ${MESOSTEST_LIBS}
   ${SYS_DEPENDENCY_LIBS}
@@ -99,7 +99,7 @@ add_test(NAME common_Tests COMMAND test-common)
 
 # Test bianry for dockercfg
 add_executable(test-dockercfg dockercfg_tests.cpp)
-target_link_libraries(test-dockercfg PUBLIC
+target_link_libraries(test-dockercfg PRIVATE
   dockercfg
   mesos-tests
   ${MESOSTEST_LIBS}
@@ -109,7 +109,7 @@ add_test(NAME DockerCfg_Tests COMMAND test-dockercfg)
 
 # Test binary for journald
 add_executable(test-journald journald_tests.cpp)
-target_link_libraries(test-journald PUBLIC
+target_link_libraries(test-journald PRIVATE
   libjournaldlogger
   mesos-tests
   ${MESOSTEST_LIBS}
@@ -119,7 +119,7 @@ add_test(NAME JournalD_Tests COMMAND test-journald)
 
 # Test binary for logsink
 add_executable(test-logsink logsink_tests.cpp)
-target_link_libraries(test-logsink PUBLIC
+target_link_libraries(test-logsink PRIVATE
   logsink
   mesos-tests
   ${MESOSTEST_LIBS}

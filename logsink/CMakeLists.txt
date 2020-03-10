@@ -2,18 +2,18 @@
 include_directories(
   "${BOOST_INCL}"
   "${GLOG_INCL}"
-  "${PROTOBUF_INCL}"
+  "${MESOS_ROOT}/build/include"
+  "${MESOS_ROOT}/include"
   "${PICOJSON_INCL}"
-  "${RAPIDJSON_INCL}"
   "${PROCESS_INCL}"
+  "${PROTOBUF_INCL}"
+  "${RAPIDJSON_INCL}"
   "${STOUT_INCL}"
-  "${MESOS_BUILD_INCL}"
-  "${MESOS_INCL}"
 )
 
 add_library(logsink SHARED logsink.cpp)
 
 target_link_libraries(logsink PRIVATE
-  ${GLOG_LIB}
-  Ws2_32
+  glog
+  $<$<PLATFORM_ID:Windows>:ws2_32>
 )
