@@ -289,7 +289,10 @@ protected:
 } // namespace journald {
 } // namespace mesos {
 
-extern "C" __declspec(dllexport)
+extern
+#ifdef __WINDOWS__
+"C" __declspec(dllexport)
+#endif
 mesos::modules::Module<mesos::slave::ContainerLogger>
   com_mesosphere_mesos_JournaldLogger;
 

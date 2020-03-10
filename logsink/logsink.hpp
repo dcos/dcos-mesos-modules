@@ -76,7 +76,10 @@ protected:
 } // namespace logsink {
 } // namespace mesos {
 
-extern "C" __declspec(dllexport)
+extern
+#ifdef __WINDOWS__
+"C" __declspec(dllexport)
+#endif
 mesos::modules::Module<mesos::modules::Anonymous>
   com_mesosphere_mesos_LogSink;
 

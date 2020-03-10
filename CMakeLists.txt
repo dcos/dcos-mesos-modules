@@ -24,8 +24,6 @@ include(CTest)
 include(Versions)
 include(Dependencies)
 
-#include(cotire)
-
 # Set the default standard to C++11 for all targets.
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
