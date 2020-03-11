@@ -130,6 +130,9 @@ target_link_libraries(metrics PRIVATE
 if (BUILD_TESTING)
   add_subdirectory(tests)
 
+  # Test binary for metrics
+  add_executable(test-metrics tests/metrics_tests.cpp)
+
   add_definitions(
     -DMODULES_BUILD_DIR="${PROJECT_BINARY_DIR}"
     -DSOURCE_DIR="${MESOS_ROOT}"
@@ -143,7 +146,7 @@ if (BUILD_TESTING)
     -DVERSION="1.10.0"
   )
 
-  include_directories(
+  target_include_directories(test-metrics PRIVATE
     "${BOOST_INCL}"
     "${CURL_INCL}"
     "${GLOG_INCL}"
@@ -161,9 +164,6 @@ if (BUILD_TESTING)
     "${STOUT_INCL}"
     "${ZOOKEEPER_INCL}"
   )
-
-  # Test bianry for metrics
-  add_executable(test-metrics tests/metrics_tests.cpp)
 
   target_link_libraries(test-metrics PRIVATE
     bzip2

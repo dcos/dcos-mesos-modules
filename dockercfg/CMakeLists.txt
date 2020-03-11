@@ -1,5 +1,7 @@
 
-include_directories(
+add_library(dockercfg SHARED remover.cpp)
+
+target_include_directories(dockercfg PRIVATE
   "${BOOST_INCL}"
   "${CURL_INCL}"
   "${GLOG_INCL}"
@@ -11,8 +13,6 @@ include_directories(
   "${RAPIDJSON_INCL}"
   "${STOUT_INCL}"
 )
-
-add_library(dockercfg SHARED remover.cpp)
 
 target_link_libraries(dockercfg PRIVATE
   glog

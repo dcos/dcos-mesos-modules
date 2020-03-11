@@ -1,17 +1,3 @@
-set(MESOS_TESTS_INCL
-  "${CMAKE_CURRENT_BINARY_DIR}/.."
-  "${GOOGLEMOCK_INCL}"
-  "${GOOGLETEST_INCL}"
-  "${MESOS_ROOT}/build/include"
-  "${MESOS_ROOT}/build/src"
-  "${MESOS_ROOT}/include"
-  "${MESOS_ROOT}/src"
-  "${NVML_INCL}"
-  "${PROCESS_INCL}"
-  "${ZOOKEEPER_INCL}"
-)
-
-include_directories(${MESOS_TESTS_INCL})
 
 set(MESOS_TESTS_SRC
   ${MESOS_ROOT}/src/tests/cluster.cpp
@@ -27,6 +13,23 @@ set(MESOS_TESTS_SRC
   ${MESOS_ROOT}/src/tests/utils.cpp
 )
 
+add_library(mesos-tests STATIC ${MESOS_TESTS_SRC})
+
+set(MESOS_TESTS_INCL
+  "${CMAKE_CURRENT_BINARY_DIR}/.."
+  "${GMOCK_INCL}"
+  "${GTEST_INCL}"
+  "${MESOS_ROOT}/build/include"
+  "${MESOS_ROOT}/build/src"
+  "${MESOS_ROOT}/include"
+  "${MESOS_ROOT}/src"
+  "${NVML_INCL}"
+  "${PROCESS_INCL}"
+  "${ZOOKEEPER_INCL}"
+)
+
+target_include_directories(mesos-tests PUBLIC ${MESOS_TESTS_INCL})
+
 add_definitions(
   -DMODULES_BUILD_DIR="${PROJECT_BINARY_DIR}"
   -DSOURCE_DIR="${MESOS_ROOT}"
@@ -40,9 +43,11 @@ add_definitions(
   -DVERSION="1.10.0"
 )
 
-add_library(mesos-tests STATIC ${MESOS_TESTS_SRC})
+# Test binary for common
 
-include_directories(
+add_executable(test-common common_tests.cpp)
+
+target_include_directories(test-common PUBLIC
   ..
   ../build
   "${BOOST_INCL}"
@@ -88,8 +93,6 @@ set (SYS_DEPENDENCY_LIBS
   $<$<PLATFORM_ID:Windows>:ws2_32>
 )
 
-# Test binary for common
-add_executable(test-common common_tests.cpp)
 target_link_libraries(test-common PRIVATE
   mesos-tests
   ${MESOSTEST_LIBS}
@@ -97,8 +100,11 @@ target_link_libraries(test-common PRIVATE
 )
 add_test(NAME common_Tests COMMAND test-common)
 
-# Test bianry for dockercfg
+# Test binary for dockercfg
 add_executable(test-dockercfg dockercfg_tests.cpp)
+target_include_directories(test-dockercfg PRIVATE
+  ${MESOS_TESTS_INCL}
+)
 target_link_libraries(test-dockercfg PRIVATE
   dockercfg
   mesos-tests
@@ -109,6 +115,9 @@ add_test(NAME DockerCfg_Tests COMMAND test-dockercfg)
 
 # Test binary for journald
 add_executable(test-journald journald_tests.cpp)
+target_include_directories(test-journald PRIVATE
+  ${MESOS_TESTS_INCL}
+)
 target_link_libraries(test-journald PRIVATE
   libjournaldlogger
   mesos-tests
@@ -119,6 +128,9 @@ add_test(NAME JournalD_Tests COMMAND test-journald)
 
 # Test binary for logsink
 add_executable(test-logsink logsink_tests.cpp)
+target_include_directories(test-logsink PRIVATE
+  ${MESOS_TESTS_INCL}
+)
 target_link_libraries(test-logsink PRIVATE
   logsink
   mesos-tests
@@ -128,7 +140,6 @@ target_link_libraries(test-logsink PRIVATE
 add_test(NAME LogSink_Tests COMMAND test-logsink)
 
 # FIXME: fails during configure due to dependencies on proto generated files
-
 # Overlay is disabled at the moment see ../CMakeLists.txt
 # Test binary for overlay
 #add_executable(test-overlay overlay_tests.cpp)

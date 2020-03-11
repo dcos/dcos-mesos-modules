@@ -1,5 +1,7 @@
 
-include_directories(
+add_library(libjournaldlogger SHARED lib_journald.cpp)
+
+target_include_directories(libjournaldlogger PUBLIC
   "${BOOST_INCL}"
   "${CURL_INCL}"
   "${GLOG_INCL}"
@@ -11,8 +13,6 @@ include_directories(
   "${RAPIDJSON_INCL}"
   "${STOUT_INCL}"
 )
-
-add_library(libjournaldlogger SHARED lib_journald.cpp)
 
 target_link_libraries(libjournaldlogger PUBLIC
   ${OPENSSL_LIBRARIES}

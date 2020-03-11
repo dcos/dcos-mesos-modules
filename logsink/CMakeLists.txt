@@ -1,5 +1,7 @@
 
-include_directories(
+add_library(logsink SHARED logsink.cpp)
+
+target_include_directories(logsink PRIVATE
   "${BOOST_INCL}"
   "${GLOG_INCL}"
   "${MESOS_ROOT}/build/include"
@@ -10,8 +12,6 @@ include_directories(
   "${RAPIDJSON_INCL}"
   "${STOUT_INCL}"
 )
-
-add_library(logsink SHARED logsink.cpp)
 
 target_link_libraries(logsink PRIVATE
   glog
