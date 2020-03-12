@@ -139,7 +139,8 @@ target_link_libraries(test-logsink PRIVATE
 )
 add_test(NAME LogSink_Tests COMMAND test-logsink)
 
-# FIXME: fails during configure due to dependencies on proto generated files
+# FIXME(akornatskyy): fails during configure due to dependencies on proto
+# generated files
 # Overlay is disabled at the moment see ../CMakeLists.txt
 # Test binary for overlay
 #add_executable(test-overlay overlay_tests.cpp)

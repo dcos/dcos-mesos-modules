@@ -11,10 +11,10 @@ include_directories(
   "${ZOOKEEPER_INCL}"
   "${MESOS_ROOT}/build/include"
   "${MESOS_ROOT}/include"
-  # FIXME: due to limitation of protobuf generation process
+  # FIXME(akornatskyy): due to limitation of protobuf generation process
   # and include in source
   ${CMAKE_CURRENT_BINARY_DIR}/..
-  # FIXME: due to the following in agent.hpp
+  # FIXME(akornatskyy): due to the following in agent.hpp
   # #include <overlay/agent_metrics.hpp>
   # #include <overlay/messages.hpp>
   ${CMAKE_CURRENT_SOURCE_DIR}/..
@@ -23,6 +23,7 @@ include_directories(
 add_library(overlay SHARED
   agent_metrics.cpp
   agent.cpp
+  # FIXME(akornatskyy):
   # LNK2019: unresolved external symbol "public: __cdecl mesos:: log::Log::Log
   # `log` is explicitly excluded for Windows in mesos
   # master_metrics.cpp
@@ -33,7 +34,7 @@ add_library(overlay SHARED
 protobuf_generate(
   LANGUAGE cpp
   TARGET overlay
-  # FIXME: you need to fix path in messages.proto to be
+  # FIXME(akornatskyy): you need to fix path in messages.proto to be
   # import "overlay.proto";
   PROTOS messages.proto overlay.proto
 )

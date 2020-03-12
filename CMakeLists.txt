@@ -80,13 +80,13 @@ add_subdirectory(dockercfg)
 add_subdirectory(journald)
 add_subdirectory(logsink)
 
-# FIXME: due to import path in 'overlay/messages.proto'
+# FIXME(akornatskyy): due to import path in 'overlay/messages.proto'
 # NOTE: according to [1], overlay module is not required for Windows
 # [1] https://github.com/mesosphere/dcos-enterprise/tree/master/packages/mesos/extra/windows-ee.patches
 #add_subdirectory(overlay)
 
 
-# FIXME: due to limitation of protobuf generation process
+# FIXME(akornatskyy): due to limitation of protobuf generation process
 # and include in source
 include_directories(
   .
