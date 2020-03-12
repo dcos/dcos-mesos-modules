@@ -7,7 +7,8 @@ endif ()
 
 project(dcos-mesos-modules)
 
-get_filename_component(MESOS_ROOT ../mesos ABSOLUTE)
+set(MESOS_ROOT "../mesos" CACHE FILEPATH "Mesos root directory.")
+get_filename_component(MESOS_ROOT ${MESOS_ROOT} ABSOLUTE)
 
 message("MESOS_ROOT is ${MESOS_ROOT}")
 
