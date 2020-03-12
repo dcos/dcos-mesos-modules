@@ -32,6 +32,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 if (CMAKE_CXX_COMPILER_ID MATCHES MSVC)
+  # There is corresponding TODO in mesos as well.
+  #
   # TODO(andschwa): Switch to `/W4` and re-enable possible-loss-of-data warnings.
   #
   # The last two warnings are disabled (well, put into `/W4`) because
@@ -48,8 +50,6 @@ if (CMAKE_CXX_COMPILER_ID MATCHES MSVC)
     /w44267)
 endif ()
 
-# WINDOWS CONFIGURATION.
-########################
 if (WIN32)
   # COFF/PE and friends are somewhat limited in the number of sections they
   # allow for an object file. We use this to avoid those problems.
