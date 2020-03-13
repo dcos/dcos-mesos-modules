@@ -10,8 +10,8 @@
 #include <mesos/mesos.hpp>
 #include <mesos/module/anonymous.hpp>
 
-#include <overlay/agent_metrics.hpp>
-#include <overlay/messages.hpp>
+#include "overlay/agent_metrics.hpp"
+#include "overlay/messages.hpp"
 
 // TODO(akornatskyy): Rename enum values in ManagerProcess::State in this file
 // to avoid name collision.
