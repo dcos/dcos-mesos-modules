@@ -1,3 +1,4 @@
+#include <stdlib.h>
 #include <sstream>
 #include <set>
 #include <vector>
@@ -50,11 +51,8 @@ namespace network = process::network;
 
 typedef mesos::modules::overlay::AgentOverlayInfo::State OverlayState;
 
-using std::mt19937
-using std::random_device;
 using std::string;
 using std::tuple;
-using std::uniform_real_distribution;
 using std::vector;
 
 using process::delay;
@@ -97,9 +95,6 @@ namespace agent {
 
 constexpr Duration REGISTRATION_RETRY_INTERVAL_MAX = Minutes(10);
 constexpr Duration INITIAL_BACKOFF_PERIOD = Seconds(5);
-
-constexpr random_device rd;
-constexpr mt19937 gen(rd());
 
 
 static string OVERLAY_HELP()
@@ -562,10 +557,10 @@ void ManagerProcess::doReliableRegistration(Duration maxBackoff)
   // Bound the maximum backoff by 'REGISTRATION_RETRY_INTERVAL_MAX'.
   maxBackoff = std::min(maxBackoff, REGISTRATION_RETRY_INTERVAL_MAX);
 
+  // TODO(akornatskyy): Consider convert to std::uniform_real_distribution.
   // Determine the delay for next attempt by picking a random
   // duration between 0 and 'maxBackoff'.
-  uniform_real_distribution<> dis(0, maxBackoff);
-  Duration backoff = dis(gen);
+  Duration backoff = maxBackoff * ((double) rand() / RAND_MAX);
 
   VLOG(1) << "Will retry registration in " << backoff << " if necessary";
 
