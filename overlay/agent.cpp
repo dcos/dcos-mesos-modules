@@ -1,3 +1,4 @@
+#include <stdlib.h>
 #include <sstream>
 #include <set>
 #include <vector>
@@ -556,9 +557,10 @@ void ManagerProcess::doReliableRegistration(Duration maxBackoff)
   // Bound the maximum backoff by 'REGISTRATION_RETRY_INTERVAL_MAX'.
   maxBackoff = std::min(maxBackoff, REGISTRATION_RETRY_INTERVAL_MAX);
 
+  // TODO(akornatskyy): Consider convert to std::uniform_real_distribution.
   // Determine the delay for next attempt by picking a random
   // duration between 0 and 'maxBackoff'.
-  Duration backoff = maxBackoff * ((double) ::random() / RAND_MAX);
+  Duration backoff = maxBackoff * ((double) rand() / RAND_MAX);
 
   VLOG(1) << "Will retry registration in " << backoff << " if necessary";
 

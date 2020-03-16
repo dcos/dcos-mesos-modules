@@ -13,6 +13,16 @@
 #include <overlay/agent_metrics.hpp>
 #include <overlay/messages.hpp>
 
+// TODO(akornatskyy): Rename enum values in ManagerProcess::State in this file
+// to avoid name collision.
+//
+// `REGISTERING` is used as an enum value, but it's actually defined as a
+// constant in the Windows SDK.
+#ifdef __WINDOWS__
+#undef REGISTERING
+#undef REGISTERED
+#endif // __WINDOWS__
+
 namespace mesos {
 namespace modules {
 namespace overlay {

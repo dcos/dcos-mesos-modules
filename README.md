@@ -34,6 +34,17 @@ make
 In order to compile the Mesos modules tests, `--enable-tests-install`
 should be added to the `configure`'s command-line arguments too.
 
+### Mesos (cmake)
+
+```sh
+cd <mesos-source>
+mkdir build
+cd build
+cmake .. -T "host=x64" -DENABLE_SSL=ON
+# cmake .. -T "host=x64" -DENABLE_SSL=ON -DBUILD_TESTING=OFF
+cmake --build . --config Release -- -m
+```
+
 ### Systemd journald headers
 
 Some of these modules also require systemd development headers and libraries.
@@ -85,6 +96,17 @@ run:
 ```
 
 And then execute `make` again.
+
+## Build Instructions (cmake)
+
+```sh
+mkdir build
+cd build
+cmake .. -T "host=x64"
+# cmake .. -T "host=x64" -DBUILD_TESTING=OFF -DMESOS_ROOT=../mesos
+cmake --build . --config Release -- -m
+ctest -C Release --verbose
+```
 
 ## Using Modules
 
