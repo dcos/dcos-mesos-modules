@@ -76,7 +76,7 @@ protected:
 } // namespace logsink {
 } // namespace mesos {
 
-extern mesos::modules::Module<mesos::modules::Anonymous>
+extern "C" mesos::modules::Module<mesos::modules::Anonymous>
   com_mesosphere_mesos_LogSink;
 
 #endif // __LOGSINK_LOGSINK_HPP__
