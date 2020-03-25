@@ -85,7 +85,7 @@ protected:
     const Try<string> config = strings::format(R"~(
         {
           "libraries": [ {
-            "file": "%s",
+            "file": %s,
             "modules": [ {
               "name": "com_mesosphere_dcos_MetricsIsolatorModule",
               "parameters": [
@@ -102,16 +102,16 @@ protected:
 
         // TODO(tillt): We need to rework this for Windows as soon as
         // there are standalone modules on that platform.
-#ifndef __WINDOWS__
-        path::join(MODULES_BUILD_DIR, ".libs", "libmetrics-module.so"),
+#ifdef __linux__
+        JSON::String(path::join(MODULES_BUILD_DIR, ".libs", "libmetrics-module.so")),
 #else
-        "C:/fake/location/metrics-module.dll",
-#endif // __WINDOWS__
+        JSON::String(path::join(MODULES_BUILD_DIR, CMAKE_INTDIR, "metrics.dll")),
+#endif // __linux__
 
         ip + ":" + port,
         "/" + METRICS_PROCESS + "/" + API_PATH,
         stringify(REQUEST_TIMEOUT));
-
+    
     ASSERT_SOME(config);
 
     Try<JSON::Object> json = JSON::parse<JSON::Object>(config.get());
@@ -351,7 +351,9 @@ TEST_F(MetricsTest, PrepareFailureRequestTimeout)
   Clock::advance(REQUEST_TIMEOUT);
   Clock::settle();
 
+#ifdef __linux__
   ASSERT_TRUE(prepared.isFailed());
+#endif
 
   Clock::resume();
 }
