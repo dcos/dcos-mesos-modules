@@ -24,7 +24,11 @@ inline process::Future<std::string> runCommand(
   Try<process::Subprocess> s = process::subprocess(
       command,
       argv,
+#ifdef __WINDOWS__
+      process::Subprocess::PATH("nul"),
+#else
       process::Subprocess::PATH("/dev/null"),
+#endif
       process::Subprocess::PIPE(),
       process::Subprocess::PIPE());
 
