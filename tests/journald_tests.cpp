@@ -158,6 +158,7 @@ public:
     modules = _modules.get();
 
     // Initialize the modules.
+    // TODO(akornatskyy): The following line crashes in Windows
     Try<Nothing> result = ModuleManager::load(modules);
     ASSERT_SOME(result);
   }
@@ -312,7 +313,7 @@ TEST_F(JournaldLoggerTest, ROOT_LogToJournaldWithBigLabel)
   AWAIT_READY(secondQuery);
   ASSERT_FALSE(strings::contains(secondQuery.get(), specialString));
 }
-#endif // __WINDOWS__
+#endif // __linux__
 
 
 // Loads the journald ContainerLogger module and checks for the

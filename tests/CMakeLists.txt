@@ -113,18 +113,21 @@ target_link_libraries(test-dockercfg PRIVATE
 )
 add_test(NAME DockerCfg_Tests COMMAND test-dockercfg)
 
-# Test binary for journald
-add_executable(test-journald journald_tests.cpp)
-target_include_directories(test-journald PRIVATE
-  ${MESOS_TESTS_INCL}
-)
-target_link_libraries(test-journald PRIVATE
-  libjournaldlogger
-  mesos-tests
-  ${MESOSTEST_LIBS}
-  ${SYS_DEPENDENCY_LIBS}
-)
-add_test(NAME JournalD_Tests COMMAND test-journald)
+# TODO(akornatskyy): it crashes to load module on Windows.
+if (UNIX)
+  # Test binary for journald
+  add_executable(test-journald journald_tests.cpp)
+  target_include_directories(test-journald PRIVATE
+    ${MESOS_TESTS_INCL}
+  )
+  target_link_libraries(test-journald PRIVATE
+    libjournaldlogger
+    mesos-tests
+    ${MESOSTEST_LIBS}
+    ${SYS_DEPENDENCY_LIBS}
+  )
+  add_test(NAME JournalD_Tests COMMAND test-journald)
+endif()
 
 # Test binary for logsink
 add_executable(test-logsink logsink_tests.cpp)
