@@ -78,9 +78,10 @@ endif ()
 
 if(UNIX)
   add_subdirectory(dockercfg)
-  add_subdirectory(journald)
   add_subdirectory(logsink)
 endif()
+
+add_subdirectory(journald)
 
 # TODO(akornatskyy): To make it possible to use cmake build in DCOS on Linux,
 # overlay module must be re-enabled. For this, import/include layout in the
@@ -201,9 +202,6 @@ if (BUILD_TESTING)
 
   add_test(NAME Metrics_Tests COMMAND test-metrics --verbose)
 
-  if(UNIX)
-    add_dependencies(test-journald libjournaldlogger)
-  endif()
-
+  add_dependencies(test-journald libjournaldlogger)
   add_dependencies(test-metrics metrics)
 endif()
