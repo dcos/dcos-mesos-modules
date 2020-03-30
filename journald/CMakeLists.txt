@@ -33,3 +33,5 @@ add_executable(mesos-journald-logger journald.cpp)
 target_link_libraries(mesos-journald-logger PRIVATE
   libjournaldlogger
 )
+
+configure_file(modules.json.cmake-in modules.json)

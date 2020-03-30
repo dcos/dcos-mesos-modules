@@ -76,9 +76,12 @@ if (WIN32)
   add_definitions(-D__WINDOWS__)
 endif ()
 
-add_subdirectory(dockercfg)
+if(UNIX)
+  add_subdirectory(dockercfg)
+  add_subdirectory(logsink)
+endif()
+
 add_subdirectory(journald)
-add_subdirectory(logsink)
 
 # TODO(akornatskyy): To make it possible to use cmake build in DCOS on Linux,
 # overlay module must be re-enabled. For this, import/include layout in the

@@ -100,18 +100,20 @@ target_link_libraries(test-common PRIVATE
 )
 add_test(NAME common_Tests COMMAND test-common)
 
-# Test binary for dockercfg
-add_executable(test-dockercfg dockercfg_tests.cpp)
-target_include_directories(test-dockercfg PRIVATE
-  ${MESOS_TESTS_INCL}
-)
-target_link_libraries(test-dockercfg PRIVATE
-  dockercfg
-  mesos-tests
-  ${MESOSTEST_LIBS}
-  ${SYS_DEPENDENCY_LIBS}
-)
-add_test(NAME DockerCfg_Tests COMMAND test-dockercfg)
+if (UNIX)
+  # Test binary for dockercfg
+  add_executable(test-dockercfg dockercfg_tests.cpp)
+  target_include_directories(test-dockercfg PRIVATE
+    ${MESOS_TESTS_INCL}
+  )
+  target_link_libraries(test-dockercfg PRIVATE
+    dockercfg
+    mesos-tests
+    ${MESOSTEST_LIBS}
+    ${SYS_DEPENDENCY_LIBS}
+  )
+  add_test(NAME DockerCfg_Tests COMMAND test-dockercfg)
+endif()
 
 # Test binary for journald
 add_executable(test-journald journald_tests.cpp)
@@ -126,18 +128,20 @@ target_link_libraries(test-journald PRIVATE
 )
 add_test(NAME JournalD_Tests COMMAND test-journald)
 
-# Test binary for logsink
-add_executable(test-logsink logsink_tests.cpp)
-target_include_directories(test-logsink PRIVATE
-  ${MESOS_TESTS_INCL}
-)
-target_link_libraries(test-logsink PRIVATE
-  logsink
-  mesos-tests
-  ${MESOSTEST_LIBS}
-  ${SYS_DEPENDENCY_LIBS}
-)
-add_test(NAME LogSink_Tests COMMAND test-logsink)
+if (UNIX)
+  # Test binary for logsink
+  add_executable(test-logsink logsink_tests.cpp)
+  target_include_directories(test-logsink PRIVATE
+    ${MESOS_TESTS_INCL}
+  )
+  target_link_libraries(test-logsink PRIVATE
+    logsink
+    mesos-tests
+    ${MESOSTEST_LIBS}
+    ${SYS_DEPENDENCY_LIBS}
+  )
+  add_test(NAME LogSink_Tests COMMAND test-logsink)
+endif()
 
 # FIXME(akornatskyy): fails during configure due to dependencies on proto
 # generated files
