@@ -158,7 +158,6 @@ public:
     modules = _modules.get();
 
     // Initialize the modules.
-    // TODO(akornatskyy): The following line crashes in Windows
     Try<Nothing> result = ModuleManager::load(modules);
     ASSERT_SOME(result);
   }
@@ -350,7 +349,7 @@ TEST_F(JournaldLoggerTest, ROOT_LogrotateCustomOptions)
   Try<Owned<cluster::Master>> master = StartMaster();
   ASSERT_SOME(master);
 
-  // TODO(akornatskyy): unknown file: error: C++ exception with description 
+  // TODO(akornatskyy): unknown file: error: C++ exception with description
   // "Access violation - no RTTI data!" thrown in the test body.
 #ifdef __linux__
   // We'll need access to these flags later.
@@ -1136,7 +1135,7 @@ TEST_P(FluentbitLoggerTest, ROOT_LogToFluentbit)
   Try<Owned<cluster::Master>> master = StartMaster();
   ASSERT_SOME(master);
 
-  // TODO(akornatskyy): unknown file: error: C++ exception with description 
+  // TODO(akornatskyy): unknown file: error: C++ exception with description
   // "Access violation - no RTTI data!" thrown in the test body.
 #ifdef __linux__
   // We'll need access to these flags later.
