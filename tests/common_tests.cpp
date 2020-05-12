@@ -34,17 +34,35 @@ protected:
 
 TEST_F(CommonTest, CheckRunScriptCommandBasic)
 {
-  Future<string> r = runScriptCommand("echo -n foobar");
+  Future<string> r = runScriptCommand(
+#ifdef __WINDOWS__
+      "powershell -Command Write-Host -NoNewline foobar"
+#else
+      "echo -n foobar"
+#endif
+  );
   AWAIT_READY(r);
   EXPECT_EQ("foobar", r.get());
 }
 
 TEST_F(CommonTest, CheckRunScriptCommandTimeout)
 {
-  Future<string> r0 = runScriptCommand("sleep 1");
+  Future<string> r0 = runScriptCommand(
+#ifdef __WINDOWS__
+      "powershell -Command Start-Sleep 1"
+#else
+      "sleep 1"
+#endif
+  );
   AWAIT_READY(r0);
 
-  Future<string> r1 = runScriptCommand("sleep 1", Milliseconds(100));
+  Future<string> r1 = runScriptCommand(
+#ifdef __WINDOWS__
+      "powershell -Command Start-Sleep 1",
+#else
+      "sleep 1",
+#endif
+      Milliseconds(100));
   r1.await();
   CHECK_FAILED(r1);
   EXPECT_EQ(true, endsWith(r1.failure(), "timeout after 100ms"));
