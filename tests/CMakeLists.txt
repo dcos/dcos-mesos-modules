@@ -1,16 +1,16 @@
 
 add_library(mesos-tests STATIC
-  ${MESOS_ROOT}/src/tests/cluster.cpp
-  ${MESOS_ROOT}/src/tests/containerizer.cpp
-  ${MESOS_ROOT}/src/tests/containerizer/launcher.cpp
-  ${MESOS_ROOT}/src/tests/environment.cpp
-  ${MESOS_ROOT}/src/tests/flags.cpp
-  ${MESOS_ROOT}/src/tests/main.cpp
-  ${MESOS_ROOT}/src/tests/mesos.cpp
-  ${MESOS_ROOT}/src/tests/mock_registrar.cpp
-  ${MESOS_ROOT}/src/tests/mock_slave.cpp
-  ${MESOS_ROOT}/src/tests/module.cpp
-  ${MESOS_ROOT}/src/tests/utils.cpp
+  ${MESOS_SOURCE}/src/tests/cluster.cpp
+  ${MESOS_SOURCE}/src/tests/containerizer.cpp
+  ${MESOS_SOURCE}/src/tests/containerizer/launcher.cpp
+  ${MESOS_SOURCE}/src/tests/environment.cpp
+  ${MESOS_SOURCE}/src/tests/flags.cpp
+  ${MESOS_SOURCE}/src/tests/main.cpp
+  ${MESOS_SOURCE}/src/tests/mesos.cpp
+  ${MESOS_SOURCE}/src/tests/mock_registrar.cpp
+  ${MESOS_SOURCE}/src/tests/mock_slave.cpp
+  ${MESOS_SOURCE}/src/tests/module.cpp
+  ${MESOS_SOURCE}/src/tests/utils.cpp
 )
 
 target_include_directories(mesos-tests PUBLIC
@@ -19,8 +19,8 @@ target_include_directories(mesos-tests PUBLIC
 
 add_definitions(
   -DMODULES_BUILD_DIR="${PROJECT_BINARY_DIR}"
-  -DSOURCE_DIR="${MESOS_ROOT}"
-  -DBUILD_DIR="${MESOS_ROOT}/build"
+  -DSOURCE_DIR="${MESOS_SOURCE}"
+  -DBUILD_DIR="${MESOS_BUILD}"
   -DPKGMODULEDIR="nowhere"
   -DLIBDIR="nowhere"
   -DPKGLIBEXECDIR="nowhere"

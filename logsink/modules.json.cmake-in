@@ -1,0 +1,12 @@
+{
+  "libraries": [
+    {
+      "file": "$<TARGET_FILE:logsink>",
+      "modules": [
+        {
+          "name": "com_mesosphere_mesos_LogSink"
+        }
+      ]
+    }
+  ]
+}

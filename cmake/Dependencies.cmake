@@ -59,13 +59,16 @@ add_executable(protoc IMPORTED GLOBAL)
 set_target_properties(protoc PROPERTIES IMPORTED_LOCATION ${PROTOC})
 
 if (BUILD_TESTING)
+  # This include is needed to determine GOOGLETEST_VERSION.
+  include(${MESOS_SOURCE}/3rdparty/cmake/Versions.cmake)
+
   # TODO(akornatskyy): rewrite to use one from mesos install
-  set (GMOCK_INCL "${MESOS_ROOT}/build/3rdparty/googletest-${GOOGLETEST_VERSION}/src/googletest-${GOOGLETEST_VERSION}/googlemock/include")
-  set (GTEST_INCL "${MESOS_ROOT}/build/3rdparty/googletest-${GOOGLETEST_VERSION}/src/googletest-${GOOGLETEST_VERSION}/googletest/include")
+  set (GMOCK_INCL "${MESOS_BUILD}/3rdparty/googletest-${GOOGLETEST_VERSION}/src/googletest-${GOOGLETEST_VERSION}/googlemock/include")
+  set (GTEST_INCL "${MESOS_BUILD}/3rdparty/googletest-${GOOGLETEST_VERSION}/src/googletest-${GOOGLETEST_VERSION}/googletest/include")
   find_library(
     GMOCK_LIB
     NAMES gmock
-    PATHS ${MESOS_ROOT}/build/3rdparty/googletest-${GOOGLETEST_VERSION}/src/googletest-${GOOGLETEST_VERSION}-build/googlemock)
+    PATHS ${MESOS_BUILD}/3rdparty/googletest-${GOOGLETEST_VERSION}/src/googletest-${GOOGLETEST_VERSION}-build/googlemock)
   add_library(gmock ${LIBRARY_LINKAGE} IMPORTED)
   set_target_properties(gmock PROPERTIES IMPORTED_LOCATION "${GMOCK_LIB}")
 endif()
