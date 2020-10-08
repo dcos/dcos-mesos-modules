@@ -2,29 +2,46 @@ cmake_minimum_required(VERSION 3.7.0)
 
 project(dcos-mesos-modules)
 
-set(MESOS_ROOT "../mesos" CACHE PATH "Mesos root directory.")
+include(CTest) # NOTE: BUILD_TESTING is defined by CTest.
+
+set(MESOS_ROOT "../mesos" CACHE FILEPATH "Mesos root directory.")
 get_filename_component(MESOS_ROOT ${MESOS_ROOT} ABSOLUTE)
+
+if (BUILD_TESTING)
+  set(
+    MESOS_SOURCE
+    ""
+    CACHE FILEPATH
+    "Mesos source tree root directory (needed to build tests).")
+
+  set(
+    MESOS_BUILD
+    ""
+    CACHE FILEPATH
+    "Mesos build tree root directory (needed to build tests).")
+
+  get_filename_component(MESOS_SOURCE ${MESOS_SOURCE} ABSOLUTE)
+  get_filename_component(MESOS_BUILD ${MESOS_BUILD} ABSOLUTE)
+endif()
+
 set(BOOST_ROOT_DIR "" CACHE PATH "Boost libs root directory.")
 
 message("MESOS_ROOT is ${MESOS_ROOT}")
 
 # CMAKE MODULE SETUP.
 #####################
-# Paths that are searched when `include(...)` is called.
-list(APPEND CMAKE_MODULE_PATH ${MESOS_ROOT}/cmake)
-list(APPEND CMAKE_MODULE_PATH ${MESOS_ROOT}/3rdparty/cmake)
-list(APPEND CMAKE_MODULE_PATH ${MESOS_ROOT}/src/cmake)
-list(APPEND CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake)
-
-# Macros.
-include(CTest)
-include(Dependencies)
+include(${CMAKE_SOURCE_DIR}/cmake/Dependencies.cmake)
 
 # Set the default standard to C++11 for all targets.
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Do not use, for example, `-std=gnu++11`.
 set(CMAKE_CXX_EXTENSIONS OFF)
+
+# We expect Mesos libraries built with `-DENABLE_SSL=ON`, hence USE_SSL_SOCKET
+# should be set. Otherwise, type declarations included from the internal
+# Mesos headers might differ from those actually used when building Mesos.
+add_definitions(-DUSE_SSL_SOCKET=1)
 
 list(APPEND DEPENDENCIES_INC
   "${BOOST_INCL}"
@@ -111,8 +128,8 @@ if (BUILD_TESTING)
     ${DEPENDENCIES_INC}
     "${GMOCK_INCL}"
     "${GTEST_INCL}"
-    "${MESOS_ROOT}/build/src"
-    "${MESOS_ROOT}/src"
+    "${MESOS_SOURCE}/src"
+    "${MESOS_BUILD}/src"
     "${NVML_INCL}"
   )
 
@@ -125,7 +142,6 @@ if (BUILD_TESTING)
 
   # Test binary for metrics
   add_executable(test-metrics
-    metrics/messages.pb.cc
     tests/metrics_tests.cpp
   )
   # TODO(akornatskyy): Paths defined as "nowhere" are needed to build Mesos
@@ -154,6 +170,21 @@ if (BUILD_TESTING)
     mesos-tests
     ${TEST_DEPENDENCIES_LIB}
   )
+
+  # TODO(asekretenko): After ditching the automake build, adjust the path in
+  # `MetricTest` and get rid of this symlink.
+  file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/.libs")
+  SET(LIBMETRICS_SYMLINK
+    "${CMAKE_CURRENT_BINARY_DIR}/.libs/libmetrics-module.so")
+
+  add_custom_target(libmetrics-testing-symlink DEPENDS "${LIBMETRICS_SYMLINK}")
+  add_custom_command(
+    OUTPUT "${LIBMETRICS_SYMLINK}"
+    COMMAND ln -sf "$<TARGET_FILE:metrics>" "${LIBMETRICS_SYMLINK}")
+
+  add_dependencies(libmetrics-testing-symlink metrics)
+  add_dependencies(test-metrics libmetrics-testing-symlink)
+
   add_test(NAME Metrics_Tests COMMAND test-metrics)
 
   # Test binary for overlay
@@ -168,5 +199,20 @@ if (BUILD_TESTING)
     mesos-tests
     ${TEST_DEPENDENCIES_LIB}
   )
+
+  # TODO(asekretenko): After ditching the automake build, adjust the path in
+  # `OverlayTest` and get rid of this symlink.
+  file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/.libs")
+  SET(LIBOVERLAY_SYMLINK
+    "${CMAKE_CURRENT_BINARY_DIR}/.libs/libmesos_network_overlay.so")
+
+  add_custom_target(liboverlay-testing-symlink DEPENDS "${LIBOVERLAY_SYMLINK}")
+  add_custom_command(
+    OUTPUT "${LIBOVERLAY_SYMLINK}"
+    COMMAND ln -sf "$<TARGET_FILE:overlay>" "${LIBOVERLAY_SYMLINK}")
+
+  add_dependencies(liboverlay-testing-symlink metrics)
+  add_dependencies(test-overlay liboverlay-testing-symlink)
+
   add_test(NAME Overlay_Tests COMMAND test-overlay)
 endif()

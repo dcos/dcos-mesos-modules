@@ -1,14 +1,14 @@
 {
   "libraries": [
     {
-      "file": "@CMAKE_CURRENT_BINARY_DIR@/@CMAKE_BUILD_TYPE@/libjournaldlogger.dll",
+      "file": "$<TARGET_FILE:journaldlogger>",
       "modules": [
         {
           "name": "com_mesosphere_mesos_JournaldLogger",
           "parameters": [
             {
               "key": "companion_dir",
-              "value": "@CMAKE_CURRENT_BINARY_DIR@/@CMAKE_BUILD_TYPE@/"
+              "value": "$<TARGET_FILE_DIR:mesos-journald-logger>"
             }, {
               "key": "libprocess_num_worker_threads",
               "value": "2"

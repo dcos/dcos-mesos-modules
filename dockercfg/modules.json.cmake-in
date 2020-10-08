@@ -1,0 +1,12 @@
+{
+  "libraries": [
+    {
+      "file": "$<TARGET_FILE:removedockercfg>",
+      "modules": [
+        {
+          "name": "com_mesosphere_dcos_RemoverHook"
+        }
+      ]
+    }
+  ]
+}
